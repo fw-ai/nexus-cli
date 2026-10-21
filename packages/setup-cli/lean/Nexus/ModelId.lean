@@ -6,7 +6,7 @@ Segment-level predicates carry the general theorems (pure list reasoning, no
 `String.splitOn` lemmas needed). `String` wrappers transliterate the JS entry
 points and are pinned by `decide` examples plus the segment theorems.
 -/
-namespace FireConnect.ModelId
+namespace Nexus.ModelId
 
 /-- Drop a trailing `[1m]` context tag (case-insensitive), mirroring
 `stripContextSuffix` in `model-id.mjs`. -/
@@ -127,4 +127,4 @@ theorem stripContextSuffix_nested_needs_two :
     stripContextSuffix "x[1m][1m]" = "x[1m]" ∧
     stripContextSuffix (stripContextSuffix "x[1m][1m]") = "x" := by native_decide
 
-end FireConnect.ModelId
+end Nexus.ModelId

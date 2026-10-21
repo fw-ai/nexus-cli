@@ -24,9 +24,9 @@ const PRICING_MODULE = fileURLToPath(
 );
 
 // This spec is about the HOME-based default cache path, so it opts out of the
-// FIRECONNECT_CACHE_DIR override global-setup applies to every test process.
+// NEXUS_CACHE_DIR override global-setup applies to every test process.
 // Isolation still holds: each case runs under its own temp HOME.
-delete process.env.FIRECONNECT_CACHE_DIR;
+delete process.env.NEXUS_CACHE_DIR;
 
 function sampleSnapshot() {
   return {
@@ -97,7 +97,7 @@ describe("serverless-catalog-cache disk persistence", () => {
       cacheServerlessCatalogSnapshot(sampleSnapshot());
       // Persisted file exists: a { cachedAt, snapshot } envelope with map pairs as arrays.
       const disk = JSON.parse(
-        readFileSync(path.join(home, ".fireconnect", "catalog-cache.json"), "utf8"),
+        readFileSync(path.join(home, ".nexus", "catalog-cache.json"), "utf8"),
       );
       assert.equal(disk.snapshot.entries.length, 2);
       assert.ok(Number.isFinite(disk.cachedAt), "cachedAt written for TTL");
@@ -161,7 +161,7 @@ describe("serverless-catalog-cache disk persistence", () => {
 
   it("a missing or corrupt cache file is treated as no cache", () => {
     withTempHome((home) => {
-      const file = path.join(home, ".fireconnect", "catalog-cache.json");
+      const file = path.join(home, ".nexus", "catalog-cache.json");
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, "{ not json");
       const out = spawnFreshGet(home);
@@ -175,7 +175,7 @@ describe("serverless-catalog-cache disk persistence", () => {
       assert.equal(isCatalogCacheFresh(), true);
 
       // Age the write past the default TTL → stale (but still readable).
-      const file = path.join(home, ".fireconnect", "catalog-cache.json");
+      const file = path.join(home, ".nexus", "catalog-cache.json");
       const raw = JSON.parse(readFileSync(file, "utf8"));
       raw.cachedAt = Date.now() - 2 * 60 * 60 * 1000;
       writeFileSync(file, JSON.stringify(raw));
@@ -189,7 +189,7 @@ describe("serverless-catalog-cache disk persistence", () => {
       cacheServerlessCatalogSnapshot(sampleSnapshot());
       assert.equal(getServerlessCatalogSnapshot().entries.length, 2);
       // Another process (e.g. the detached price refresher) adds a row.
-      const file = path.join(home, ".fireconnect", "catalog-cache.json");
+      const file = path.join(home, ".nexus", "catalog-cache.json");
       const raw = JSON.parse(readFileSync(file, "utf8"));
       raw.snapshot.entries.push({ id: "accounts/fireworks/models/new-row", shortId: "new-row", displayName: "New", kind: "serverless" });
       writeFileSync(file, JSON.stringify(raw));
@@ -205,7 +205,7 @@ describe("serverless-catalog-cache disk persistence", () => {
 
   it("reads a legacy pre-TTL cache file as stale but usable", () => {
     withTempHome((home) => {
-      const file = path.join(home, ".fireconnect", "catalog-cache.json");
+      const file = path.join(home, ".nexus", "catalog-cache.json");
       mkdirSync(path.dirname(file), { recursive: true });
       writeFileSync(file, JSON.stringify({
         entries: [{ id: "accounts/fireworks/models/kimi-k3", shortId: "kimi-k3", displayName: "Kimi K3", kind: "serverless" }],

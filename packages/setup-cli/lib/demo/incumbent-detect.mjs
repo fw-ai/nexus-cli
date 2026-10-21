@@ -1,5 +1,5 @@
 /**
- * Incumbent auto-detection for `fireconnect demo` (§3 of the brief).
+ * Incumbent auto-detection for `nexus demo` (§3 of the brief).
  *
  * Reuses the existing harness adapters / core modules to read what the developer
  * actually uses today — without modifying any config. The first harness in probe
@@ -74,7 +74,7 @@ const PROBE_ORDER = [
 
 /**
  * The first harness (in probe order) that is currently routed through Fireworks
- * via `fireconnect` — i.e. the user's primary tool IS the challenger, so there
+ * via `nexus` — i.e. the user's primary tool IS the challenger, so there
  * is no real incumbent to race. Used by the demo to branch into an honest
  * "you're already on Fireworks" prompt instead of silently fabricating an
  * estimated race against a model the user isn't calling.

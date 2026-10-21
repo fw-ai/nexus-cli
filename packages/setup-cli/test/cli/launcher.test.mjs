@@ -127,7 +127,7 @@ describe("runLauncherCommand", () => {
       { dispatchHarness: async (route) => { routes.push(route); } },
     );
     assert.deepEqual(routes, [{ harnessId: "claude", verb: "status", noun: "" }]);
-    assert.ok(output.text().includes("skip the menu: fireconnect claude status"));
+    assert.ok(output.text().includes("skip the menu: nexus claude status"));
   });
 
   it("teaches the bare fast path for on", async () => {
@@ -138,7 +138,7 @@ describe("runLauncherCommand", () => {
       { dispatchHarness: async (route) => { routes.push(route); } },
     );
     assert.deepEqual(routes, [{ harnessId: "claude", verb: "on", noun: "" }]);
-    assert.ok(output.text().includes("skip the menu: fireconnect claude\n"));
+    assert.ok(output.text().includes("skip the menu: nexus claude\n"));
   });
 
   it("returns to the harness list when an action menu is cancelled", async () => {
@@ -161,12 +161,12 @@ describe("runLauncherCommand", () => {
       [...keysToKeyRow, ENTER, ENTER], // key row -> status (first)
       { runKey: async (subcommand) => {
         subcommands.push(subcommand);
-        return subcommand === "status" ? "fireconnect status" : `fireconnect key ${subcommand}`;
+        return subcommand === "status" ? "nexus status" : `nexus key ${subcommand}`;
       } },
     );
     assert.deepEqual(subcommands, ["status"]);
     assert.ok(output.text().includes("skip the menu:"));
-    assert.ok(output.text().includes("fireconnect status"));
+    assert.ok(output.text().includes("nexus status"));
   });
 
   it("runs configure from the menu", async () => {
@@ -179,6 +179,6 @@ describe("runLauncherCommand", () => {
       { runConfigure: async () => { ran += 1; } },
     );
     assert.equal(ran, 1);
-    assert.ok(output.text().includes("skip the menu: fireconnect configure"));
+    assert.ok(output.text().includes("skip the menu: nexus configure"));
   });
 });

@@ -9,12 +9,8 @@ import {
   byokEnvFromHeaders,
   resolveAnthropicKey,
   buildClaudeCustomHeaders,
-  normalizeRoutingPreference,
-  routingPreferenceFromCustomHeaders,
-  routingPreferenceLevelName,
-  routingPreferenceLevelLabel,
-  routingPreferenceOptionsList,
   firerouterStatusFromEnv,
+  firerouterTagline,
   replaceFireworksKeyInCustomHeaders,
   stripFirerouterOwnedEnv,
   stripManagedCustomHeaderLines,
@@ -23,6 +19,21 @@ import { FIREWORKS_BASE_URL } from "../../lib/fireworks/model-id.mjs";
 import { providerStatusFromEnv } from "../../lib/harnesses/claude/core.mjs";
 import { writeGlobalConfig } from "../../lib/config/global-config.mjs";
 describe("firerouter-core", () => {
+  it("describes bare firerouter, one-model routes, and listed routes as FireRouter serves them", () => {
+    assert.equal(firerouterTagline("firerouter"), "Routes each user turn between open models and the closed models you have access to.");
+    assert.equal(firerouterTagline("firerouter/astra"), "Routes each user turn between this closed model and Fireworks open models.");
+    assert.equal(firerouterTagline("firerouter/opus"), "Routes each user turn between this closed model and Fireworks open models.");
+    assert.equal(firerouterTagline("accounts/fireworks/routers/firerouter/claude-opus-5-5[1m]"), "Routes each user turn between this closed model and Fireworks open models.");
+    assert.equal(firerouterTagline("firerouter/gpt-6.1-sol"), "Routes each user turn between this closed model and Fireworks open models.");
+    assert.equal(firerouterTagline("firerouter/kimi-k3"), "Serves this model on every turn.");
+    assert.equal(firerouterTagline("firerouter/auto"), "Routes each user turn across Fireworks open models.");
+    assert.equal(firerouterTagline("firerouter/auto-instant"), "Routes each user turn across the fastest Fireworks open models.");
+    assert.equal(
+      firerouterTagline("firerouter/opus/glm-5p3"),
+      "Routes each user turn across only the models listed in this route.",
+    );
+  });
+
   it("detects FireRouter mode from the `firerouter` model id, not base URL", () => {
     assert.equal(firerouterStatusFromEnv({ ANTHROPIC_MODEL: "firerouter" }), "firerouter");
     assert.equal(firerouterStatusFromEnv({ ANTHROPIC_MODEL: "accounts/fireworks/models/glm-5p2" }), "other");
@@ -102,84 +113,11 @@ describe("firerouter-core", () => {
     assert.equal(replaceFireworksKeyInCustomHeaders(headers, ""), headers);
   });
 
-  it("adds the routing-preference header only when set (named or 1-5)", () => {
-    // A named level maps to its numeric wire value.
-    assert.equal(
-      buildClaudeCustomHeaders({ fireworksKey: "fw_test", routingPreference: "balanced" }),
-      "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 3",
-    );
-    // Numeric aliases pass through.
-    assert.equal(
-      buildClaudeCustomHeaders({ fireworksKey: "fw_test", routingPreference: 1 }),
-      "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 1",
-    );
-    // Unset / out-of-range / unrecognized values are dropped, not clamped.
-    assert.equal(
-      buildClaudeCustomHeaders({ fireworksKey: "fw_test", routingPreference: 6 }),
-      "X-Fireworks-Api-Key: fw_test",
-    );
-    assert.equal(
-      buildClaudeCustomHeaders({ fireworksKey: "fw_test", routingPreference: "nonsense" }),
-      "X-Fireworks-Api-Key: fw_test",
-    );
-  });
-
-  it("normalizes routing-preference values (named + numeric, else null)", () => {
-    assert.equal(normalizeRoutingPreference("max-intelligence"), 1);
-    assert.equal(normalizeRoutingPreference("balanced"), 3);
-    assert.equal(normalizeRoutingPreference("MAX-SAVINGS"), 5);
-    assert.equal(normalizeRoutingPreference(2), 2);
-    assert.equal(normalizeRoutingPreference("4"), 4);
-    assert.equal(normalizeRoutingPreference(null), null);
-    assert.equal(normalizeRoutingPreference(undefined), null);
-    assert.equal(normalizeRoutingPreference(""), null);
-    assert.equal(normalizeRoutingPreference(0), null);
-    assert.equal(normalizeRoutingPreference(6), null);
-    assert.equal(normalizeRoutingPreference(2.5), null);
-    assert.equal(normalizeRoutingPreference("balance"), null);
-  });
-
-  it("resolves routing-preference level names for harness on output", () => {
-    assert.equal(routingPreferenceLevelName(null), null);
-    assert.equal(routingPreferenceLevelName("balanced"), "balanced");
-    assert.equal(routingPreferenceLevelName(1), "max-intelligence");
-    assert.equal(routingPreferenceLevelName("nonsense"), null);
-  });
-
-  it("formats routing-preference labels and option lists", () => {
-    assert.equal(routingPreferenceLevelLabel("balanced"), "balanced (3)");
-    assert.equal(routingPreferenceLevelLabel(null), "balanced (3)");
-    assert.match(
-      routingPreferenceOptionsList({ excludeLevel: "balanced" }),
-      /max-intelligence \(1\).*max-savings \(5\)/,
-    );
+  it("never writes the retired routing-preference header", () => {
     assert.doesNotMatch(
-      routingPreferenceOptionsList({ excludeLevel: "balanced" }),
-      /balanced \(3\)/,
+      buildClaudeCustomHeaders({ fireworksKey: "fw_test", openaiKey: "sk-test" }),
+      /x-routing-preference/i,
     );
-  });
-
-  it("reports only the configured routing level with a null default", () => {
-    assert.equal(routingPreferenceLevelLabel("max-intelligence", { defaultLevel: null }), "max-intelligence (1)");
-    assert.equal(routingPreferenceLevelLabel(1, { defaultLevel: null }), "max-intelligence (1)");
-    assert.equal(routingPreferenceLevelLabel("balanced", { defaultLevel: null }), "balanced (3)");
-    assert.equal(routingPreferenceLevelLabel(null, { defaultLevel: null }), null);
-    assert.equal(routingPreferenceLevelLabel(undefined, { defaultLevel: null }), null);
-    assert.equal(routingPreferenceLevelLabel("nonsense", { defaultLevel: null }), null);
-  });
-
-  it("reads the applied routing preference back from custom headers", () => {
-    assert.equal(
-      routingPreferenceFromCustomHeaders("X-Fireworks-Api-Key: fw_test\nx-routing-preference: 1"),
-      1,
-    );
-    assert.equal(
-      routingPreferenceFromCustomHeaders("X-Fireworks-Api-Key: fw_test"),
-      null,
-    );
-    assert.equal(routingPreferenceFromCustomHeaders(""), null);
-    assert.equal(routingPreferenceFromCustomHeaders(undefined), null);
-    assert.equal(routingPreferenceFromCustomHeaders("x-routing-preference: 9"), null);
   });
 
   it("resolves Anthropic key: flag beats global/env, else global, else settings", async () => {

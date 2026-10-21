@@ -5,7 +5,7 @@ import {
   shortFireworksModelRef,
 } from "../fireworks/model-id.mjs";
 import { ALL_REASONING_EFFORTS } from "../fireworks/reasoning.mjs";
-import { FIREPASS_ROUTER_ID, prettyModelName } from "../fireworks/models.mjs";
+import { prettyModelName } from "../fireworks/models.mjs";
 import { resolveFireworksCatalog } from "../fireworks/model-specs.mjs";
 
 /**
@@ -25,7 +25,7 @@ export const COPILOT_FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1
  *
  * This is the shared ladder vocabulary ({@link ALL_REASONING_EFFORTS}), not a
  * per-model ladder: all four levels were probed against the gateway per model
- * and every one returns HTTP 200 on every model FireConnect registers. `max`
+ * and every one returns HTTP 200 on every model Nexus registers. `max`
  * matters — it is each model's strongest setting, so omitting it would hide a
  * level the gateway accepts. For a per-model ladder (e.g. to hide `max` where
  * it is unsupported), use `reasoningEffortNamesFor` from
@@ -41,27 +41,20 @@ export const COPILOT_REASONING_EFFORTS = ALL_REASONING_EFFORTS;
 
 /**
  * Default model id both harnesses register.
- * @param {"fireworks" | "firepass"} keyType
  * @returns {string}
  */
-export function defaultCopilotModelId(keyType) {
-  return keyType === "firepass"
-    ? FIREPASS_ROUTER_ID
-    : fullFireworksResourceId(defaultMainModel());
+export function defaultCopilotModelId() {
+  return fullFireworksResourceId(defaultMainModel());
 }
 
 /**
  * Resolve a user-supplied `--model` for `on`: normalize Fireworks refs,
- * falling back to the key-type default.
+ * falling back to the default.
  * @param {string | undefined} modelId
- * @param {"fireworks" | "firepass"} keyType
  * @returns {string}
  */
-export function resolveCopilotModelId(modelId, keyType) {
-  if (keyType === "firepass") {
-    return FIREPASS_ROUTER_ID;
-  }
-  return normalizeModelId(modelId || defaultCopilotModelId(keyType));
+export function resolveCopilotModelId(modelId) {
+  return normalizeModelId(modelId || defaultCopilotModelId());
 }
 
 /**

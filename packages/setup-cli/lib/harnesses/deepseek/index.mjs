@@ -17,7 +17,6 @@ import {
   resolveDeepseekApiKey,
 } from "./core.mjs";
 import { harnessFullKey } from "../../keys/harness-api-key.mjs";
-import { detectApiKeyType } from "../../keys/key-type.mjs";
 import { finishEnvHarnessOn } from "../../harness/env-hook.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import {
@@ -59,12 +58,15 @@ export default defineHarnessProfile({
   resolveKey: deepseekResolveKey,
   paths: (ctx) => deepseekPathsFor(ctx),
   keyEnvRef: DEEPSEEK_API_KEY_ENV,
-  // Custom providers cannot forward local BYOK headers, so Anthropic-requiring
-  // firerouter selections run without a forwarded key instead of failing.
+  // No BYOK key is forwarded (byok: "none"), so Anthropic-requiring
+  // firerouter selections run without one instead of failing. The dsh
+  // provider profile itself does carry per-request headers, which is
+  // how the telemetry attribution and the `nexus auto` scope get in.
   firerouter: {
     byok: "none",
     autoCatalog: true,
   },
+  telemetryHeaders: true,
   getExistingHarnessKey: async (_ctx, paths) => {
     const { settings } = await readDeepseekSettingsIfExists(paths.settingsPath);
     const effective = await deepseekEffectiveFireworksState(paths.settingsPath, settings);
@@ -74,13 +76,13 @@ export default defineHarnessProfile({
     const { credentials } = await readDeepseekCredentialsIfExists(paths.credentialsPath);
     return credentials[DEEPSEEK_API_KEY_ENV] ?? "";
   },
-  enable: ({ paths, effectiveKey, keyType, modelId }) => enableDeepseekFireworks({
+  enable: ({ paths, effectiveKey, modelId, byokHeaders = {}, telemetryHeaders = {} }) => enableDeepseekFireworks({
     settingsPath: paths.settingsPath,
     credentialsPath: paths.credentialsPath,
     dataDir: paths.dataDir,
     effectiveApiKey: effectiveKey,
     modelId,
-    keyType,
+    headers: { ...telemetryHeaders, ...byokHeaders },
   }),
   envHookOn: (ctx, effectiveKey) => finishEnvHarnessOn(ctx.home, {
     harnessId: "deepseek",
@@ -129,7 +131,7 @@ export default defineHarnessProfile({
       modelProvider: DEEPSEEK_FIREWORKS_PROVIDER_ID,
       hasAuthToken: Boolean(resolvedKey),
       apiKeyMode,
-      defaults: { main: defaultMainModel(detectApiKeyType(resolvedKey || "")) },
+      defaults: { main: defaultMainModel() },
       current: { main: model },
     };
 

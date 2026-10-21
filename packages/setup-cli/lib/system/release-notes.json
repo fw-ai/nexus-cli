@@ -1,6 +1,19 @@
 {
   "releases": [
     {
+      "version": "0.10.0",
+      "highlights": [
+        "FireConnect is now Nexus. The command is `nexus` (it replaces `fireconnect`), and your data moves from `~/.fireconnect` to `~/.nexus` (the old path stays as a link). Your harnesses, key, and settings carry over unchanged. Try `nexus status`.",
+        "Environment variables are now `NEXUS_*` (`FIRECONNECT_*` still works). Rename them in your scripts and shell profiles when you get a chance.",
+        "FireRouter is retired. `nexus upgrade` moves every harness that was on a FireRouter route to `auto`, and picking a FireRouter model now fails with a pointer to `auto`: FireRouter routes are no longer supported. Use `--model auto` instead.",
+        "Narrow `auto` to Fireworks-hosted models only: `nexus auto --providers fireworks`. The setting is global, not per harness. `nexus auto --reset` restores the default. Claude Desktop and DeepSeek Harness support the setting too."
+      ],
+      "improvements": [
+        "Claude Desktop works on Linux too: `nexus claude-desktop` routes Chat, Cowork, and Code through Fireworks there as well as on macOS."
+      ],
+      "footer": "After upgrading, restart your harnesses to pick up the new model settings."
+    },
+    {
       "version": "0.9.9",
       "highlights": [
         "Codex starts on FireRouter, and GPT turns run on your own sign-in. A fresh `fireconnect codex` picks `firerouter` and asks you to `codex login` with ChatGPT or an OpenAI key. Easy turns stay on open models, and the GPT models your sign-in offers sit right above the Fireworks catalog in `/model`. `fireconnect upgrade` switches existing setups over and keeps your model.",

@@ -28,13 +28,15 @@ import {
 import {
   VSCODE_DATA_RELATIVE_DIR,
 } from "../../harnesses/vscode/core.mjs";
+import { WORKSPACE_NOTES as CLAUDE_DESKTOP_WORKSPACE_NOTES } from "../../harnesses/claude-desktop/core.mjs";
 import { COPILOT_DATA_RELATIVE_DIR as COPILOT_APP_DATA_RELATIVE_DIR } from "../../harnesses/copilot-app/core.mjs";
 import { COPILOT_CLI_DATA_RELATIVE_DIR } from "../../harnesses/copilot-cli/config.mjs";
 import { globalConfigPath } from "../../config/global-config.mjs";
-import { isHarnessRouted } from "../../harness/engine.mjs";
-import { getHarness, listHarnesses } from "../../harness/registry.mjs";
-import { HARNESS } from "../../harness/id.mjs";
+import { getHarness, listRoutedHarnessIds } from "../../harness/registry.mjs";
+import { HARNESS, HARNESS_COMMANDS } from "../../harness/id.mjs";
 import { runConfigureCommand } from "./configure.mjs";
+import { runAutoCommand } from "./auto.mjs";
+import { runHarnessesCommand } from "./harnesses.mjs";
 import { runGlobalModelListCommand } from "./model.mjs";
 import { printReleaseNotesAfterUpgrade } from "../../system/release-notes.mjs";
 import { readLocalVersion } from "../../system/version.mjs";
@@ -43,20 +45,20 @@ import { runClaudeUpgradePreflight } from "../../system/upgrade.mjs";
 import { finalizeInstallOrUpgrade } from "../../system/finalize-install.mjs";
 import { runUpgradeFinalize } from "../../system/upgrade-finalize.mjs";
 import { runtimeDepsInstalled } from "../../system/ensure-cli-deps.mjs";
+import { COMMAND, ownedLaunchers } from "../../system/launchers.mjs";
+import {
+  DATA_DIRNAME,
+  LEGACY_ASIDE_DIRNAME,
+  LEGACY_DATA_DIRNAME,
+} from "../../system/data-dir.mjs";
 import { deleteSecret } from "../../keys/secret-store.mjs";
 import { demoHelpText } from "../../demo/help.mjs";
 import { info, printBanner, success } from "../../ui/index.mjs";
 import { colorizeHelp } from "../../ui.mjs";
-import { ROUTING_PREFERENCE_LEVEL_NAMES } from "../../firerouter/core.mjs";
-import {
-  supportsAnthropicApiKeyFlag,
-  supportsOpenaiApiKeyFlag,
-  supportsRoutingPreference,
-} from "../../firerouter/flag.mjs";
 import { accent, check as checkGlyph, red, symbols } from "../../ui/style.mjs";
 
 /**
- * Per-harness FireConnect data dir (`~/.fireconnect/<id>`), holding the
+ * Per-harness Nexus data dir (`~/.nexus/<id>`), holding the
  * snapshot/backup `off` needs to restore. Deleting a harness's dir only after
  * its `off` succeeds keeps restore recoverable if a later step fails.
  * @type {Record<string, string>}
@@ -73,16 +75,15 @@ const HARNESS_DATA_DIR = {
   [HARNESS.COPILOT_CLI]: COPILOT_CLI_DATA_RELATIVE_DIR,
 };
 
-const CLI_NAME = "fireconnect";
-
-const ROUTING_PREF = `${ROUTING_PREFERENCE_LEVEL_NAMES} (or 1-5)`;
+const CLI_NAME = COMMAND;
 
 function helpLines(...lines) {
   return lines.join("\n");
 }
 
 function cmdBlock(title, entries) {
-  const body = entries.map(([name, desc]) => `  ${name.padEnd(14)}${desc}`).join("\n");
+  const width = Math.max(14, ...entries.map(([name]) => name.length + 2));
+  const body = entries.map(([name, desc]) => `  ${name.padEnd(width)}${desc}`).join("\n");
   return `${title}:\n${body}`;
 }
 
@@ -91,15 +92,20 @@ function optBlock(title, entries) {
   return `${title}:\n${body}`;
 }
 
+const HARNESS_NAME = Object.fromEntries(HARNESS_COMMANDS.map(({ command, name }) => [command, name]));
+const HARNESS_ROWS = Object.entries(HARNESS_NAME);
+
 const OPT_HOME = ["--home <path>", "Override HOME for config resolution."];
 const OPT_DATA_DIR = ["--data-dir <path>", "Override backup/state directory."];
 
 /**
- * Options for `<harness> on`. FireRouter flags are derived from the harness's
- * own firerouter profile using the same predicates `harness.mjs` validates
- * with, so help can never advertise a flag the runtime rejects.
+ * Options for `<harness> on`. The BYOK flags (`--anthropic-api-key`,
+ * `--openai-api-key`) are not listed: they only ever served FireRouter
+ * routes, which `on` now rejects, so advertising them would offer flags
+ * that always fail. (Claude's help lists `--openai-api-key` separately —
+ * `claude on` still accepts it to store the key.)
  */
-function standardOnOpts({ azure = true, firerouter = null, modelNote = "" } = {}) {
+function standardOnOpts({ azure = true, modelNote = "" } = {}) {
   const opts = [
     ["--api-key <key>", "Fireworks API key (on also saves config when set)."],
   ];
@@ -110,15 +116,6 @@ function standardOnOpts({ azure = true, firerouter = null, modelNote = "" } = {}
     );
   }
   opts.push(["--model <id>", `Model to use${modelNote ? ` (${modelNote})` : ""}.`]);
-  if (supportsRoutingPreference(firerouter)) {
-    opts.push(["--routing-preference <p>", `FireRouter tradeoff: ${ROUTING_PREF}.`]);
-  }
-  if (supportsAnthropicApiKeyFlag(firerouter)) {
-    opts.push(["--anthropic-api-key <key>", "Anthropic BYOK key for firerouter."]);
-  }
-  if (supportsOpenaiApiKeyFlag(firerouter)) {
-    opts.push(["--openai-api-key <key>", "OpenAI BYOK key for firerouter."]);
-  }
   return opts;
 }
 
@@ -126,7 +123,7 @@ function claudeHelp() {
   return helpLines(
     `Usage: ${CLI_NAME} claude [command] [options]`,
     "",
-    "Route Claude Code through Fireworks. Bare `fireconnect claude` runs on.",
+    "Route Claude Code through Fireworks. Bare `nexus claude` runs on.",
     "",
     cmdBlock("Commands", [
       ["on", "Enable Fireworks routing (default)."],
@@ -139,7 +136,7 @@ function claudeHelp() {
     ]),
     "",
     optBlock("Options for on", [
-      ["--api-key <key>", "Fireworks API key (also saves ~/.fireconnect/config.json)."],
+      ["--api-key <key>", "Fireworks API key (also saves ~/.nexus/config.json)."],
       ["--base-url <url>", "Anthropic-compatible gateway URL override."],
       ["--model <id>", "Add a Fireworks model to Claude Code's /model picker (default)."],
       ["--opus <id>", "Pin the Opus tier slot (`native` = Claude default)."],
@@ -148,8 +145,7 @@ function claudeHelp() {
       ["--fable <id>", "Pin the Fable tier slot (`native` = Claude default)."],
       ["--subagent <id>", "Pin the subagent model (`native` = Claude default)."],
       ["--non-interactive", "Non-interactive connect (default)."],
-      ["--routing-preference <p>", `FireRouter tradeoff (${ROUTING_PREF}); bare on, --model firerouter, or a firerouter tier pin.`],
-      ["--openai-api-key <key>", "Optional: store sk-… so FireRouter can route hard turns to OpenAI models."],
+      ["--openai-api-key <key>", "Optional: store an OpenAI key in Nexus's saved keys."],
     ]),
     "",
     optBlock("Options for usage", [
@@ -177,8 +173,7 @@ function claudeHelp() {
 function configHarnessHelp(id, label, { configPath, configPathNote = "", codexNote = "", displayId = id, force = false } = {}) {
   const onOpts = standardOnOpts({
     azure: Boolean(getHarness(id).azure),
-    firerouter: getHarness(id).firerouter,
-    modelNote: id === "deepseek" ? "use firerouter for FireRouter" : id === "codex" ? "default: firerouter; a re-on keeps the current model" : "",
+    modelNote: id === "deepseek" ? "default: auto" : id === "codex" ? "default: auto; a re-on keeps the current model, except FireRouter selections, which move to auto" : "",
   });
   if (force) {
     onOpts.push(["--force", "Write while the ChatGPT app is running (not recommended)."]);
@@ -213,7 +208,7 @@ function configHarnessHelp(id, label, { configPath, configPathNote = "", codexNo
 }
 
 function ideHarnessHelp(id, label, { pathFlag, pathDesc, note }) {
-  const onOpts = standardOnOpts({ firerouter: getHarness(id).firerouter });
+  const onOpts = standardOnOpts({});
   onOpts.push(["--force", `Write while ${label} is running (not recommended).`]);
 
   return helpLines(
@@ -245,26 +240,14 @@ function ideHarnessHelp(id, label, { pathFlag, pathDesc, note }) {
 
 export function mainCommandsHelp() {
   return helpLines(
-    "FireConnect — use Fireworks models in AI coding tools.",
+    "Nexus — use Fireworks models in AI coding tools.",
     "",
     cmdBlock("Get started", [
       ["login", "Sign in to Fireworks."],
       ["claude", "Route Claude Code through Fireworks."],
     ]),
     "",
-    cmdBlock("Harnesses", [
-      ["claude", "Claude Code"],
-      ["claude-desktop", "Claude Desktop (Fireworks inference)"],
-      ["opencode", "OpenCode"],
-      ["codex", "Codex CLI & ChatGPT app"],
-      ["chatgpt", "Codex CLI & ChatGPT app"],
-      ["pi", "Pi"],
-      ["cursor", "Cursor IDE"],
-      ["vscode", "VS Code Chat"],
-      ["copilot-app", "GitHub Copilot desktop app"],
-      ["copilot-cli", "GitHub Copilot CLI"],
-      ["deepseek", "DeepSeek Harness (dsh)"],
-    ]),
+    cmdBlock("Harnesses", HARNESS_ROWS),
     "",
     cmdBlock("Per harness", [
       ["<harness> on", "Enable Fireworks routing (default)."],
@@ -274,8 +257,10 @@ export function mainCommandsHelp() {
     "",
     cmdBlock("Other", [
       ["status", "Sign-in state and key storage."],
+      ["harnesses", "Supported harnesses and which are connected."],
       ["configure", "Provider and BYOK keys."],
-      ["upgrade", "Update FireConnect."],
+      ["auto", "Customize the auto router (which providers it may use)."],
+      ["update", "Update Nexus."],
       ["help", "Full command reference."],
       ["help <harness>", "All options for one harness."],
     ]),
@@ -291,7 +276,9 @@ export function printHelp(topic = "") {
   const codexHelpOpts = {
     configPath: "--config-path <path>",
     configPathNote: "Explicit ~/.codex/config.toml path.",
-    codexNote: "GPT turns are paid by Codex's own sign-in (your ChatGPT plan, or an OpenAI key from "
+    codexNote: "The Codex CLI and the ChatGPT desktop app share ~/.codex/config.toml, so "
+      + "`nexus codex` and `nexus chatgpt` switch both.\n"
+      + "GPT turns are paid by Codex's own sign-in (your ChatGPT plan, or an OpenAI key from "
       + "`codex login --with-api-key`), else by an OpenAI Provider Key on your Fireworks account.",
     force: true,
   };
@@ -301,10 +288,9 @@ export function printHelp(topic = "") {
       configPath: "--config-path <path>",
       configPathNote: "Explicit opencode.json path.",
     }),
-    codex: configHarnessHelp("codex", "Codex CLI & ChatGPT app", codexHelpOpts),
-    // `chatgpt` is an alias for the codex harness (shared ~/.codex config); show
-    // the same help but with the typed name in the usage line.
-    chatgpt: configHarnessHelp("codex", "Codex CLI & ChatGPT app", { ...codexHelpOpts, displayId: "chatgpt" }),
+    codex: configHarnessHelp("codex", HARNESS_NAME.codex, codexHelpOpts),
+    // `chatgpt` is an alias for the codex harness; same help, typed name in the usage line.
+    chatgpt: configHarnessHelp("codex", HARNESS_NAME.chatgpt, { ...codexHelpOpts, displayId: "chatgpt" }),
     pi: helpLines(
       configHarnessHelp("pi", "Pi", {
         configPath: "--settings-path <path>",
@@ -329,7 +315,7 @@ export function printHelp(topic = "") {
       pathDesc: "Explicit Copilot data.db path (default: ~/.copilot/data.db).",
       note: "Adds a Fireworks BYOK provider to the GitHub Copilot desktop app; its built-in "
         + "models keep working. Quit the app before on/off (Cmd-Q). status is read-only. "
-        + "For the `copilot` command-line tool, use `fireconnect copilot-cli`.",
+        + "For the `copilot` command-line tool, use `nexus copilot-cli`.",
     }),
     "copilot-cli": helpLines(
       configHarnessHelp("copilot-cli", "Copilot CLI", {
@@ -340,7 +326,7 @@ export function printHelp(topic = "") {
       "Writes the Fireworks BYOK provider to providers.json and selects it in settings.json.",
       "The CLI addresses BYOK models by a provider-qualified id (fireworks/<model>); a bare",
       "id is rejected. Switch with `copilot --model fireworks/<id>` or `/model`.",
-      "For the desktop app, use `fireconnect copilot-app`.",
+      "For the desktop app, use `nexus copilot-app`.",
     ),
     deepseek: configHarnessHelp("deepseek", "DeepSeek Harness (dsh)", {
       configPath: "--config-path <path>",
@@ -351,7 +337,8 @@ export function printHelp(topic = "") {
       "",
       "Routes Claude Desktop's Chat, Cowork and Code surfaces through Fireworks",
       "via Desktop's third-party inference profile and a loopback gateway",
-      "shim (launchd, auto-restart). Connectors are imported from your existing",
+      "shim (a launchd agent on macOS, a systemd user unit on Linux; both",
+      "auto-restart). Connectors are imported from your existing",
       "setup; each needs a one-time re-auth, and some providers (Google, Figma",
       "hosted) need your own OAuth app or a companion local server.",
       "",
@@ -361,15 +348,20 @@ export function printHelp(topic = "") {
       "",
       "  mcp list|add|remove|sync",
       "                     Manage connectors in the 3p profile. sync re-detects",
-      "                     from Desktop sessions, the pre-FireConnect config, and",
+      "                     from Desktop sessions, the pre-Nexus config, and",
       "                     the org's claude.ai connector registry (via the Claude",
       "                     Code CLI when installed).",
       "",
-      "`off` restores only what FireConnect changed (profiles, device config,",
-      "services) and removes only FireConnect-owned artifacts.",
+      "`off` restores only what Nexus changed (profiles, device config,",
+      "services) and removes only Nexus-owned artifacts.",
       "Quit and reopen Claude Desktop after on/off.",
       "",
-      "Requirements: macOS, a stored Fireworks credential (`fireconnect login`).",
+      "What stays with your claude.ai subscription:",
+      ...CLAUDE_DESKTOP_WORKSPACE_NOTES.map((note) => `  - ${note}`),
+      "",
+      "Requirements: macOS or Linux, a stored Fireworks credential",
+      "(`nexus login`). Linux support is unofficial: Anthropic documents",
+      "third-party mode for macOS and Windows only.",
     ),
     login: helpLines(
       `Usage: ${CLI_NAME} login [options]`,
@@ -404,18 +396,48 @@ export function printHelp(topic = "") {
         OPT_HOME,
       ]),
     ),
+    harnesses: helpLines(
+      `Usage: ${CLI_NAME} harnesses [options]`,
+      "",
+      "List every supported harness and whether Nexus has connected it on this machine.",
+      "",
+      optBlock("Options", [
+        ["--json", "Machine-readable JSON output."],
+        OPT_HOME,
+      ]),
+    ),
     configure: helpLines(
       `Usage: ${CLI_NAME} configure [options]`,
       "",
-      "Set default provider and BYOK keys for firerouter. Use `fireconnect login` for your Fireworks key.",
+      "Set default provider and saved BYOK keys. Use `nexus login` for your Fireworks key.",
       "",
       optBlock("Options", [
         ["--provider <name>", "fireworks (default) or azure."],
         ["--base-url <url>", "Foundry URL (with --provider azure)."],
         ["--api-key <key>", "Foundry endpoint key (azure only)."],
-        ["--anthropic-api-key <key>", "Anthropic key for firerouter."],
-        ["--openai-api-key <key>", "OpenAI key for firerouter."],
+        ["--anthropic-api-key <key>", "Anthropic key to save."],
+        ["--openai-api-key <key>", "OpenAI key to save."],
         ["--unset <key>", "Clear a saved key (anthropic-api-key or openai-api-key), here and in every harness."],
+        OPT_HOME,
+      ]),
+    ),
+    auto: helpLines(
+      `Usage: ${CLI_NAME} auto [options]`,
+      "",
+      "Customize the auto router. Bare `nexus auto` shows the current settings.",
+      "",
+      "In the default, Auto-selects the best model for each turn,",
+      "based on your setup. Use this command to narrow that down:",
+      "for example, to Fireworks-hosted models only. The change is global",
+      "(not per harness): run it once, then run `nexus <harness>` again",
+      "for each harness you use, so it takes effect there.",
+      "",
+      "Your account's model restrictions always apply first.",
+      "",
+      optBlock("Options", [
+        ["--providers <list>", "Providers auto may route to, comma-separated (fireworks means models hosted on Fireworks; the only one supported today)."],
+        ["--reset", "Remove the extra filter and go back to the default."],
+        ["--json", "Machine-readable output."],
         OPT_HOME,
       ]),
     ),
@@ -423,14 +445,15 @@ export function printHelp(topic = "") {
     uninstall: helpLines(
       `Usage: ${CLI_NAME} uninstall`,
       "",
-      "Disable all harnesses and remove FireConnect (~/.fireconnect/, CLI launcher).",
+      "Disable all harnesses and remove Nexus (~/.nexus/, CLI launcher).",
     ),
-    upgrade: helpLines(
-      `Usage: ${CLI_NAME} upgrade`,
+    update: helpLines(
+      `Usage: ${CLI_NAME} update`,
       "",
-      "Update FireConnect (curl/git install only).",
+      "Update Nexus (curl/git install only). `upgrade` is an alias.",
     ),
   };
+  harnessHelp.upgrade = harnessHelp.update;
 
   if (topic && harnessHelp[topic]) {
     console.log(colorizeHelp(harnessHelp[topic]));
@@ -438,23 +461,11 @@ export function printHelp(topic = "") {
   }
 
   console.log(colorizeHelp(helpLines(
-    "FireConnect — use Fireworks models in AI coding tools.",
+    "Nexus — use Fireworks models in AI coding tools.",
     "",
     `Usage: ${CLI_NAME} [<harness> [command]] [options]`,
     "",
-    cmdBlock("Harnesses", [
-      ["claude", "Claude Code"],
-      ["claude-desktop", "Claude Desktop (Fireworks inference)"],
-      ["opencode", "OpenCode"],
-      ["codex", "Codex CLI & ChatGPT app"],
-      ["chatgpt", "Codex CLI & ChatGPT app"],
-      ["pi", "Pi"],
-      ["cursor", "Cursor IDE"],
-      ["vscode", "VS Code Chat"],
-      ["copilot-app", "GitHub Copilot desktop app"],
-      ["copilot-cli", "GitHub Copilot CLI"],
-      ["deepseek", "DeepSeek Harness (dsh)"],
-    ]),
+    cmdBlock("Harnesses", HARNESS_ROWS),
     "",
     cmdBlock("Harness commands", [
       ["on", "Route the harness through Fireworks (default when omitted)."],
@@ -470,11 +481,14 @@ export function printHelp(topic = "") {
       ["login", "Sign in to Fireworks."],
       ["logout", "Clear stored credentials."],
       ["status", "Show sign-in state, machine environment, and key storage."],
+      ["harnesses", "List every supported harness and whether it is connected."],
       ["model list", "Browse serverless models."],
       ["models", "Alias for model list."],
       ["configure", "Set provider and BYOK keys."],
-      ["upgrade", "Update FireConnect."],
-      ["uninstall", "Remove FireConnect."],
+      ["auto", "Customize the auto router (which providers it may use)."],
+      ["update", "Update Nexus."],
+      ["upgrade", "Alias for update."],
+      ["uninstall", "Remove Nexus."],
       ["help", "Show help (`help <topic>` or `<harness> help`)."],
     ]),
     "",
@@ -504,7 +518,7 @@ async function readInstalledVersion(installDir) {
 export function runVersionCommand(ctx) {
   const version = readLocalVersion();
   if (!version) {
-    throw new Error("Unable to determine FireConnect version.");
+    throw new Error("Unable to determine Nexus version.");
   }
 
   if (ctx.json) {
@@ -517,7 +531,7 @@ export function runVersionCommand(ctx) {
 
 /**
  * Hidden easter-egg entry point — not listed in help. Use for local preview;
- * install.sh uses bin/fireconnect-banner.mjs directly.
+ * install.sh uses bin/nexus-banner.mjs directly.
  */
 export function runBannerCommand() {
   printBanner({ version: readLocalVersion() || undefined });
@@ -531,7 +545,7 @@ export function runBannerCommand() {
  */
 export async function runFinalizeInstallCommand(ctx = {}) {
   const home = ctx.home || process.env.HOME || "";
-  const installDir = home ? path.join(home, ".fireconnect/cli") : "";
+  const installDir = home ? path.join(home, DATA_DIRNAME, "cli") : "";
   await finalizeInstallOrUpgrade({ home, installDir });
 }
 
@@ -573,16 +587,16 @@ export async function runUpgradeCommand({
   runtimeDepsPresent = runtimeDepsInstalled,
 } = {}) {
   if (!home) {
-    throw new Error("HOME is not set; upgrade requires HOME to be set.");
+    throw new Error("HOME is not set; update requires HOME to be set.");
   }
-  const installDir = path.join(home, ".fireconnect/cli");
+  const installDir = path.join(home, DATA_DIRNAME, "cli");
 
   printBannerFn();
 
   if (!exists(path.join(installDir, ".git"))) {
-    infoFn("Nothing to upgrade: FireConnect was not installed via the curl installer.");
+    infoFn("Nothing to update: Nexus was not installed via the curl installer.");
     infoFn("Re-run the installer to get the latest version:");
-    infoFn("  curl -fsSL https://raw.githubusercontent.com/fw-ai/fireconnect/main/install.sh | bash");
+    infoFn("  curl -fsSL https://nexus.fireworks.ai/install.sh | bash");
     await finalize(home, installDir);
     return;
   }
@@ -607,11 +621,11 @@ export async function runUpgradeCommand({
     }).trim();
   } catch (error) {
     const detail = error.stderr?.toString().trim() ?? error.message;
-    throw new Error(`Upgrade failed: ${detail}`);
+    throw new Error(`Update failed: ${detail}`);
   }
 
   if (!targetHash) {
-    throw new Error("Upgrade failed: unable to determine the fetched revision.");
+    throw new Error("Update failed: unable to determine the fetched revision.");
   }
 
   const setupDir = path.join(installDir, "packages/setup-cli");
@@ -627,11 +641,11 @@ export async function runUpgradeCommand({
     try {
       execFile(npmBin, ["install", "--omit=dev", "--no-fund", "--no-audit"], {
         cwd: setupDir,
-        env: { ...process.env, FIRECONNECT_SKIP_POSTINSTALL_FINALIZE: "1" },
+        env: { ...process.env, NEXUS_SKIP_POSTINSTALL_FINALIZE: "1" },
         stdio: "inherit",
       });
     } catch (error) {
-      throw new Error(`Upgrade failed: could not install dependencies (${error.message}). Re-run the installer.`);
+      throw new Error(`Update failed: could not install dependencies (${error.message}). Re-run the installer.`);
     }
   };
 
@@ -659,7 +673,7 @@ export async function runUpgradeCommand({
     installedVersion: before,
   });
   if (!claudePreflight.proceed) {
-    infoFn("Upgrade cancelled.");
+    infoFn("Update cancelled.");
     return;
   }
 
@@ -667,7 +681,7 @@ export async function runUpgradeCommand({
     execFile("git", ["-C", installDir, "reset", "--hard", targetHash], { stdio: "pipe" });
   } catch (error) {
     const detail = error.stderr?.toString().trim() ?? error.message;
-    throw new Error(`Upgrade failed: ${detail}`);
+    throw new Error(`Update failed: ${detail}`);
   }
 
   const afterHash = targetHash;
@@ -690,9 +704,9 @@ export async function runUpgradeCommand({
 
   if (!claudePreflight.restored) {
     if (before && after && before !== after) {
-      successFn(`Upgraded v${before} → v${after}.`);
+      successFn(`Updated v${before} → v${after}.`);
     } else {
-      successFn(`FireConnect upgraded successfully${after ? ` (v${after})` : ""}.`);
+      successFn(`Nexus updated successfully${after ? ` (v${after})` : ""}.`);
     }
   }
 
@@ -705,8 +719,8 @@ export async function runUpgradeCommand({
   await finalize(home, installDir);
 
   if (claudePreflight.restored) {
-    log("Upgrade complete. Your original Claude Code settings were restored.");
-    log(`To reconnect with FireConnect v${after || before || "unknown"}:\n  fireconnect claude`);
+    log("Update complete. Your original Claude Code settings were restored.");
+    log(`To reconnect with Nexus v${after || before || "unknown"}:\n  nexus claude`);
   }
 }
 
@@ -723,44 +737,7 @@ async function removePath(pathToRemove) {
 }
 
 /**
- * Which harnesses uninstall must restore: the ones that are actually on, and
- * nothing else. A harness FireConnect never turned on has nothing to restore, so
- * listing it would only add "wasn't connected" noise to the checklist and run a
- * no-op `off`.
- *
- * "On" is decided by `isHarnessRouted` — the same check `<harness> off` uses to
- * pick restore-vs-strip. It reads the harness's own config via `providerStatus`
- * rather than trusting FireConnect's `enabled` flag, so a harness whose flag has
- * drifted is still classified by what is actually in its config. That matters in
- * both directions: a stale `true` must not put a harness that was never routed
- * on the checklist, and a stale or missing `false` must not skip one that is
- * routed — skipping it leaves its provider settings in place while the cleanup
- * below deletes its backup, which is unrecoverable (a Cursor left pointed at the
- * Fireworks base URL with its built-in models hidden and no snapshot left).
- *
- * @param {import("../../harness/types.mjs").HarnessContext} ctx
- * @param {string} home
- * @returns {Promise<string[]>} harnesses that are on, in registry order
- */
-async function discoverHarnessesToRestore(ctx, home) {
-  const ids = [];
-  for (const adapter of listHarnesses()) {
-    const on = await isHarnessRouted(adapter, {
-      ...ctx,
-      home,
-      settingsPath: "",
-      configPath: "",
-      dataDir: "",
-    });
-    if (on) {
-      ids.push(adapter.id);
-    }
-  }
-  return ids;
-}
-
-/**
- * Restore one harness's pre-FireConnect config. Interactive uninstall calls
+ * Restore one harness's pre-Nexus config. Interactive uninstall calls
  * this per harness (without `force`) so Cursor/VS Code get the interactive
  * "quit the IDE" wait via their own `prepareOff`; non-interactive uninstall
  * passes `force: true` to skip the wait (CI/scripts). Errors are collected,
@@ -804,9 +781,28 @@ async function restoreHarness(ctx, home, harnessId, force, { quiet = false } = {
 }
 
 /**
+ * Top-level paths an install owns: the CLI checkout, the launchers, and the
+ * data directory, plus a pre-rename ~/.fireconnect an unfinished move left
+ * behind. The whole data directory comes last so
+ * nothing is left behind (update-check.json, key-storage.json, plaintext
+ * .api-key fallback), and after the launchers so a failure removing it doesn't
+ * skip them. (gh fw-ai/nexus-cli#12)
+ * @param {string} home
+ */
+async function installFootprint(home) {
+  return [
+    path.join(home, DATA_DIRNAME, "cli"),
+    ...await ownedLaunchers(home),
+    path.join(home, DATA_DIRNAME),
+    path.join(home, LEGACY_DATA_DIRNAME),
+    path.join(home, LEGACY_ASIDE_DIRNAME),
+  ];
+}
+
+/**
  * Shared tail: remove the shell env hook, stored secret, and the remaining
- * top-level FireConnect files (config, CLI launcher, launcher symlink, the
- * final `~/.fireconnect` sweep). Per-harness data dirs are deleted earlier in
+ * top-level Nexus files (config, CLI launcher, launcher symlink, the
+ * final `~/.nexus` sweep). Per-harness data dirs are deleted earlier in
  * the interactive path; in the non-interactive path they're included here.
  *
  * @param {string} home
@@ -836,13 +832,7 @@ async function removeFireConnectFiles(home, removeCatalog, { skipPerHarnessDirs,
     ...perHarnessDirs.map((dir) => path.join(home, dir)),
     ...(removeCatalog ? [path.join(home, CODEX_CATALOG_RELATIVE_PATH)] : []),
     globalConfigPath(home),
-    path.join(home, ".fireconnect/cli"),
-    path.join(home, ".local/bin/fireconnect"),
-    // Final sweep: remove the whole ~/.fireconnect dir last so nothing is left
-    // behind (update-check.json, update-check.lock, key-storage.json, plaintext
-    // .api-key fallback). Listed after the CLI binary so a failure removing the
-    // dir doesn't skip binary removal. (gh fw-ai/fireconnect#12)
-    path.join(home, ".fireconnect"),
+    ...await installFootprint(home),
   ];
 
   const removalFailures = [];
@@ -852,20 +842,20 @@ async function removeFireConnectFiles(home, removeCatalog, { skipPerHarnessDirs,
       removalFailures.push(failure);
     }
   }
-  await reportStep?.("FireConnect files");
+  await reportStep?.("Nexus files");
   return removalFailures;
 }
 
 /**
  * Uninstall is mostly instant, which makes the checklist flash past in one
  * frame — the user can't tell what was restored. A short beat between steps
- * makes it legible. Interactive runs only; skipped under FIRECONNECT_TEST so
+ * makes it legible. Interactive runs only; skipped under NEXUS_TEST so
  * suites don't pay for it.
  * @param {boolean} interactive
  * @param {number} [ms]
  */
 async function pace(interactive, ms = 220) {
-  if (!interactive || process.env.FIRECONNECT_TEST === "1") {
+  if (!interactive || process.env.NEXUS_TEST === "1") {
     return;
   }
   await new Promise((resolve) => setTimeout(resolve, ms));
@@ -873,7 +863,7 @@ async function pace(interactive, ms = 220) {
 
 /**
  * Reported when a harness could not be restored, so uninstall stopped before
- * removing FireConnect. Harnesses restored earlier in the run stay restored —
+ * removing Nexus. Harnesses restored earlier in the run stay restored —
  * that is the desired end state for them — so the message says so rather than
  * claiming nothing happened.
  * @param {{ harnessId: string, label: string, message: string }[]} offErrors
@@ -881,7 +871,7 @@ async function pace(interactive, ms = 220) {
  */
 function printUninstallAborted(offErrors, restoredLabels) {
   console.log("");
-  console.log("  Stopped before removing FireConnect.");
+  console.log("  Stopped before removing Nexus.");
   console.log("");
   for (const { label, message } of offErrors) {
     console.log(`  ${label} could not be restored:`);
@@ -892,18 +882,18 @@ function printUninstallAborted(offErrors, restoredLabels) {
     console.log(`  Already restored, and left that way: ${restoredLabels.join(", ")}.`);
   }
   console.log("");
-  console.log("  FireConnect is still installed and your backups are intact, so it");
+  console.log("  Nexus is still installed and your backups are intact, so it");
   console.log("  is safe to resolve the above and run the same command again:");
   console.log(`    ${accent(`${CLI_NAME} uninstall`)}`);
   console.log("");
-  console.log("  To remove FireConnect regardless, without waiting on an editor");
+  console.log("  To remove Nexus regardless, without waiting on an editor");
   console.log("  (a running editor may overwrite the restore):");
   console.log(`    ${accent(`${CLI_NAME} uninstall --force`)}`);
   console.log("");
 }
 
 /**
- * Parting message after a clean uninstall. FireConnect edits the user's tools,
+ * Parting message after a clean uninstall. Nexus edits the user's tools,
  * so the important line is "your originals are back" — the send-off is warm
  * but the actionable facts (restart, how to come back) come first.
  * @param {string[]} restoredLabels
@@ -914,14 +904,14 @@ function printFarewell(restoredLabels) {
     console.log(`  Your original settings are back in ${restoredLabels.join(", ")}.`);
     console.log("  Restart anything still open to pick them up.");
   } else {
-    console.log("  No tool settings were touched — nothing to restore.");
+    console.log("  No harness settings were touched, so there is nothing to restore.");
   }
   console.log("");
   console.log("  Sad to see you go! If something pushed you away, we'd like to know:");
-  console.log(`    ${accent("https://github.com/fw-ai/fireconnect/issues")}`);
+  console.log(`    ${accent("https://github.com/fw-ai/nexus-cli/issues")}`);
   console.log("");
   console.log("  Reinstall anytime:");
-  console.log(`    ${accent("curl -fsSL https://raw.githubusercontent.com/fw-ai/fireconnect/main/install.sh | bash")}`);
+  console.log(`    ${accent("curl -fsSL https://nexus.fireworks.ai/install.sh | bash")}`);
   console.log("");
 }
 
@@ -932,7 +922,7 @@ function printFarewell(restoredLabels) {
 function printUninstallSummary({ offErrors, removalFailures }) {
   const hasErrors = offErrors.length > 0 || removalFailures.length > 0;
   if (!hasErrors) {
-    console.log("FireConnect has been uninstalled. Restart any running harnesses (Claude Code, OpenCode, Codex, Pi, Cursor, VS Code, Copilot, DeepSeek Harness) to fully apply.");
+    console.log("Nexus has been uninstalled. Restart any running harnesses (Claude Code, OpenCode, Codex, Pi, Cursor, VS Code, Copilot, DeepSeek Harness) to fully apply.");
     return;
   }
   for (const { harnessId, label, message } of offErrors) {
@@ -940,19 +930,19 @@ function printUninstallSummary({ offErrors, removalFailures }) {
     console.error(`Restart ${label} manually to clear any Fireworks settings.`);
   }
   if (removalFailures.length > 0) {
-    console.error("FireConnect uninstall completed with file removal errors:");
+    console.error("Nexus uninstall completed with file removal errors:");
     for (const { path: failedPath, message } of removalFailures) {
       console.error(`  ${failedPath}: ${message}`);
     }
   } else {
-    console.log("FireConnect files removed. Restart any running harnesses to fully apply.");
+    console.log("Nexus files removed. Restart any running harnesses to fully apply.");
   }
   process.exitCode = 1;
 }
 
 /**
- * Uninstall FireConnect: restore each enabled harness's pre-FireConnect
- * config, then remove FireConnect's own files.
+ * Uninstall Nexus: restore each enabled harness's pre-Nexus
+ * config, then remove Nexus's own files.
  *
  * Interactive (TTY, no --force): restore harnesses one by one as a checklist.
  * Cursor/VS Code get the interactive "quit the IDE" wait (their `prepareOff`
@@ -977,7 +967,8 @@ export async function runUninstallCommand(ctx) {
     throw new Error("uninstall does not support path overrides");
   }
 
-  const harnessIds = await discoverHarnessesToRestore(ctx, home);
+  // Only harnesses that are actually on: one never routed has nothing to restore.
+  const harnessIds = await listRoutedHarnessIds(ctx, home);
   // Interactive only when stdin is a TTY and the user didn't pass --force.
   // This mirrors `ensureIdeStopped`'s own TTY gate, so the two stay consistent:
   // a non-TTY (CI/pipe) keeps the historical force-restore-all behavior.
@@ -990,23 +981,22 @@ export async function runUninstallCommand(ctx) {
 
   if (interactive) {
     if (harnessIds.length === 0) {
-      // No harness is on, but FireConnect itself may still be
-      // installed (CLI launcher, ~/.fireconnect, stored key). Don't bail —
+      // No harness is on, but Nexus itself may still be
+      // installed (CLI launcher, ~/.nexus, stored key). Don't bail —
       // fall through to file removal. Only say "not installed" when there
-      // are no harnesses AND no FireConnect files on disk.
-      if (!existsSync(path.join(home, ".fireconnect"))
-        && !existsSync(path.join(home, ".local/bin/fireconnect"))) {
-        console.log("FireConnect is not installed.");
+      // are no harnesses AND no Nexus files on disk.
+      if (!(await installFootprint(home)).some((file) => existsSync(file))) {
+        console.log("Nexus is not installed.");
         return;
       }
     }
 
     console.log("");
-    console.log(`  Uninstalling ${accent("FireConnect")}`);
+    console.log(`  Uninstalling ${accent("Nexus")}`);
 
     if (harnessIds.length > 0) {
       console.log("");
-      console.log("  Restoring your tools");
+      console.log("  Restoring your harnesses");
       // Pad labels so the ✓ column lines up regardless of name length.
       const width = Math.max(...harnessIds.map((id) => getHarness(id).label.length));
 
@@ -1055,7 +1045,7 @@ export async function runUninstallCommand(ctx) {
   }
 
   // A harness that failed to restore is still routed through Fireworks, and its
-  // backup under ~/.fireconnect/<id> is the only way back. Stop before any
+  // backup under ~/.nexus/<id> is the only way back. Stop before any
   // destructive cleanup so that backup — plus the config and the CLI needed to
   // use it — survives for a retry. The most likely trigger is the user
   // declining to quit Cursor; deleting their backup in response to "no" would
@@ -1140,6 +1130,11 @@ export async function runGlobalCommand(parsed) {
     return;
   }
 
+  if (command === "harnesses") {
+    await runHarnessesCommand(ctx);
+    return;
+  }
+
   if (command === "model" && parsed.modelSubcommand === "list") {
     await runGlobalModelListCommand(ctx);
     return;
@@ -1150,13 +1145,18 @@ export async function runGlobalCommand(parsed) {
     return;
   }
 
+  if (command === "auto") {
+    await runAutoCommand(ctx);
+    return;
+  }
+
   if (command === "key") {
     const { runKeyCommand } = await import("./key.mjs");
     await runKeyCommand(ctx, parsed.keySubcommand);
     return;
   }
 
-  if (command === "upgrade") {
+  if (command === "update") {
     await runUpgradeCommand();
     return;
   }

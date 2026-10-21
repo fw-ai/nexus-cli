@@ -6,19 +6,19 @@ import {
   autoCatalogEntry,
   autoCatalogEntryId,
   filterCatalogBySearch,
-  catalogWithAutomaticFirerouter,
   isAutoCatalogEntry,
   loadServerlessCatalog,
   preferLatestAliases,
 } from "./models.mjs";
 import { stripViaFireworksSuffix } from "./label-suffix.mjs";
 import { refreshListPriceCache } from "../pricing/list-price-cache.mjs";
-import { KNOWN_AUTO_MODEL_IDS } from "./model-id.mjs";
+import { KNOWN_AUTO_MODEL_IDS, isRetiredModelId } from "./model-id.mjs";
+import { autoTagline, firerouterTagline } from "../firerouter/core.mjs";
 import { bold, dim, warn, withSpinner } from "../ui.mjs";
 
 export function formatCatalogUpdatedAt(updatedAt, timeZone = undefined) {
   if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
-    return "bundled with FireConnect";
+    return "bundled with Nexus";
   }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -42,7 +42,7 @@ function printCatalogFooter(displayCount, updatedAt) {
     ? ""
     : `${displayCount} model${displayCount === 1 ? "" : "s"} · `;
   console.log(dim(`${count}Last updated: ${formatCatalogUpdatedAt(updatedAt)}`));
-  console.log(dim("Refresh catalog: fireconnect model list --refresh"));
+  console.log(dim("Refresh catalog: nexus model list --refresh"));
 }
 
 function displayName(entry) {
@@ -158,18 +158,17 @@ function formatTable(catalog, widths, showPricing) {
 
 /** One-liner per smart router, shown under the SMART ROUTERS table. */
 export const SMART_ROUTER_NOTES = {
-  auto: "cost-aware default mix of open models",
-  "auto-instant": "latency-first mix of open models",
-  firerouter: "cost-saving routing between closed and open models",
+  auto: autoTagline("auto"),
+  "auto-instant": autoTagline("auto-instant"),
+  firerouter: firerouterTagline("firerouter"),
 };
 
 export function formatCatalogSections(sections) {
   const catalog = sections.flatMap((section) => section.entries);
   const widths = tableWidths(catalog);
-  // Fire Pass is a subscription — no per-model metered pricing to display.
   const showPricing = catalog.some((entry) => entry.pricing);
   const lines = [
-    bold("FireConnect coding models"),
+    bold("Nexus coding models"),
     ...(showPricing ? [dim("Prices in USD per 1M tokens.")] : []),
   ];
 
@@ -179,21 +178,19 @@ export function formatCatalogSections(sections) {
       : section.title;
     lines.push("", bold(heading), formatTable(section.entries, widths, showPricing));
     if (section.title === "SMART ROUTERS") {
-      for (const entry of section.entries) {
-        const note = SMART_ROUTER_NOTES[entry.shortId];
-        if (note) {
-          lines.push(dim(`  ${entry.shortId}: ${note}`));
-        }
+      const noted = section.entries.filter((entry) => SMART_ROUTER_NOTES[entry.shortId]);
+      const labelWidth = Math.max(0, ...noted.map((entry) => entry.shortId.length + 1));
+      for (const entry of noted) {
+        lines.push(dim(`  ${`${entry.shortId}:`.padEnd(labelWidth)}  ${SMART_ROUTER_NOTES[entry.shortId]}`));
       }
     }
   }
   return lines.join("\n");
 }
 
-function enrichCatalogWithPricing(catalog, { firepass = false } = {}) {
+function enrichCatalogWithPricing(catalog) {
   return catalog.map((entry) => {
-    // Fire Pass is a subscription — no per-model metered pricing to display.
-    const pricing = firepass ? null : attachPricing(entry.id);
+    const pricing = attachPricing(entry.id);
     return {
       ...entry,
       ...resolveModelDisplayMetadata(entry.id),
@@ -203,33 +200,26 @@ function enrichCatalogWithPricing(catalog, { firepass = false } = {}) {
   });
 }
 
-export function globalListIncludesFirerouter(keyType) {
-  return keyType !== "firepass";
-}
-
-/** Fire Pass advertises only its own curated routers, so `auto` is standard-key only. */
-export function globalListIncludesAuto(keyType) {
-  return keyType !== "firepass";
-}
-
 /**
  * Add the synthesized auto-mix rows for display. The gateway serves them
  * without listing them, so `model list` is the only place they can come from.
  *
  * Rows come from KNOWN_AUTO_MODEL_IDS, not from the `auto-*` matcher that
- * governs acceptance: a name can only be advertised once FireConnect knows it
+ * governs acceptance: a name can only be advertised once Nexus knows it
  * exists, while `--model` stays free to pass a newer mix straight through.
  * @param {import("./models.mjs").CatalogEntry[]} catalog
  */
-export function catalogWithAutoEntry(catalog, keyType) {
-  if (!globalListIncludesAuto(keyType)) {
-    return catalog;
-  }
-  const present = new Set(catalog.map(autoCatalogEntryId).filter(Boolean));
+export function catalogWithAutoEntry(catalog) {
+  // Retired routes/mixes never display, even in a hand-built catalog.
+  const supported = catalog.filter((entry) => (
+    !isRetiredModelId(entry?.shortId ?? "")
+    && !isRetiredModelId(entry?.id ?? "")
+  ));
+  const present = new Set(supported.map(autoCatalogEntryId).filter(Boolean));
   const missing = KNOWN_AUTO_MODEL_IDS
     .filter((id) => !present.has(id))
     .map((id) => autoCatalogEntry(id));
-  return missing.length ? [...missing, ...catalog] : catalog;
+  return missing.length ? [...missing, ...supported] : supported;
 }
 
 export async function runModelListCommand({ options, apiKey }) {
@@ -237,37 +227,31 @@ export async function runModelListCommand({ options, apiKey }) {
   // List prices refresh on the same cadence as the catalog read below: stale
   // caches warm in the background of every `model list`, `--refresh` forces.
   await refreshListPriceCache({ force: refresh });
-  const { catalog, keyType, source, updatedAt } = await withSpinner(
+  const { catalog, source, updatedAt } = await withSpinner(
     refresh ? "Refreshing Fireworks model catalog…" : "Fetching Fireworks model catalog…",
     () => loadServerlessCatalog({ apiKey, refresh }),
   );
 
+  // Retired routes (FireRouter, `auto-instant`) are never listed, whether
+  // the gateway still returns the row or Nexus would have synthesized one.
   const fullCatalog = catalogWithAutoEntry(
-    catalogWithAutomaticFirerouter(catalog, keyType, {
-      includeFirerouter: globalListIncludesFirerouter(keyType),
-    }),
-    keyType,
+    catalog.filter((entry) => (
+      !isRetiredModelId(entry?.shortId ?? "")
+      && !isRetiredModelId(entry?.id ?? "")
+    )),
   );
 
-  const enriched = enrichCatalogWithPricing(fullCatalog, {
-    firepass: keyType === "firepass",
-  });
+  const enriched = enrichCatalogWithPricing(fullCatalog);
 
   if (options.json) {
     const filtered = filterCatalogBySearch(enriched, options.search);
     console.log(JSON.stringify({
-      keyType,
       source,
       updatedAt: catalogUpdatedAtIso(updatedAt),
       count: filtered.length,
       models: filtered,
     }, null, 2));
     return;
-  }
-
-  if (keyType === "firepass") {
-    console.log(warn("Fire Pass key: showing Fire Pass-supported serverless routers."));
-    console.log("");
   }
 
   // A refresh that couldn't reach the gateway falls back to the last snapshot,

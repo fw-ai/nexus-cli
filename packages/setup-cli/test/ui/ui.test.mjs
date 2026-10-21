@@ -24,7 +24,7 @@ import {
 import { runFireconnect } from "../helpers.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const BANNER_SCRIPT = path.join(__dirname, "../../bin/fireconnect-banner.mjs");
+const BANNER_SCRIPT = path.join(__dirname, "../../bin/nexus-banner.mjs");
 
 function runBannerScript(args = [], env = {}) {
   return new Promise((resolve, reject) => {
@@ -244,7 +244,7 @@ describe("ui banner", () => {
     try {
       printBanner();
       const output = chunks.join("");
-      assert.match(output, /FireConnect/);
+      assert.match(output, /Nexus/);
       assert.match(output, /Ignite your Harness/);
       assert.doesNotMatch(output, /\x1b\[/);
     } finally {
@@ -262,7 +262,7 @@ describe("fireconnect banner command", () => {
   it("prints banner art (hidden command, not in help)", async () => {
     const { code, stdout } = await runFireconnect(["banner"], { NO_COLOR: "1" });
     assert.equal(code, 0);
-    assert.match(stdout, /FireConnect/);
+    assert.match(stdout, /Nexus/);
     assert.match(stdout, /Ignite your Harness/);
   });
 
@@ -277,7 +277,7 @@ describe("fireconnect-banner internal script", () => {
   it("prints install success context without art when --success-only", async () => {
     const { code, stdout } = await runBannerScript(["--context", "install", "--success-only"], { NO_COLOR: "1" });
     assert.equal(code, 0);
-    assert.match(stdout, /FireConnect is installed\./);
+    assert.match(stdout, /Nexus is installed\./);
     assert.doesNotMatch(stdout, /Ignite your Harness/);
   });
 
@@ -285,6 +285,6 @@ describe("fireconnect-banner internal script", () => {
     const { code, stdout } = await runBannerScript(["--context", "install"], { NO_COLOR: "1" });
     assert.equal(code, 0);
     assert.match(stdout, /Ignite your Harness/);
-    assert.match(stdout, /FireConnect is installed\./);
+    assert.match(stdout, /Nexus is installed\./);
   });
 });

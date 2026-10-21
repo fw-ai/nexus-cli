@@ -13,7 +13,7 @@ import { formatUsageCost } from "../../../../lib/harnesses/claude/usage/format.m
 
 function lastInteractiveFrame(text) {
   const plain = String(text).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, "");
-  const index = plain.lastIndexOf("fireconnect usage");
+  const index = plain.lastIndexOf("nexus usage");
   return index === -1 ? plain : plain.slice(index);
 }
 
@@ -66,7 +66,7 @@ describe("claude usage display", () => {
     };
 
     const text = formatClaudeUsageSummaryDisplay(report, { stream: { isTTY: false } });
-    assert.match(text, /fireconnect usage · last 1 session/);
+    assert.match(text, /nexus usage · last 1 session/);
     assert.match(text, /TOTAL SPEND/);
     assert.match(text, /\$0\.16/);
     assert.match(text, /SESSIONS/);
@@ -220,9 +220,9 @@ describe("claude usage display", () => {
     };
 
     const text = formatClaudeUsageReportsSummaryDisplay(reportGroup, { stream: { isTTY: false } });
-    assert.match(text, /fireconnect usage · session 1 of 2/);
-    assert.match(text, /fireconnect usage · session 2 of 2/);
-    assert.match(text, /fireconnect usage · last 2 sessions/);
+    assert.match(text, /nexus usage · session 1 of 2/);
+    assert.match(text, /nexus usage · session 2 of 2/);
+    assert.match(text, /nexus usage · last 2 sessions/);
     assert.match(text, /\$5\.80/);
     assert.match(text, /SESSION\s+COST\s+CALLS\s+SHARE\s+%/);
     assert.match(text, /▸ 33333333 Newest session/);
@@ -233,9 +233,9 @@ describe("claude usage display", () => {
     assert.match(text, /▾ 22222222\s+Middle session/);
     assert.equal(text.match(/MODEL\s+COST\s+SHARE\s+%/g)?.length, 2);
     assert.equal(text.match(/glm-5p2/g)?.length, 2);
-    const firstDetail = text.indexOf("fireconnect usage · session 1 of 2");
-    const secondDetail = text.indexOf("fireconnect usage · session 2 of 2");
-    const combinedSummary = text.indexOf("fireconnect usage · last 2 sessions");
+    const firstDetail = text.indexOf("nexus usage · session 1 of 2");
+    const secondDetail = text.indexOf("nexus usage · session 2 of 2");
+    const combinedSummary = text.indexOf("nexus usage · last 2 sessions");
     assert.ok(firstDetail < secondDetail && secondDetail < combinedSummary);
     assert.match(text.slice(combinedSummary), /\$5\.80[\s\S]*2[\s\S]*2[\s\S]*1M in · 1M out/);
     assert.doesNotMatch(text, /================ start session/);
@@ -299,7 +299,7 @@ describe("claude usage display", () => {
     };
 
     const collapsed = formatClaudeUsageInteractiveFrame(reportGroup, {}, { stream: { isTTY: false, columns: 140 } });
-    assert.match(collapsed, /fireconnect usage · last 2 sessions/);
+    assert.match(collapsed, /nexus usage · last 2 sessions/);
     assert.match(collapsed, /Cost estimate:/);
     assert.match(collapsed, /Fireworks-served model estimate per request: \(input \* input rate/);
     assert.match(collapsed, /Anthropic model usage is fetched from session logs; estimated cost is calculated from local rates/);

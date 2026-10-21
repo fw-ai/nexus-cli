@@ -1,5 +1,5 @@
 /**
- * Shared re-`on` refresh policy for FireConnect-managed picker catalogs.
+ * Shared re-`on` refresh policy for Nexus-managed picker catalogs.
  *
  * Every harness stores its catalog in its own format — a JSON catalog file
  * (codex), provider model maps (opencode / copilot CLI), SQLite rows (copilot app),

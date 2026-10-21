@@ -18,7 +18,7 @@ describe("finalizeInstallOrUpgrade", () => {
       const calls = [];
       const result = await finalizeInstallOrUpgrade({
         home,
-        installDir: `${home}/.fireconnect/cli`,
+        installDir: `${home}/.nexus/cli`,
         setupDir: "/nonexistent-setup-for-test",
         log: (...args) => calls.push(["log", ...args]),
         ensureDeps: (dir) => {
@@ -41,18 +41,28 @@ describe("finalizeInstallOrUpgrade", () => {
           calls.push(["codexSignIn", h]);
           return ["Switched Codex to its own sign-in."];
         },
+        refreshCatalog: async (h) => {
+          calls.push(["refreshCatalog", h]);
+        },
+        rename: async (h) => {
+          calls.push(["rename", h]);
+          return ["Moved ~/.fireconnect to ~/.nexus."];
+        },
       });
 
       assert.equal(result.migrated, true);
       assert.deepEqual(result.notes, [
+        "Moved ~/.fireconnect to ~/.nexus.",
         "Enabled MCP tool search for Claude Code (ENABLE_TOOL_SEARCH) — restart Claude Code to pick it up.",
         "Rebaked Claude Code API key — restart Claude Code to pick it up.",
         "Switched Codex to its own sign-in.",
       ]);
-      // Codex's re-on runs after the rebake, so it reuses a literal key.
+      // The rename runs before any network work: open harness sessions call
+      // the paths it repoints. Codex's re-on runs after the rebake, so it
+      // reuses a literal key.
       assert.deepEqual(
         calls.filter(([name]) => name !== "log").map(([name]) => name),
-        ["reprobe", "migrate", "reconcile", "codexSignIn"],
+        ["rename", "reprobe", "refreshCatalog", "migrate", "reconcile", "codexSignIn"],
       );
       assert.ok(calls.some(([name, msg]) => name === "log" && /Moved Fireworks API key/.test(String(msg))));
       assert.ok(calls.some(([name, msg]) => name === "log" && /ENABLE_TOOL_SEARCH/.test(String(msg))));

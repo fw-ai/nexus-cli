@@ -2,7 +2,7 @@
  * The models stock Codex lists in its picker, as Codex's own catalog rows.
  *
  * `codex debug models` prints the catalog Codex would load, in the same format
- * as `model_catalog_json`. FireConnect's `model_catalog_json` replaces that
+ * as `model_catalog_json`. Nexus's `model_catalog_json` replaces that
  * list and stops Codex refreshing it, so the command runs in a throwaway
  * CODEX_HOME whose `auth.json` is a symlink to the user's. Codex rewrites that
  * file in place, so a token refreshed during the run lands in the real file.
@@ -127,16 +127,16 @@ export function cachedCodexStockModels() {
 /**
  * Re-read stock Codex's catalog and cache it. Best-effort and bounded: a
  * missing Codex, a failed run, or a timeout keeps the previous rows. Never
- * runs Codex under FIRECONNECT_TEST; specs describe the catalog in
- * FIRECONNECT_TEST_CODEX_MODELS (a `codex debug models` document) instead.
+ * runs Codex under NEXUS_TEST; specs describe the catalog in
+ * NEXUS_TEST_CODEX_MODELS (a `codex debug models` document) instead.
  * @param {{ codexHome: string }} opts
  * @returns {Promise<boolean>} true when fresh rows were cached
  */
 export async function refreshCodexStockModels({ codexHome }) {
   let rows = [];
   try {
-    rows = process.env.FIRECONNECT_TEST === "1"
-      ? parseCodexCatalogModels(JSON.parse(process.env.FIRECONNECT_TEST_CODEX_MODELS || "null"))
+    rows = process.env.NEXUS_TEST === "1"
+      ? parseCodexCatalogModels(JSON.parse(process.env.NEXUS_TEST_CODEX_MODELS || "null"))
       : await readStockCatalog(codexHome);
   } catch {
     return false;

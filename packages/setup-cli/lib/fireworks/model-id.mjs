@@ -39,9 +39,6 @@ export const KIMI_FAST_LATEST_ROUTER_ID =
 export const DEEPSEEK_FLASH_LATEST_ROUTER_ID =
   "accounts/fireworks/routers/deepseek-flash-latest";
 export const DEFAULT_MAIN_MODEL = AUTO_MODEL_ID;
-// Fire Pass keeps a concrete router pin: the mix's auto router needs no bare-slug
-// catalog entry, and Fire Pass keys can't list the catalog to resolve one.
-export const DEFAULT_FIREPASS_MAIN_MODEL = "kimi-fast-latest";
 
 export function resolveDefaultMainModel() {
   return DEFAULT_MAIN_MODEL;
@@ -123,6 +120,39 @@ export function isFirerouterRouteRef(model) {
     && segment !== ".."
     && !/\s/.test(segment)
   ));
+}
+
+/**
+ * Whether a model id is the retired `auto-instant` mix. Recognition stays
+ * (labels, pricing, migration of stored selections); only support is gone.
+ * @param {string} model
+ * @returns {boolean}
+ */
+export function isAutoInstantModelId(model) {
+  return canonicalAutoModelId(model) === AUTO_INSTANT_MODEL_ID;
+}
+
+/**
+ * Whether a model id names a retired selection Nexus no longer supports:
+ * any FireRouter route, or the `auto-instant` mix.
+ * @param {string} model
+ * @returns {boolean}
+ */
+export function isRetiredModelId(model) {
+  return isFirerouterModelPattern(model) || isAutoInstantModelId(model);
+}
+
+/**
+ * The model a retired selection moves to when Nexus drops it on upgrade or
+ * a plain re-`on`: the `auto` mix. Supported ids pass through unchanged.
+ * New selections never reach this helper (they are rejected at admission);
+ * it only rewrites selections Nexus itself is carrying over from an
+ * earlier `on`.
+ * @param {string} model
+ * @returns {string}
+ */
+export function dropRetiredModelId(model) {
+  return isRetiredModelId(model) ? AUTO_MODEL_ID : model;
 }
 
 /**
@@ -226,10 +256,47 @@ export function isClaudeNativeSlotAlias(model) {
 /**
  * Claude Code `/model` picker aliases that resolve at request time through the
  * matching `ANTHROPIC_DEFAULT_*_MODEL` env slot (opus/sonnet/haiku/fable). They
- * name no concrete model themselves, so FireConnect never writes one — a bare
- * alias in `settings.model` is the user's picker choice, not a FireConnect pin.
+ * name no concrete model themselves, so Nexus never writes one — a bare
+ * alias in `settings.model` is the user's picker choice, not a Nexus pin.
  */
 const CLAUDE_MODEL_ALIASES = new Set(["opus", "sonnet", "haiku", "fable"]);
+
+/** FireRouter's GPT family aliases (`firerouter/sol`, …). */
+export const OPENAI_MODEL_FAMILIES = Object.freeze(["astra", "sol", "luna"]);
+
+/**
+ * Members of a `firerouter/<member>/…` route, lowercased; `[]` for bare
+ * `firerouter` or a non-FireRouter id.
+ * @param {string} model
+ * @returns {string[]}
+ */
+export function firerouterRouteMembers(model) {
+  if (!isFirerouterModelPattern(model) || isFirerouterModel(model)) {
+    return [];
+  }
+  const ref = stripContextSuffix(String(model).trim())
+    .replace(/^accounts\/fireworks\/(?:models|routers)\//i, "")
+    .toLowerCase();
+  return ref.split("/").slice(1).filter(Boolean);
+}
+
+/**
+ * Whether a route member names a closed (Anthropic or OpenAI) model or family.
+ * @param {string} member
+ * @returns {boolean}
+ */
+export function isClosedFirerouterMember(member) {
+  const seg = String(member ?? "").trim().toLowerCase();
+  return seg === "claude"
+    || seg.startsWith("claude-")
+    || CLAUDE_MODEL_ALIASES.has(seg)
+    || OPENAI_MODEL_FAMILIES.includes(seg)
+    || seg === "openai"
+    || seg === "gpt"
+    || seg.startsWith("gpt-")
+    || seg.startsWith("openai-")
+    || /^o\d/.test(seg);
+}
 
 /** Whether a model reference is a bare Claude Code `/model` picker alias. */
 export function isClaudeModelAlias(model) {
@@ -340,6 +407,31 @@ export function normalizeModelId(model) {
 }
 
 /**
+ * Reject a user-supplied retired selection: a FireRouter route or the
+ * `auto-instant` mix. Both are retired: existing installs are migrated off
+ * them on upgrade/re-`on` ({@link dropRetiredModelId}), and new selections
+ * must name `auto` or a concrete Fireworks model. Reading/migrating stored
+ * ids stays allowed — this gate is only for ids a user is asking to store
+ * now.
+ * @param {string} model
+ * @param {string} [flag]
+ */
+export function assertNotFirerouterModelId(model, flag = "--model") {
+  if (isFirerouterModelPattern(model)) {
+    throw new Error(
+      `${flag} ${String(model).trim()} is a FireRouter route, which is no longer supported. `
+      + `Use ${flag} auto instead.`,
+    );
+  }
+  if (isAutoInstantModelId(model)) {
+    throw new Error(
+      `${flag} ${String(model).trim()} is no longer supported. `
+      + `Use ${flag} auto instead.`,
+    );
+  }
+}
+
+/**
  * Id to admit and store. Empty means the harness default.
  * Collapses spellings {@link normalizeModelId} already understands, then
  * applies the shape gate so every harness rejects the same slash forms.
@@ -355,17 +447,17 @@ export function canonicalRequestedModelId(model, flag = "--model") {
   if (isClaudeNativeModel(normalized)) {
     throw new Error(`${flag} ${model.trim()} is not a Fireworks model id.`);
   }
+  assertNotFirerouterModelId(normalized, flag);
   if (normalized) {
     validateModelId(normalized, flag);
   }
   return normalized;
 }
 
-/** Shape only: bare slug, `accounts/…`, or a rooted `firerouter/` route. */
+/** Shape only: bare slug or an `accounts/…` resource. FireRouter routes are rejected above this gate. */
 export function validateModelId(model, flag) {
-  const accepted = !model.includes("/")
-    || /^accounts\//i.test(model)
-    || isFirerouterRouteRef(model);
+  assertNotFirerouterModelId(model, flag);
+  const accepted = !model.includes("/") || /^accounts\//i.test(model);
   if (accepted) {
     return;
   }
@@ -374,8 +466,6 @@ export function validateModelId(model, flag) {
   );
 }
 
-export function defaultMainModel(keyType = "fireworks") {
-  return keyType === "firepass"
-    ? DEFAULT_FIREPASS_MAIN_MODEL
-    : resolveDefaultMainModel();
+export function defaultMainModel() {
+  return resolveDefaultMainModel();
 }

@@ -10,7 +10,7 @@ import { plaintextSecretStoreAvailable } from "./plaintext-secret-store.mjs";
 import { isKeyStorageForcedNull } from "./storage-env.mjs";
 import { cannotStoreKeyMessage, keyStorageSummaryLine } from "./storage-report.mjs";
 import { syncBakedKeysAfterStore } from "./sync.mjs";
-import { isFireworksShapedKey } from "./key-type.mjs";
+import { FIREPASS_KEY_UNSUPPORTED_MESSAGE, isFirePassKey, isFireworksShapedKey } from "./key-type.mjs";
 import { clearMintedKeyState } from "./mint-api-key.mjs";
 import { readSecret } from "../ui/read-secret.mjs";
 import { link } from "../ui/term.mjs";
@@ -44,7 +44,7 @@ export function assertNoFireworksEnvForStorage() {
     return;
   }
   throw new Error(
-    "FIREWORKS_API_KEY is already set. FireConnect will use it without storing another key. "
+    "FIREWORKS_API_KEY is already set. Nexus will use it without storing another key. "
       + "Omit the key option to use the environment value, or run `unset FIREWORKS_API_KEY` "
       + "and retry to store a key.",
   );
@@ -71,9 +71,12 @@ export function verifyFailureLine(result, { interactive = false } = {}) {
 
 export function assertFireworksKeyShape(key) {
   const trimmed = key?.trim() ?? "";
+  if (isFirePassKey(trimmed)) {
+    throw new Error(FIREPASS_KEY_UNSUPPORTED_MESSAGE);
+  }
   if (!isFireworksShapedKey(trimmed)) {
     throw new Error(
-      `That doesn't look like a Fireworks key (expected it to start with fw_ or fpk_). Get one at ${FIREWORKS_KEYS_URL}`,
+      `That doesn't look like a Fireworks key (expected it to start with fw_). Get one at ${FIREWORKS_KEYS_URL}`,
     );
   }
   return trimmed;
@@ -163,7 +166,7 @@ export function harnessStatusKeySource(harnessId, provider, { whenFireworks = tr
     return "";
   }
   if (harnessId === "claude" && authMode === "apiKeyHelper") {
-    return "fireconnect key export hook";
+    return "nexus key export hook";
   }
   return harnessKeySourceLabel(harnessId);
 }
@@ -177,7 +180,7 @@ export function shouldInstallShellEnvHook(stored) {
 
 /**
  * Whether `<harness> on` may persist a verified env key into secure storage.
- * Headless env-only mode (`FIRECONNECT_KEY_STORAGE=null`) keeps using the
+ * Headless env-only mode (`NEXUS_KEY_STORAGE=null`) keeps using the
  * runtime env var without storing.
  * @param {string} home
  * @param {{ backend?: import("./secret-store.mjs").SecretBackend }} [options]
@@ -265,7 +268,7 @@ export async function resolveStoredApiKeyValue(stored, home) {
     return process.env.FIREWORKS_API_KEY?.trim() ?? "";
   }
   if (isKeychainConfigRef(stored)) {
-    return (await getSecret(home))?.trim() ?? "";
+    return tryReadKeychainSecret(home);
   }
   if (isLegacyLiteralConfigRef(stored) && isFireworksShapedKey(stored)) {
     return stored.trim();
@@ -351,13 +354,17 @@ export async function promptForFireworksApiKey(home, options = {}) {
   const verify = options.verifyApiKey ?? verifyFireworksApiKey;
   printInfo("No Fireworks API key is stored yet — enter one now to finish setup.");
   for (let attempt = 0; attempt < 5; attempt += 1) {
-    const entered = await read("Fireworks API key (fw_... or fpk_...): ", { allowEmpty: true });
+    const entered = await read("Fireworks API key (fw_...): ", { allowEmpty: true });
     if (!entered) {
       printNote("No key entered — try again, or press Ctrl+C to cancel.");
       continue;
     }
+    if (isFirePassKey(entered)) {
+      printNote(FIREPASS_KEY_UNSUPPORTED_MESSAGE);
+      continue;
+    }
     if (!isFireworksShapedKey(entered)) {
-      printNote("That doesn't look like a Fireworks API key (should start with fw_ or fpk_). Try again.");
+      printNote("That doesn't look like a Fireworks API key (should start with fw_). Try again.");
       continue;
     }
     const result = await withSpinner("Checking your key…", () => verify(entered));
@@ -375,17 +382,19 @@ export async function promptForFireworksApiKey(home, options = {}) {
 
 /**
  * Last-resort keychain read: the stored Fireworks key (trimmed) or "". Shared
- * by `exportFireworksApiKey` and `resolveHarnessOnApiKey`'s fallback so the
- * keychain-read logic lives in one place.
+ * by `exportFireworksApiKey`, `resolveHarnessOnApiKey`'s fallback, and stored
+ * key resolution so the keychain-read logic lives in one place. A leftover
+ * Fire Pass key reads as missing, so callers fall through to `login`.
  * @param {string} home
  * @returns {Promise<string>}
  */
 export async function tryReadKeychainSecret(home) {
-  return (await getSecret(home))?.trim() ?? "";
+  const secret = (await getSecret(home))?.trim() ?? "";
+  return isFirePassKey(secret) ? "" : secret;
 }
 
 /**
- * For `fireconnect key export` and Claude apiKeyHelper.
+ * For `nexus key export` and Claude apiKeyHelper.
  * @param {string} [home]
  * @param {{ storedOnly?: boolean }} [opts]
  */
@@ -407,13 +416,13 @@ export async function exportFireworksApiKey(home = process.env.HOME ?? "", { sto
   }
 
   // `--stored-only` skips env while a secret exists (stored beats env). When
-  // nothing is stored — headless CI, FIRECONNECT_KEY_STORAGE=null — apiKeyHelper
+  // nothing is stored — headless CI, NEXUS_KEY_STORAGE=null — apiKeyHelper
   // still needs a credential from FIREWORKS_API_KEY.
   if (process.env.FIREWORKS_API_KEY?.trim()) {
     return process.env.FIREWORKS_API_KEY.trim();
   }
 
-  throw new Error("No Fireworks API key found. Run `fireconnect login` to sign in.");
+  throw new Error("No Fireworks API key found. Run `nexus login` to sign in.");
 }
 
 /**
@@ -442,14 +451,14 @@ export async function keyStatusSummary(home) {
     });
   }
 
-  // Don't surface a legacy literal key in `fireconnect status` output — mask it. Only
+  // Don't surface a legacy literal key in `nexus status` output — mask it. Only
   // refs ({env:…}, {keychain:…}) and "(unset)" are reported verbatim; the kind
   // is derivable from configRef by the caller.
   const rawRef = config.apiKey || "";
   const configRef = isKeychainConfigRef(rawRef) || isEnvConfigRef(rawRef)
     ? rawRef
     : rawRef
-      ? "(legacy literal — run `fireconnect login` to move it into secure storage)"
+      ? "(legacy literal — run `nexus login` to move it into secure storage)"
       : "(unset)";
 
   return {

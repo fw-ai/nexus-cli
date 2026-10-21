@@ -10,12 +10,10 @@ import {
 import {
   claudeSlotOverridesFromCtx,
   hasClaudeSlotOverrides,
-  shouldImplyFirerouterPickerRow,
 } from "../../../lib/harnesses/claude/connect.mjs";
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
 import { cacheServerlessCatalogSnapshot, setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
 import {
-  FPK_KEY,
   mockServerlessModel,
   mockServerlessModelRows,
   runFireconnect,
@@ -86,39 +84,6 @@ describe("Claude tier-slot overrides", () => {
     assert.equal(hasClaudeSlotOverrides({ main: "glm-latest" }), false);
   });
 
-  it("implies a firerouter row only with no --model and no slot pins", () => {
-    assert.equal(
-      shouldImplyFirerouterPickerRow({ routingPreference: 3, main: "" }),
-      true,
-    );
-    assert.equal(
-      shouldImplyFirerouterPickerRow({ routingPreference: 3, main: "", sonnet: "glm-latest" }),
-      false,
-    );
-    assert.equal(
-      shouldImplyFirerouterPickerRow({ routingPreference: 3, main: "glm-latest" }),
-      false,
-    );
-    assert.equal(
-      shouldImplyFirerouterPickerRow({ routingPreference: null, main: "" }),
-      false,
-    );
-    // `native` is end-state identical to no flag: it must not block the synth.
-    assert.equal(
-      shouldImplyFirerouterPickerRow({ routingPreference: 3, main: "", sonnet: "native" }),
-      true,
-    );
-    assert.equal(
-      shouldImplyFirerouterPickerRow({
-        routingPreference: 3,
-        main: "",
-        sonnet: "native",
-        subagent: "native",
-      }),
-      true,
-    );
-  });
-
   it("pins --sonnet/--subagent while other tiers stay native", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-"));
     seedCatalogFor(home);
@@ -140,7 +105,7 @@ describe("Claude tier-slot overrides", () => {
     assert.equal(settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, undefined);
     assert.equal(settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL, undefined);
     // The gateway default still leads; the picker still lands.
-    assert.equal(settings.model, "firerouter[1m]");
+    assert.equal(settings.model, "auto[1m]");
     assert.equal(settings.modelPicker?.fireconnectManaged, true);
     assert.match(result.stdout, /Tier slot sonnet/);
     assert.match(result.stdout, /Tier slot subagent/);
@@ -248,7 +213,7 @@ describe("Claude tier-slot overrides", () => {
     assert.match(result.stderr, /not available on Fireworks/);
   });
 
-  it("accepts a slot set to firerouter with a routing preference", async () => {
+  it("rejects a slot set to a FireRouter route", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-router-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
@@ -256,17 +221,14 @@ describe("Claude tier-slot overrides", () => {
         "claude", "on",
         "--api-key", FIREWORKS_KEY,
         "--opus", "firerouter",
-        "--routing-preference", "balanced",
       ],
       cliEnv(home),
     );
-    assert.equal(result.code, 0, result.stderr);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.equal(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, "firerouter[1m]");
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference: 3/i);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--opus firerouter is a FireRouter route, which is no longer supported/);
   });
 
-  it("rejects --routing-preference when pinned slots ignore the mix", async () => {
+  it("warns on the deprecated --routing-preference flag and writes no routing header", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-router-reject-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
@@ -278,11 +240,14 @@ describe("Claude tier-slot overrides", () => {
       ],
       cliEnv(home),
     );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--routing-preference requires a Claude slot set to firerouter/);
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stderr, /--routing-preference is deprecated/);
+    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
+    assert.match(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, /deepseek-flash-latest/);
+    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS ?? "", /x-routing-preference/i);
   });
 
-  it("attaches the OpenAI key for a GPT compound pinned to a tier slot", async () => {
+  it("rejects a GPT compound pinned to a tier slot", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-gpt-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
@@ -294,17 +259,13 @@ describe("Claude tier-slot overrides", () => {
       ],
       cliEnv(home),
     );
-    assert.equal(result.code, 0, result.stderr);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.match(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, /firerouter\/gpt-5p6/);
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-slot-gpt-12345/);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--opus firerouter\/gpt-5p6 is a FireRouter route, which is no longer supported/);
   });
 
-  it("keeps the OpenAI key off a non-GPT compound pinned to a tier slot", async () => {
+  it("rejects a non-GPT compound pinned to a tier slot", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-nongpt-"));
     seedCatalogFor(home);
-    // A non-router /model default, so the tier pin alone decides (a bare
-    // firerouter default would rightly carry the key on its own).
     const result = await runFireconnect(
       [
         "claude", "on",
@@ -315,12 +276,11 @@ describe("Claude tier-slot overrides", () => {
       ],
       cliEnv(home),
     );
-    assert.equal(result.code, 0, result.stderr);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--opus firerouter\/opus is a FireRouter route, which is no longer supported/);
   });
 
-  it("attaches the OpenAI key when plain on lands on the implicit firerouter default", async () => {
+  it("keeps the OpenAI key off when plain on lands on the implicit auto default", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-default-router-openai-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
@@ -329,8 +289,9 @@ describe("Claude tier-slot overrides", () => {
     );
     assert.equal(result.code, 0, result.stderr);
     const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.equal(settings.model, "firerouter[1m]");
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-default-router-12345/);
+    assert.equal(settings.model, "auto[1m]");
+    // `auto` routes open models only, so no OpenAI key rides along.
+    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
   });
 
   it("keeps the OpenAI key off when re-on keeps a saved non-router pick", async () => {
@@ -349,54 +310,6 @@ describe("Claude tier-slot overrides", () => {
     const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
     assert.equal(settings.model, "glm-latest[1m]");
     assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
-  });
-
-  it("applies a Fire Pass router pin instead of dropping the flag", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-fpk-pin-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      ["claude", "on", "--api-key", FPK_KEY, "--sonnet", "glm-latest"],
-      cliEnv(home),
-    );
-    assert.equal(result.code, 0, result.stderr);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.match(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, /glm-latest/);
-    assert.match(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL, /kimi-fast-latest/);
-  });
-
-  it("rejects `native` on Fire Pass instead of silently ignoring it", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-fpk-native-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      ["claude", "on", "--api-key", FPK_KEY, "--sonnet", "native"],
-      cliEnv(home),
-    );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /Claude default slots require a Fireworks API key/);
-  });
-
-  for (const route of ["firerouter/gpt-5p6", "firerouter/opus"]) {
-    it(`rejects a ${route} compound tier pin on Fire Pass`, async () => {
-      const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-fpk-compound-"));
-      seedCatalogFor(home);
-      const result = await runFireconnect(
-        ["claude", "on", "--api-key", FPK_KEY, "--opus", route],
-        cliEnv(home),
-      );
-      assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /not available for Fire Pass/i);
-    });
-  }
-
-  it("rejects a firerouter tier pin on Fire Pass", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slots-fpk-router-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      ["claude", "on", "--api-key", FPK_KEY, "--opus", "firerouter"],
-      cliEnv(home),
-    );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /Fire Pass/i);
   });
 
   it("leaves every tier native when no slot flags are passed", async () => {

@@ -153,15 +153,35 @@ describe("Claude main model storage", () => {
       const ids = merged.modelPicker.options.map((row) => row.model);
       assert.equal(ids.length, new Set(ids).size);
       assert.equal(merged.modelPicker.fireconnectManaged, undefined);
+    });
+  });
 
-      const firepass = await runFireconnect([
-        "claude",
-        "on",
-        "--api-key",
-        "fpk_test_firepass_key_000000000000",
-      ], env);
-      assert.notEqual(firepass.code, 0);
-      assert.match(firepass.stderr, /cannot remove it for Fire Pass/);
+  it("status reports picker rows after the marker is stripped, excluding claude-* rows", async () => {
+    await withTempHome("claude-status-picker-", async (home) => {
+      seedCatalogFor(home);
+      const settingsPath = userSettingsPath(home);
+      const env = {
+        HOME: home,
+        FIREWORKS_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      };
+      const first = await runFireconnect(
+        ["claude", "on", "--api-key", FIREWORKS_KEY],
+        env,
+      );
+      assert.equal(first.code, 0, first.stderr);
+
+      const drifted = JSON.parse(await readFile(settingsPath, "utf8"));
+      delete drifted.modelPicker.fireconnectManaged;
+      drifted.modelPicker.options.push({ model: "claude-sonnet-4-6", label: "Mine" });
+      await writeFile(settingsPath, JSON.stringify(drifted, null, 2));
+
+      const status = await runFireconnect(["claude", "status", "--json"], env);
+      assert.equal(status.code, 0, status.stderr);
+      const payload = JSON.parse(status.stdout);
+      assert.ok(payload.registeredModels.some((id) => id.startsWith("auto")), payload.registeredModels.join(","));
+      assert.ok(!payload.registeredModels.some((id) => id.includes("claude-sonnet")), "claude row is not a Nexus registration");
     });
   });
 
@@ -195,7 +215,7 @@ describe("Claude main model storage", () => {
     });
   });
 
-  it("already-routed setup without state appends for standard keys but blocks Fire Pass removal", async () => {
+  it("already-routed setup without state appends without duplicates", async () => {
     await withTempHome("claude-picker-no-state-", async (home) => {
       const settingsPath = userSettingsPath(home);
       await mkdir(path.dirname(settingsPath), { recursive: true });
@@ -210,21 +230,6 @@ describe("Claude main model storage", () => {
         },
       }, null, 2)}\n`;
       await writeFile(settingsPath, original);
-
-      const firepass = await runFireconnect([
-        "claude",
-        "on",
-        "--api-key",
-        "fpk_test_firepass_key_000000000000",
-      ], {
-        HOME: home,
-        FIREWORKS_API_KEY: "",
-        ANTHROPIC_API_KEY: "",
-        ANTHROPIC_AUTH_TOKEN: "",
-      });
-      assert.notEqual(firepass.code, 0);
-      assert.match(firepass.stderr, /cannot remove it for Fire Pass/);
-      assert.equal(await readFile(settingsPath, "utf8"), original);
 
       const result = await runFireconnect(["claude", "on"], {
         HOME: home,
@@ -264,7 +269,7 @@ describe("Claude main model storage", () => {
       const reon = await runFireconnect(["claude", "on"], env);
       assert.equal(reon.code, 0, reon.stderr);
       settings = JSON.parse(await readFile(settingsPath, "utf8"));
-      assert.equal(settings.model, "firerouter[1m]", "unservable pin is replaced by the FireRouter default");
+      assert.equal(settings.model, "auto[1m]", "unservable pin is replaced by the auto default");
     });
   });
 
@@ -301,7 +306,7 @@ describe("mappingFromSettings", () => {
 
   // A bare `/model` picker alias (opus/sonnet/haiku/fable) is the user's own
   // picker choice — it resolves at request time through the alias's env slot,
-  // which the slot rows report separately. It is NOT a FireConnect model pin,
+  // which the slot rows report separately. It is NOT a Nexus model pin,
   // so it must read as native (unpinned) main, never as a Fireworks model id
   // that `claude status` would surface as a bogus "main -> opus" override row.
   for (const alias of ["opus", "sonnet", "haiku", "fable"]) {

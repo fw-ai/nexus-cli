@@ -24,7 +24,7 @@ export async function runUpgradeFinalize(home, installDir, {
   exists = existsSync,
   finalizeInProcess = finalizeInstallOrUpgrade,
 } = {}) {
-  const updatedCli = path.join(installDir, "packages/setup-cli/bin/fireconnect.mjs");
+  const updatedCli = path.join(installDir, "packages/setup-cli/bin/nexus.mjs");
   if (!exists(updatedCli)) {
     await finalizeInProcess({ home, installDir });
     return;

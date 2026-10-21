@@ -6,8 +6,8 @@ import {
 } from "../../../lib/harnesses/claude/activation.mjs";
 import {
   CLAUDE_MODEL_SLOTS,
+  claudeActiveMappingIsCurrent,
   defaultClaudeModelMapping,
-  inferClaudeActiveKeyType,
   mappingUsesBareFirerouter,
   migrateLegacyClaudeModelMapping,
   normalizeClaudeProfiles,
@@ -29,125 +29,139 @@ const EMPTY_OVERRIDES = {
 };
 
 describe("Claude model profiles", () => {
-  it("stores complete mappings in separate key-type namespaces", () => {
-    const fireworks = defaultClaudeModelMapping("fireworks");
-    const firepass = defaultClaudeModelMapping("firepass");
-    let profiles = withSavedClaudeModelMapping({}, "fireworks", fireworks);
-    profiles = withSavedClaudeModelMapping(profiles, "firepass", firepass);
+  it("stores a complete mapping under the fireworks envelope", () => {
+    const mapping = { ...defaultClaudeModelMapping(), opus: "glm-latest" };
+    const profiles = withSavedClaudeModelMapping({}, mapping);
 
-    assert.deepEqual(savedClaudeModelMapping(profiles, "fireworks"), fireworks);
-    assert.deepEqual(savedClaudeModelMapping(profiles, "firepass"), firepass);
-    assert.ok(CLAUDE_MODEL_SLOTS.every((slot) => firepass[slot] === "kimi-fast-latest"));
+    assert.deepEqual(Object.keys(profiles), ["fireworks"]);
+    assert.deepEqual(savedClaudeModelMapping(profiles), mapping);
   });
 
   it("ignores legacy, incomplete, and malformed profile entries", () => {
     assert.deepEqual(normalizeClaudeProfiles({
       models: defaultClaudeModelMapping(),
       fireworks: { version: 1, models: { main: "glm-latest" } },
-      firepass: { version: 99, models: defaultClaudeModelMapping("firepass") },
+    }), {});
+    assert.deepEqual(normalizeClaudeProfiles({
+      fireworks: { version: 99, models: defaultClaudeModelMapping() },
     }), {});
   });
 
-  it("ignores an active mapping from a different key type", () => {
-    const firepass = defaultClaudeModelMapping("firepass");
-    const profiles = withSavedClaudeModelMapping({}, "firepass", firepass);
+  it("ignores a legacy firepass profile entry in the persisted envelope", () => {
+    const fireworks = { ...defaultClaudeModelMapping(), opus: "glm-latest" };
+    const legacyFirepass = Object.fromEntries(
+      CLAUDE_MODEL_SLOTS.map((slot) => [slot, "kimi-fast-latest"]),
+    );
+    assert.deepEqual(normalizeClaudeProfiles({
+      firepass: { version: 1, models: legacyFirepass },
+    }), {});
+    assert.deepEqual(normalizeClaudeProfiles({
+      fireworks: { version: 1, models: fireworks },
+      firepass: { version: 1, models: legacyFirepass },
+    }), { fireworks: { version: 1, models: fireworks } });
+    assert.deepEqual(savedClaudeModelMapping({
+      firepass: { version: 1, models: legacyFirepass },
+    }), {});
+  });
+
+  it("ignores an active mapping that is not current", () => {
+    const saved = { ...defaultClaudeModelMapping(), opus: "glm-latest" };
+    const profiles = withSavedClaudeModelMapping({}, saved);
     const plan = resolveClaudeActivationPlan({
       ctx: EMPTY_OVERRIDES,
-      keyType: "firepass",
-      activeKeyType: "fireworks",
+      activeMappingIsCurrent: false,
       snapshot: {
         profiles,
         intent: {
-          mapping: {
-            ...defaultClaudeModelMapping("fireworks"),
-            main: "glm-latest",
-          },
+          mapping: { ...defaultClaudeModelMapping(), sonnet: "deepseek-pro-latest" },
         },
       },
     });
 
-    assert.deepEqual(plan.mapping, firepass);
+    assert.deepEqual(plan.mapping, saved);
   });
 
-  it("infers unreadable active mappings from durable profile scope", () => {
-    const fireworks = defaultClaudeModelMapping("fireworks");
-    const firepass = defaultClaudeModelMapping("firepass");
-    let profiles = withSavedClaudeModelMapping({}, "fireworks", fireworks);
-    profiles = withSavedClaudeModelMapping(profiles, "firepass", firepass);
-    assert.equal(inferClaudeActiveKeyType({
-      profiles,
-      activeMapping: { ...firepass, main: "glm-latest" },
-      currentKeyType: "fireworks",
-    }), "firepass");
-  });
-
-  it("uses the current key type only for metadata-free legacy mappings", () => {
-    assert.equal(inferClaudeActiveKeyType({
-      profiles: {},
-      activeMapping: defaultClaudeModelMapping("firepass"),
-      currentKeyType: "firepass",
-    }), "firepass");
-    assert.equal(inferClaudeActiveKeyType({
-      tokenKeyType: "fireworks",
-      recordedKeyType: "firepass",
-      profiles: {},
-      currentKeyType: "firepass",
-    }), "fireworks");
-  });
-
-  it("does not infer profile scope from incidental model overlap", () => {
-    const firepass = defaultClaudeModelMapping("firepass");
-    const profiles = withSavedClaudeModelMapping({}, "firepass", firepass);
-    assert.equal(inferClaudeActiveKeyType({
-      profiles,
-      activeMapping: defaultClaudeModelMapping("fireworks"),
-      currentKeyType: "fireworks",
-    }), "");
-  });
-
-  it("leaves ambiguous profile evidence unknown across a key switch", () => {
-    const fireworks = defaultClaudeModelMapping("fireworks");
-    const firepass = defaultClaudeModelMapping("firepass");
-    let profiles = withSavedClaudeModelMapping({}, "fireworks", fireworks);
-    profiles = withSavedClaudeModelMapping(profiles, "firepass", firepass);
-    const ambiguous = {
-      ...fireworks,
-      main: firepass.main,
-      opus: firepass.opus,
-      sonnet: firepass.sonnet,
-      // Neutral subagent and fable so neither profile clears the strong-match
-      // threshold. Fable matters because kimi-fast-latest is both the fireworks
-      // fable default and the whole firepass mapping, so leaving it would score
-      // for both profiles and tip firepass over the line.
-      subagent: "glm-fast-latest",
-      fable: "glm-latest",
-    };
-    assert.equal(inferClaudeActiveKeyType({
-      profiles,
-      activeMapping: ambiguous,
-      currentKeyType: "firepass",
-    }), "");
-
-    const plan = resolveClaudeActivationPlan({
-      ctx: EMPTY_OVERRIDES,
-      keyType: "firepass",
-      activeKeyType: "",
-      snapshot: { profiles, intent: { mapping: ambiguous } },
+  it("treats a Fireworks token or recorded fireworks key type as current", () => {
+    const profiles = withSavedClaudeModelMapping({}, {
+      ...defaultClaudeModelMapping(),
+      opus: "glm-latest",
     });
-    assert.deepEqual(plan.mapping, firepass);
+    const unrelated = Object.fromEntries(
+      CLAUDE_MODEL_SLOTS.map((slot) => [slot, "kimi-fast-latest"]),
+    );
+    assert.equal(claudeActiveMappingIsCurrent({
+      tokenIsFireworks: true,
+      profiles,
+      activeMapping: unrelated,
+    }), true);
+    assert.equal(claudeActiveMappingIsCurrent({
+      recordedKeyType: "fireworks",
+      profiles,
+      activeMapping: unrelated,
+    }), true);
+    assert.equal(claudeActiveMappingIsCurrent({
+      recordedKeyType: "firepass",
+      profiles,
+      activeMapping: unrelated,
+    }), false);
+  });
+
+  it("never carries over a legacy Fire Pass setup's live pins", () => {
+    const pins = Object.fromEntries(
+      CLAUDE_MODEL_SLOTS.map((slot) => [slot, "kimi-fast-latest"]),
+    );
+    assert.equal(claudeActiveMappingIsCurrent({
+      legacyFirePass: true,
+      tokenIsFireworks: true,
+      activeMapping: pins,
+    }), false);
+  });
+
+  it("trusts metadata-free mappings when no profile is saved", () => {
+    assert.equal(claudeActiveMappingIsCurrent({
+      profiles: {},
+      activeMapping: { ...defaultClaudeModelMapping(), opus: "glm-latest" },
+    }), true);
+    assert.equal(claudeActiveMappingIsCurrent({}), true);
+  });
+
+  it("matches a live mapping against the saved profile by slot overlap", () => {
+    const saved = {
+      ...defaultClaudeModelMapping(),
+      opus: "glm-latest",
+      sonnet: "deepseek-pro-latest",
+    };
+    const profiles = withSavedClaudeModelMapping({}, saved);
+    const liveNative = { ...saved, main: null, haiku: undefined };
+    assert.equal(claudeActiveMappingIsCurrent({
+      profiles,
+      activeMapping: liveNative,
+    }), true);
+    assert.equal(claudeActiveMappingIsCurrent({
+      profiles,
+      activeMapping: { ...saved, main: "kimi-fast-latest", fable: "glm-latest" },
+    }), true);
+    assert.equal(claudeActiveMappingIsCurrent({
+      profiles,
+      activeMapping: {
+        ...saved,
+        main: "kimi-fast-latest",
+        fable: "glm-latest",
+        subagent: "glm-fast-latest",
+      },
+    }), false);
   });
 
   it("preserves saved fireworks slot pins across a plain re-on", () => {
     const persisted = {
-      ...defaultClaudeModelMapping("fireworks"),
+      ...defaultClaudeModelMapping(),
       opus: "glm-latest",
       sonnet: "deepseek-pro-latest",
     };
-    const profiles = withSavedClaudeModelMapping({}, "fireworks", persisted);
+    const profiles = withSavedClaudeModelMapping({}, persisted);
     const plan = resolveClaudeActivationPlan({
       ctx: EMPTY_OVERRIDES,
-      keyType: "fireworks",
-      activeKeyType: "fireworks",
+      activeMappingIsCurrent: true,
       snapshot: { profiles, intent: { mapping: persisted } },
     });
     assert.equal(plan.mapping.opus, "glm-latest");
@@ -158,15 +172,14 @@ describe("Claude model profiles", () => {
 
   it("lets explicit slot flags win over saved pins and `native` unpin", () => {
     const persisted = {
-      ...defaultClaudeModelMapping("fireworks"),
+      ...defaultClaudeModelMapping(),
       opus: "glm-latest",
       sonnet: "deepseek-pro-latest",
     };
-    const profiles = withSavedClaudeModelMapping({}, "fireworks", persisted);
+    const profiles = withSavedClaudeModelMapping({}, persisted);
     const plan = resolveClaudeActivationPlan({
       ctx: { ...EMPTY_OVERRIDES, sonnet: "kimi-fast-latest", opus: "native" },
-      keyType: "fireworks",
-      activeKeyType: "fireworks",
+      activeMappingIsCurrent: true,
       snapshot: { profiles, intent: { mapping: persisted } },
     });
     assert.equal(plan.mapping.sonnet, "kimi-fast-latest");
@@ -179,18 +192,16 @@ describe("Claude model profiles", () => {
     assert.equal(claudeExtraPickerModelFromCtx(ctx), "glm-latest");
     const plan = resolveClaudeActivationPlan({
       ctx,
-      keyType: "fireworks",
-      activeKeyType: "",
+      activeMappingIsCurrent: true,
       snapshot: { profiles: {}, intent: null },
     });
-    assert.deepEqual(plan.mapping, defaultClaudeModelMapping("fireworks"));
+    assert.deepEqual(plan.mapping, defaultClaudeModelMapping());
   });
 
   it("leaves tier slots native on first connect", () => {
     const plan = resolveClaudeActivationPlan({
       ctx: EMPTY_OVERRIDES,
-      keyType: "fireworks",
-      activeKeyType: "",
+      activeMappingIsCurrent: true,
       snapshot: { profiles: {}, intent: null },
     });
     assert.equal(plan.mapping.opus, CLAUDE_NATIVE_MODEL_ID);
@@ -220,38 +231,57 @@ describe("Claude model profiles", () => {
     });
 
     // A mapping with no legacy slugs is returned unchanged.
-    const clean = migrateLegacyClaudeModelMapping(defaultClaudeModelMapping("fireworks"));
+    const clean = migrateLegacyClaudeModelMapping(defaultClaudeModelMapping());
     assert.equal(clean.changed, false);
-    assert.deepEqual(clean.mapping, defaultClaudeModelMapping("fireworks"));
+    assert.deepEqual(clean.mapping, defaultClaudeModelMapping());
   });
 
-  it("migrates baked-in legacy slots for firepass profiles", () => {
-    const profiles = withSavedClaudeModelMapping({}, "firepass", {
-      ...defaultClaudeModelMapping("firepass"),
+  it("migrates FireRouter slots carried over from an earlier on to auto", () => {
+    const migrated = migrateLegacyClaudeModelMapping({
+      main: "firerouter",
+      opus: "firerouter/opus",
+      sonnet: "glm-5p1",
+      haiku: "accounts/fireworks/routers/firerouter",
+      fable: CLAUDE_NATIVE_MODEL_ID,
+      subagent: "firerouter/kimi-k3",
+    });
+    assert.equal(migrated.changed, true);
+    assert.deepEqual(migrated.mapping, {
+      main: "auto",
+      opus: "auto",
+      sonnet: "glm-5p1",
+      haiku: "auto",
+      fable: CLAUDE_NATIVE_MODEL_ID,
+      subagent: "auto",
+    });
+  });
+
+  it("migrates baked-in legacy slots for saved profiles", () => {
+    const profiles = withSavedClaudeModelMapping({}, {
+      ...defaultClaudeModelMapping(),
       haiku: "deepseek-v4-flash",
       subagent: "deepseek-v4-flash",
     });
     const plan = resolveClaudeActivationPlan({
       ctx: EMPTY_OVERRIDES,
-      keyType: "firepass",
+      activeMappingIsCurrent: true,
       snapshot: {
         profiles,
         intent: {
           mapping: {
-            ...defaultClaudeModelMapping("firepass"),
+            ...defaultClaudeModelMapping(),
             haiku: "deepseek-v4-flash",
             subagent: "deepseek-v4-flash",
           },
         },
       },
-      activeKeyType: "firepass",
     });
     assert.equal(plan.mapping.haiku, "deepseek-flash-latest");
     assert.equal(plan.mapping.subagent, "deepseek-flash-latest");
   });
 
   it("scopes bare-firerouter detection to the firerouter model only", () => {
-    const mapping = defaultClaudeModelMapping("fireworks");
+    const mapping = defaultClaudeModelMapping();
     assert.equal(mappingUsesBareFirerouter({ ...mapping, opus: "firerouter" }), true);
     assert.equal(mappingUsesBareFirerouter({ ...mapping, opus: "firerouter[1m]" }), true);
     // Compounds pin their own targets; auto routes open models only.

@@ -2,10 +2,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
-  DEFAULT_FIREPASS_PRESET,
-} from "../../lib/harnesses/claude/core.mjs";
-import {
   canonicalRequestedModelId,
+  dropRetiredModelId,
   fireworksModelSlug,
   fullFireworksResourceId,
   normalizeModelId,
@@ -23,17 +21,8 @@ import { setServerlessCatalogSnapshot } from "../../lib/fireworks/serverless-cat
 import {
   buildServerlessCatalogSnapshot,
   fetchServerlessCatalog,
-  filterCatalogForKeyType,
-  FIREPASS_ROUTER_ID,
 } from "../../lib/fireworks/models.mjs";
-import {
-  FIREPASS_DEFAULT_ROUTER,
-  FIREPASS_ROUTER,
-  GLM_FAST_LATEST,
-  GLM_LATEST,
-  KIMI_FAST_LATEST,
-  mockServerlessModel,
-} from "../helpers.mjs";
+import { mockServerlessModel } from "../helpers.mjs";
 
 // Alias routers (`glm-latest`, `kimi-fast-latest`, `deepseek-flash-latest`, …)
 // now exist only as the API's per-row `aliases` on flat serverless rows, so
@@ -88,24 +77,7 @@ function withAliasCatalog(fn) {
   }
 }
 
-describe("Fire Pass defaults", () => {
-  test("FIREPASS_ROUTER_ID is kimi-fast-latest", () => {
-    assert.equal(FIREPASS_ROUTER_ID, FIREPASS_ROUTER);
-  });
-
-  test("DEFAULT_FIREPASS_PRESET routes alias slots to kimi-fast-latest", () => {
-    const aliasKeys = [
-      "ANTHROPIC_DEFAULT_OPUS_MODEL",
-      "ANTHROPIC_DEFAULT_SONNET_MODEL",
-      "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-      "ANTHROPIC_DEFAULT_FABLE_MODEL",
-      "CLAUDE_CODE_SUBAGENT_MODEL",
-    ];
-    for (const key of aliasKeys) {
-      assert.equal(DEFAULT_FIREPASS_PRESET[key], FIREPASS_DEFAULT_ROUTER);
-    }
-  });
-
+describe("model defaults", () => {
   test("serverless catalog derives fast routers from usage_identifier", async () => {
     const previousFetch = globalThis.fetch;
     globalThis.fetch = async () => ({
@@ -183,22 +155,6 @@ describe("Fire Pass defaults", () => {
     );
   });
 
-  test("Fire Pass catalog includes all supported routers", () => {
-    const catalog = [
-      { id: "accounts/fireworks/routers/glm-latest", shortId: GLM_LATEST },
-      { id: "accounts/fireworks/routers/glm-fast-latest", shortId: GLM_FAST_LATEST },
-      { id: "accounts/fireworks/routers/glm-5p2-fast", shortId: "glm-5p2-fast" },
-      { id: "accounts/fireworks/routers/kimi-fast-latest", shortId: KIMI_FAST_LATEST },
-      { id: "accounts/fireworks/routers/kimi-k2p6-turbo", shortId: "kimi-k2p6-turbo" },
-      { id: "accounts/fireworks/routers/kimi-latest", shortId: "kimi-latest" },
-    ];
-
-    assert.deepEqual(
-      filterCatalogForKeyType(catalog, "firepass").map((entry) => entry.shortId),
-      [GLM_LATEST, GLM_FAST_LATEST, "glm-5p2-fast", KIMI_FAST_LATEST],
-    );
-  });
-
   test("model ID validation shows model and router examples", () => {
     assert.throws(
       () => validateModelId("bad/provider/path", "--model"),
@@ -206,25 +162,36 @@ describe("Fire Pass defaults", () => {
     );
   });
 
-  test("model ID validation allows firerouter* gateway patterns", () => {
-    assert.doesNotThrow(() => validateModelId("firerouter/x", "--model"));
-    assert.doesNotThrow(() => validateModelId("firerouter/x[1m]", "--opus"));
-    assert.doesNotThrow(() => validateModelId("FIREROUTER/ASTRA", "--model"));
+  test("model ID validation rejects firerouter* gateway patterns", () => {
+    for (const id of ["firerouter", "firerouter/x", "firerouter/x[1m]", "FIREROUTER/ASTRA", "firerouter-2"]) {
+      assert.throws(
+        () => validateModelId(id, "--model"),
+        /is a FireRouter route, which is no longer supported/,
+        id,
+      );
+    }
+    assert.throws(() => validateModelId("firerouter/x[1m]", "--opus"), /--opus .* is a FireRouter route/);
   });
 
   test("model ID validation rejects firerouter lookalikes", () => {
-    assert.throws(() => validateModelId("foo/firerouter-clone", "--model"), /--model must be/);
-    assert.throws(() => validateModelId("firerouterx/y", "--model"), /--model must be/);
-    assert.throws(() => validateModelId("firerouter/", "--model"), /--model must be/);
-    assert.throws(() => validateModelId("firerouter/..", "--model"), /--model must be/);
-    assert.throws(() => validateModelId("firerouter//kimi", "--model"), /--model must be/);
+    assert.throws(() => validateModelId("foo/firerouter-clone", "--model"), /is a FireRouter route/);
+    assert.throws(() => validateModelId("firerouterx/y", "--model"), /is a FireRouter route/);
+    assert.throws(() => validateModelId("firerouter/", "--model"), /is a FireRouter route/);
+    assert.throws(() => validateModelId("firerouter/..", "--model"), /is a FireRouter route/);
+    assert.throws(() => validateModelId("firerouter//kimi", "--model"), /is a FireRouter route/);
     assert.throws(() => validateModelId("fireworks/kimi-k3", "--model"), /--model must be/);
     assert.throws(() => validateModelId("router/kimi-k3", "--model"), /--model must be/);
   });
 
   test("canonicalRequestedModelId collapses known spellings and rejects junk paths", () => {
-    assert.equal(canonicalRequestedModelId("fireworks-ai/firerouter"), "firerouter");
-    assert.equal(canonicalRequestedModelId("FIREROUTER/ASTRA"), "firerouter/astra");
+    assert.throws(
+      () => canonicalRequestedModelId("fireworks-ai/firerouter"),
+      /is a FireRouter route, which is no longer supported/,
+    );
+    assert.throws(
+      () => canonicalRequestedModelId("FIREROUTER/ASTRA"),
+      /is a FireRouter route, which is no longer supported/,
+    );
     assert.equal(canonicalRequestedModelId("accounts/Fireworks/models/kimi-k3"), "kimi-k3");
     assert.equal(canonicalRequestedModelId(""), "");
     assert.throws(
@@ -233,7 +200,7 @@ describe("Fire Pass defaults", () => {
     );
     assert.throws(
       () => canonicalRequestedModelId("foo/firerouter"),
-      /--model must be a Fireworks model ID/,
+      /is a FireRouter route, which is no longer supported/,
     );
     assert.throws(
       () => canonicalRequestedModelId("native"),
@@ -316,8 +283,8 @@ describe("Fire Pass defaults", () => {
   });
 
   test("cold fallback aliases qualify via their base model window", () => {
-    // Fire Pass keys cannot warm the catalog; pinned aliases (kimi-fast-latest)
-    // must still get [1m] through the static fallback base mapping.
+    // With a cold catalog, pinned aliases (kimi-fast-latest) still get [1m]
+    // through the static fallback base mapping.
     setServerlessCatalogSnapshot(null);
     try {
       assert.equal(modelQualifiesForClaudeCode1mContext("kimi-fast-latest"), true);
@@ -354,5 +321,30 @@ describe("Fire Pass defaults", () => {
     } finally {
       setServerlessCatalogSnapshot(null);
     }
+  });
+});
+
+describe("dropRetiredModelId", () => {
+  test("maps every retired spelling to auto and passes other ids through", () => {
+    assert.equal(dropRetiredModelId("firerouter"), "auto");
+    assert.equal(dropRetiredModelId("firerouter/opus"), "auto");
+    assert.equal(dropRetiredModelId("accounts/fireworks/routers/firerouter"), "auto");
+    assert.equal(dropRetiredModelId("firerouter[1m]"), "auto");
+    assert.equal(dropRetiredModelId("auto-instant"), "auto");
+    assert.equal(dropRetiredModelId("Auto-Instant[1m]"), "auto");
+    assert.equal(dropRetiredModelId("glm-latest"), "glm-latest");
+    assert.equal(dropRetiredModelId("auto"), "auto");
+    assert.equal(dropRetiredModelId(""), "");
+  });
+
+  test("rejects auto-instant at admission with the auto suggestion", () => {
+    assert.throws(
+      () => validateModelId("auto-instant", "--model"),
+      /--model auto-instant is no longer supported\. Use --model auto instead\./,
+    );
+    assert.throws(
+      () => canonicalRequestedModelId("auto-instant"),
+      /is no longer supported\. Use --model auto instead\./,
+    );
   });
 });

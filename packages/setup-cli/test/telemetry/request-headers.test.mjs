@@ -4,19 +4,21 @@ import { describe, it } from "node:test";
 import {
   buildFireconnectTelemetryHeaders,
   mergeFireconnectTelemetryHeaderLines,
+  retargetLegacyReferer,
+  telemetryReferer,
   mergeFireconnectTelemetryHeaders,
   stripFireconnectTelemetryHeaderLines,
 } from "../../lib/telemetry/request-headers.mjs";
 
 describe("FireConnect request telemetry", () => {
-  it("builds a harness title and versioned FireConnect referrer", () => {
+  it("builds a harness title and versioned Nexus referrer", () => {
     assert.deepEqual(
       buildFireconnectTelemetryHeaders("claude", {
         fireconnectVersion: "0.8.0+build.host-derived",
       }),
       {
         "X-Title": "Claude Code",
-        "HTTP-Referer": "fireconnect/v0.8.0",
+        "HTTP-Referer": "nexus/v0.8.0",
       },
     );
   });
@@ -28,7 +30,7 @@ describe("FireConnect request telemetry", () => {
       }),
       {
         "X-Title": "Codex",
-        "HTTP-Referer": "fireconnect/unknown",
+        "HTTP-Referer": "nexus/unknown",
       },
     );
   });
@@ -84,5 +86,21 @@ describe("FireConnect request telemetry", () => {
       ),
       "User-Agent: fireconnect/9.8.7-custom-native\nX-User-Trace: keep",
     );
+  });
+
+  it("rewrites pre-rename referers in any config format", () => {
+    const current = telemetryReferer();
+    assert.match(current, /^nexus\/v\d+\.\d+\.\d+$/);
+    assert.equal(
+      retargetLegacyReferer('X-Title: Codex\nHTTP-Referer: fireconnect/v0.9.9\n"HTTP-Referer" = "fireconnect/unknown"'),
+      `X-Title: Codex\nHTTP-Referer: ${current}\n"HTTP-Referer" = "${current}"`,
+    );
+    assert.equal(retargetLegacyReferer("https://github.com/fw-ai/fireconnect/main"), "https://github.com/fw-ai/fireconnect/main");
+    assert.equal(retargetLegacyReferer("HTTP-Referer: fireconnect/v0.10.0-rc.1"), `HTTP-Referer: ${current}`);
+    assert.equal(retargetLegacyReferer("HTTP-Referer: nexus/unknown"), `HTTP-Referer: ${current}`);
+    assert.equal(retargetLegacyReferer(`HTTP-Referer: ${current}`), `HTTP-Referer: ${current}`);
+    for (const url of ["https://example.com/fireconnect/v1.2.3/docs", "https://github.com/fw-ai/fireconnect/unknown"]) {
+      assert.equal(retargetLegacyReferer(url), url);
+    }
   });
 });

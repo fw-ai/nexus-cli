@@ -54,7 +54,7 @@ test("demoFireworksPickerIdsFromCatalog: keeps latest aliases, drops pinned glm-
     { id: "accounts/fireworks/routers/glm-fast-latest", shortId: "glm-fast-latest", displayName: "GLM Fast Latest", kind: "serverless" },
     { id: "accounts/fireworks/routers/glm-5p2-fast", shortId: "glm-5p2-fast", displayName: "GLM 5.2 Fast", kind: "serverless" },
   ]);
-  assert.deepEqual(ids, ["firerouter", "glm-fast-latest", "glm-latest"]);
+  assert.deepEqual(ids, ["auto", "glm-fast-latest", "glm-latest"]);
 });
 
 test("refreshDemoPickerFromServerlessCatalog: reads warmed snapshot", () => {
@@ -83,7 +83,8 @@ test("demoModelCatalog: Anthropic slots first, then latest Fireworks picks", () 
   const catalog = demoModelCatalog();
   const ids = catalog.map((m) => m.id);
   assert.equal(catalog[0].id, "opus");
-  assert.ok(ids.includes("firerouter"));
+  assert.ok(ids.includes("auto"));
+  assert.ok(!ids.some((id) => id.startsWith("firerouter")));
   assert.ok(ids.includes("glm-fast-latest"));
   assert.ok(ids.includes("glm-latest"));
   assert.ok(ids.includes("kimi-fast-latest"));
@@ -193,8 +194,8 @@ test("demoModelRates: anthropic slot ignores the live slot mapping — always re
   // The incumbent side is pinned to a concrete Anthropic id via demoCliModel,
   // bypassing the user's ANTHROPIC_DEFAULT_*_MODEL slot pin. So pricing must
   // reflect real Anthropic at list price regardless of what the slot is pinned
-  // to in the live settings (firerouter, a Fireworks model, claude-default, or
-  // firepass) — never null, never the Fireworks backend's rate.
+  // to in the live settings (firerouter, a Fireworks model, or claude-default)
+  // — never null, never the Fireworks backend's rate.
   const baseline = demoModelRates("opus");
   for (const mapping of [
     { opus: "firerouter[1m]" },
@@ -203,14 +204,12 @@ test("demoModelRates: anthropic slot ignores the live slot mapping — always re
     { opus: "claude-default" },
     { opus: "claude-opus-4-5" },
   ]) {
-    const rates = demoModelRates("opus", "fireworks", mapping);
+    const rates = demoModelRates("opus", mapping);
     assert.ok(rates, `opus with mapping ${JSON.stringify(mapping)} must resolve`);
     assert.equal(rates.inputPerMillion, baseline.inputPerMillion);
     assert.equal(rates.outputPerMillion, baseline.outputPerMillion);
     assert.equal(rates.label, "Claude Opus 5 (via Anthropic)");
   }
-  // firepass key type likewise — the slot still races real Anthropic.
-  assert.ok(demoModelRates("opus", "firepass"));
 });
 
 test("defaults and display labels", () => {

@@ -11,7 +11,10 @@ import { userSettingsPath } from "../../lib/harnesses/claude/core.mjs";
 import { codexCatalogPath, codexConfigPath } from "../../lib/harnesses/codex/core.mjs";
 import { opencodeConfigPath } from "../../lib/harnesses/opencode/core.mjs";
 import { piModelsPath, piSettingsPath } from "../../lib/harnesses/pi/core.mjs";
-import { runHarnessForwardMigrations } from "../../lib/system/forward-migrations.mjs";
+import { chatLanguageModelsPath } from "../../lib/harnesses/vscode/core.mjs";
+import { copilotCliPathsFor } from "../../lib/harness/context.mjs";
+import { ensureAutoCatalogEntry } from "../../lib/harness/auto-catalog.mjs";
+import { migrateRetiredRoutingPreferenceNotes, runHarnessForwardMigrations } from "../../lib/system/forward-migrations.mjs";
 import { warmTestCatalogSnapshot, withTempHome } from "../helpers.mjs";
 import { setServerlessCatalogSnapshot } from "../../lib/fireworks/serverless-catalog-cache.mjs";
 import {
@@ -194,7 +197,7 @@ describe("runHarnessForwardMigrations", () => {
 
       const notes = await runHarnessForwardMigrations(home);
       assert.ok(
-        notes.includes("Couldn't enable MCP tool search for Claude Code — re-run fireconnect claude on."),
+        notes.includes("Couldn't enable MCP tool search for Claude Code — re-run nexus claude on."),
         notes.join("\n"),
       );
     });
@@ -211,7 +214,7 @@ describe("runHarnessForwardMigrations", () => {
 
       const notes = await runHarnessForwardMigrations(home);
       assert.ok(
-        notes.includes("Couldn't add the auto model to OpenCode — re-run fireconnect opencode on."),
+        notes.includes("Couldn't add the auto model to OpenCode — re-run nexus opencode on."),
         notes.join("\n"),
       );
     });
@@ -260,13 +263,105 @@ describe("runHarnessForwardMigrations", () => {
       const notes = await runHarnessForwardMigrations(home);
       assert.deepEqual(
         notes.filter((n) => /auto model to/.test(n)),
-        ["Added the auto model to OpenCode and Pi — restart them to pick it up."],
+        ["Added the auto model to OpenCode — restart it to pick it up."],
         notes.join("\n"),
       );
       const opencode = JSON.parse(await readFile(configPath, "utf8"));
       assert.ok(opencode.provider["fireworks-ai"].models.auto);
+      // The Pi upgrade step rewrites its fireworks provider, which includes auto.
+      assert.ok(notes.some((n) => /^Updated Pi.s Fireworks models/.test(n)), notes.join("\n"));
       const piModels = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-      assert.ok(piModels.providers.fireworks.models.some((m) => m.id === "auto"));
+      assert.deepEqual(piModels.providers.fireworks.models.map((m) => m.id), ["auto"]);
+    });
+  });
+
+  it("moves an OpenCode FireRouter selection to auto on upgrade", async () => {
+    await withTempHome("forward-migrate-opencode-firerouter-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { opencode: { enabled: true, provider: "fireworks" } },
+      });
+      const configPath = opencodeConfigPath(home);
+      await mkdir(path.dirname(configPath), { recursive: true });
+      await writeFile(
+        configPath,
+        `${JSON.stringify({
+          model: "fireworks-ai/firerouter/opus",
+          provider: {
+            "fireworks-ai": {
+              options: {
+                apiKey: "fw_test_key_12345",
+                headers: { "x-anthropic-api-key": "sk-ant-legacy", "x-openai-api-key": "sk-proj-legacy", "X-User-Trace": "keep" },
+              },
+              models: { "firerouter/opus": { name: "FireRouter" }, "auto-instant": { name: "Auto Instant" }, "kimi-latest": { name: "Kimi" } },
+            },
+          },
+        })}\n`,
+      );
+
+      const notes = await runHarnessForwardMigrations(home);
+      assert.equal(notes.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      const migrated = JSON.parse(await readFile(configPath, "utf8"));
+      assert.equal(migrated.model, "fireworks-ai/auto");
+      // The FireRouter picker row and its BYOK headers go with the selection
+      // (the `auto` row is the upgrade's own auto backfill).
+      assert.deepEqual(Object.keys(migrated.provider["fireworks-ai"].models).sort(), ["auto", "kimi-latest"]);
+      assert.deepEqual(migrated.provider["fireworks-ai"].options.headers, { "X-User-Trace": "keep" });
+
+      const again = await runHarnessForwardMigrations(home);
+      assert.equal(again.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 0, again.join("\n"));
+    });
+  });
+
+  it("moves an OpenCode selection with the legacy fireworks/ prefix to auto on upgrade", async () => {
+    await withTempHome("forward-migrate-opencode-legacy-prefix-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { opencode: { enabled: true, provider: "fireworks" } },
+      });
+      const configPath = opencodeConfigPath(home);
+      await mkdir(path.dirname(configPath), { recursive: true });
+      await writeFile(
+        configPath,
+        `${JSON.stringify({
+          model: "fireworks/firerouter/opus",
+          provider: {
+            "fireworks-ai": {
+              options: { apiKey: "fw_test_key_12345" },
+              models: { "firerouter/opus": { name: "FireRouter" } },
+            },
+          },
+        })}\n`,
+      );
+
+      const notes = await runHarnessForwardMigrations(home);
+      assert.equal(notes.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      assert.equal(JSON.parse(await readFile(configPath, "utf8")).model, "fireworks-ai/auto");
+    });
+  });
+
+  it("moves a Copilot CLI FireRouter selection to auto on upgrade", async () => {
+    await withTempHome("forward-migrate-copilot-cli-firerouter-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { "copilot-cli": { enabled: true, provider: "fireworks" } },
+      });
+      const { providersPath, settingsPath } = copilotCliPathsFor({ home });
+      await mkdir(path.dirname(providersPath), { recursive: true });
+      await writeJson(providersPath, {
+        providers: [{ name: "fireworks", apiKey: "fw_test_key_12345" }],
+        models: [
+          { id: "firerouter", provider: "fireworks", wireModel: "firerouter", name: "FireRouter" },
+          { id: "auto-instant", provider: "fireworks", wireModel: "auto-instant", name: "Auto Instant" },
+          { id: "glm-latest", provider: "fireworks", wireModel: "glm-latest", name: "GLM" },
+        ],
+      });
+      await writeJson(settingsPath, { model: "fireworks/firerouter" });
+
+      const notes = await runHarnessForwardMigrations(home);
+      assert.equal(notes.filter((n) => /Moved the Copilot CLI off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      assert.equal((await readJsonIfExists(settingsPath)).model, "fireworks/auto");
+      const ids = (await readJsonIfExists(providersPath)).models.map((model) => model.id);
+      assert.ok(!ids.includes("firerouter"), ids.join(","));
+      assert.ok(!ids.includes("auto-instant"), ids.join(","));
+      assert.ok(ids.includes("auto"), "the upgrade auto backfill registers the new selection");
     });
   });
 
@@ -437,6 +532,143 @@ describe("runHarnessForwardMigrations", () => {
       assert.equal(notes.filter((n) => /auto model to/.test(n)).length, 0, notes.join("\n"));
       assert.equal(await readFile(configPath, "utf8"), original);
       assert.equal(await readFile(settingsPath, "utf8"), originalSettings);
+    });
+  });
+
+  it("removes the deprecated routing-preference header from every enabled harness, keeping user headers", async () => {
+    await withTempHome("forward-migrate-routing-preference-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: {
+          claude: { enabled: true, provider: "fireworks" },
+          opencode: { enabled: true, provider: "fireworks" },
+          pi: { enabled: true, provider: "fireworks" },
+          vscode: { enabled: false, provider: "fireworks" },
+        },
+      });
+      const settingsPath = userSettingsPath(home);
+      await mkdir(path.dirname(settingsPath), { recursive: true });
+      await writeJson(settingsPath, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          ANTHROPIC_CUSTOM_HEADERS: "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 5\nX-User-Trace: keep",
+        },
+      });
+      const opencodePath = opencodeConfigPath(home);
+      await mkdir(path.dirname(opencodePath), { recursive: true });
+      await writeJson(opencodePath, {
+        provider: {
+          "fireworks-ai": { options: { apiKey: "fw_test", headers: { "x-routing-preference": "5", "X-User-Trace": "keep" } } },
+        },
+      });
+      const piPath = piModelsPath(home);
+      await mkdir(path.dirname(piPath), { recursive: true });
+      await writeJson(piPath, {
+        providers: { fireworks: { headers: { "x-routing-preference": "5", "X-User-Trace": "keep" } } },
+      });
+      const vscodePath = chatLanguageModelsPath({ home });
+      await mkdir(path.dirname(vscodePath), { recursive: true });
+      const vscodeConfig = `${JSON.stringify([{
+        name: "Fireworks",
+        vendor: "customoai",
+        apiKey: "${input:chat.lm.secret.fw-0123abcd}",
+        models: [{ id: "firerouter", requestHeaders: { "x-routing-preference": "5" } }],
+      }])}\n`;
+      await writeFile(vscodePath, vscodeConfig);
+
+      const notes = await runHarnessForwardMigrations(home);
+
+      assert.ok(
+        notes.includes(
+          "Removed the deprecated routing preference from Claude Code, OpenCode and Pi: FireRouter routes are "
+            + "no longer supported. Restart them to pick it up.",
+        ),
+        notes.join("\n"),
+      );
+      const claudeHeaders = (await readJsonIfExists(settingsPath)).env.ANTHROPIC_CUSTOM_HEADERS;
+      assert.equal(claudeHeaders, "X-Fireworks-Api-Key: fw_test\nX-User-Trace: keep");
+      const opencodeHeaders = (await readJsonIfExists(opencodePath)).provider["fireworks-ai"].options.headers;
+      assert.deepEqual(opencodeHeaders, { "X-User-Trace": "keep" });
+      assert.deepEqual((await readJsonIfExists(piPath)).providers.fireworks.headers, { "X-User-Trace": "keep" });
+      // VS Code is off, so its config is left alone.
+      assert.equal(await readFile(vscodePath, "utf8"), vscodeConfig);
+    });
+  });
+
+  it("leaves an open VS Code alone and removes the routing-preference header once it is closed", async () => {
+    await withTempHome("forward-migrate-routing-preference-vscode-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { vscode: { enabled: true, provider: "fireworks" } },
+      });
+      const vscodePath = chatLanguageModelsPath({ home });
+      await mkdir(path.dirname(vscodePath), { recursive: true });
+      const vscodeConfig = `${JSON.stringify([{
+        name: "Fireworks",
+        vendor: "customoai",
+        apiKey: "${input:chat.lm.secret.fw-0123abcd}",
+        models: [{ id: "firerouter", requestHeaders: { "x-routing-preference": "5", "X-User-Trace": "keep" } }],
+      }])}\n`;
+      await writeFile(vscodePath, vscodeConfig);
+
+      const whileOpen = await migrateRetiredRoutingPreferenceNotes(home, { vscodeRunning: () => true });
+      assert.deepEqual(whileOpen, [
+        "Couldn't remove the deprecated routing preference from VS Code while it's open — quit VS Code, then re-run nexus update.",
+      ]);
+      assert.equal(await readFile(vscodePath, "utf8"), vscodeConfig);
+
+      const afterQuit = await migrateRetiredRoutingPreferenceNotes(home, { vscodeRunning: () => false });
+      assert.equal(afterQuit.length, 1);
+      assert.match(afterQuit[0], /^Removed the deprecated routing preference from VS Code:/);
+      const [provider] = JSON.parse(await readFile(vscodePath, "utf8"));
+      assert.deepEqual(provider.models[0].requestHeaders, { "X-User-Trace": "keep" });
+      assert.deepEqual(await migrateRetiredRoutingPreferenceNotes(home, { vscodeRunning: () => false }), []);
+    });
+  });
+
+  it("says nothing about an open VS Code that never had the routing-preference header", async () => {
+    await withTempHome("forward-migrate-routing-preference-vscode-clean-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { vscode: { enabled: true, provider: "fireworks" } },
+      });
+      const vscodePath = chatLanguageModelsPath({ home });
+      await mkdir(path.dirname(vscodePath), { recursive: true });
+      await writeFile(vscodePath, `${JSON.stringify([{
+        name: "Fireworks",
+        vendor: "customoai",
+        apiKey: "${input:chat.lm.secret.fw-0123abcd}",
+        models: [{ id: "firerouter", requestHeaders: { "X-User-Trace": "keep" } }],
+      }])}\n`);
+      assert.deepEqual(await migrateRetiredRoutingPreferenceNotes(home, { vscodeRunning: () => true }), []);
+    });
+  });
+
+  it("keeps VS Code's request headers and Anthropic key when the auto backfill runs", async () => {
+    await withTempHome("forward-migrate-vscode-auto-", async (home) => {
+      await writeGlobalConfig(home, {
+        harnesses: { vscode: { enabled: true, provider: "fireworks" } },
+      });
+      const jsonPath = chatLanguageModelsPath({ home });
+      await mkdir(path.dirname(jsonPath), { recursive: true });
+      const firerouter = {
+        id: "firerouter",
+        name: "FireRouter",
+        anthropic_api_key: "sk-ant-byok",
+        requestHeaders: {
+          "x-anthropic-api-key": "sk-ant-byok",
+          "x-routing-preference": "5",
+          "X-User-Trace": "keep",
+        },
+      };
+      await writeFile(jsonPath, `${JSON.stringify([{
+        name: "Fireworks",
+        vendor: "customoai",
+        apiKey: "${input:chat.lm.secret.fw-0123abcd}",
+        models: [firerouter],
+      }])}\n`);
+
+      assert.equal(await ensureAutoCatalogEntry("vscode", home, { isRunning: () => false }), true);
+      const [provider] = JSON.parse(await readFile(jsonPath, "utf8"));
+      assert.deepEqual(provider.models.map((m) => m.id), ["auto", "firerouter"]);
+      assert.deepEqual(provider.models[1], firerouter);
     });
   });
 });

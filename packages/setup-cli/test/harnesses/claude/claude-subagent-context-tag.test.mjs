@@ -58,11 +58,10 @@ before(() => {
  * 2.1.250 auto-compact holds the session to that assumption instead of waiting
  * for the API to object — so a tagless 1M subagent compacts until it dies.
  */
-function settingsFor(overrides, keyType = "firepass") {
+function settingsFor(overrides) {
   const { settings } = buildFireworksSettings({ env: {} }, {
     apiKey: FW_KEY,
-    mapping: resolveClaudeModelMapping(overrides, keyType),
-    keyType,
+    mapping: resolveClaudeModelMapping(overrides),
   });
   return settings;
 }
@@ -97,8 +96,15 @@ describe("Claude subagent slot carries the 1M context tag", () => {
     });
   });
 
-  it("tags a FireRouter subagent on firepass and still recognizes it as FireRouter-owned", () => {
-    const { env } = settingsFor({ subagent: "firerouter" }, "firepass");
+  it("rejects a FireRouter subagent at admission, but still recognizes a stored one as FireRouter-owned", () => {
+    // New selections: resolveClaudeModelMapping is the admission gate.
+    assert.throws(
+      () => resolveClaudeModelMapping({ subagent: "firerouter" }),
+      /is a FireRouter route, which is no longer supported/,
+    );
+    // Legacy configs an earlier release wrote are still recognized (and
+    // stripped) as FireRouter-owned.
+    const env = modelEnvFromMapping({ subagent: "firerouter" });
     assert.equal(env.CLAUDE_CODE_SUBAGENT_MODEL, "firerouter[1m]");
     assert.equal(firerouterStatusFromEnv(env), "firerouter");
     const { env: stripped } = stripFirerouterOwnedEnv(env);
@@ -116,7 +122,7 @@ describe("Claude subagent slot carries the 1M context tag", () => {
   });
 
   it("reads native defaults back from an empty fireworks mapping", () => {
-    const settings = settingsFor({}, "fireworks");
+    const settings = settingsFor({});
     assert.equal(mappingFromSettings(settings).subagent, "claude-default");
   });
 });

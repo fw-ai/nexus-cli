@@ -1,5 +1,5 @@
 /**
- * Argument parser for `fireconnect claude demo`.
+ * Argument parser for `nexus claude demo`.
  *
  * Lives in the demo folder on purpose: the shared CLI parser (`../parse-args.mjs`)
  * carries no demo-*specific* flag knowledge — its only demo touchpoint is a
@@ -9,9 +9,9 @@
  * Demo-specific flags (`--prompt`, `--challenger`, …) are handled here; the
  * command-agnostic global flags (`--json`, `--home`, `--api-key`, `--mode`, …)
  * are delegated to `applyGlobalFlag` so that knowledge stays in exactly one place
- * and `fireconnect claude demo` accepts the same global flags as every other command.
+ * and `nexus claude demo` accepts the same global flags as every other command.
  *
- * Top-level `fireconnect demo` is deprecated but still parsed here for compatibility.
+ * Top-level `nexus demo` is deprecated but still parsed here for compatibility.
  */
 
 import { applyGlobalFlag, createBaseContext } from "../cli/parse-args.mjs";
@@ -20,7 +20,7 @@ const DEMO_PROMPT_PRESETS = new Set(["tetris", "snake", "clock", "custom"]);
 
 function requireValue(flag, value) {
   if (!value || value.startsWith("--")) {
-    throw new Error(`${flag} requires a value. Run: fireconnect claude help`);
+    throw new Error(`${flag} requires a value. Run: nexus claude help`);
   }
   return value;
 }
@@ -132,7 +132,7 @@ export function parseDemoArgs(rest, ctx, { deprecated = false } = {}) {
       return { kind: "global", command: "help", ctx, helpTopic: "demo" };
     }
 
-    // `fireconnect claude demo --version` mirrors every other subcommand: print the
+    // `nexus claude demo --version` mirrors every other subcommand: print the
     // CLI version instead of falling through to "Unknown argument: --version".
     if (arg === "--version" || arg === "-V") {
       return { kind: "global", command: "version", ctx };
@@ -180,9 +180,9 @@ export function parseDemoArgs(rest, ctx, { deprecated = false } = {}) {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(
-        message.includes("Run: fireconnect")
+        message.includes("Run: nexus")
           ? message
-          : `${message} Run: fireconnect help`,
+          : `${message} Run: nexus help`,
       );
     }
     if (consumed === true) {
@@ -194,12 +194,12 @@ export function parseDemoArgs(rest, ctx, { deprecated = false } = {}) {
 
     // Not a flag → the sole positional.
     if (arg.startsWith("-")) {
-      throw new Error(`Unknown argument: ${arg}. Run: fireconnect help`);
+      throw new Error(`Unknown argument: ${arg}. Run: nexus help`);
     }
     if (positional) {
       throw new Error(ctx.clean
-        ? "fireconnect claude demo clean takes no preset. Run: fireconnect claude help"
-        : "fireconnect claude demo takes an optional preset, not subcommands. Run: fireconnect claude help");
+        ? "nexus claude demo clean takes no preset. Run: nexus claude help"
+        : "nexus claude demo takes an optional preset, not subcommands. Run: nexus claude help");
     }
     if (arg === "clean") {
       ctx.clean = true;
@@ -207,17 +207,21 @@ export function parseDemoArgs(rest, ctx, { deprecated = false } = {}) {
     positional = arg;
   }
 
+  if (ctx.providersFromFlag || ctx.autoReset) {
+    throw new Error("--providers/--reset apply only to `nexus auto`. Run: nexus auto --help");
+  }
+
   if (ctx.clean) {
     return { kind: "demo", ctx, deprecated };
   }
 
-  // `fireconnect claude demo [preset]` — the positional preset folds into ctx.prompt,
+  // `nexus claude demo [preset]` — the positional preset folds into ctx.prompt,
   // mirroring `--prompt`. An explicit --prompt wins over the positional.
   if (positional) {
     if (!DEMO_PROMPT_PRESETS.has(positional)) {
       throw new Error(
         `Unknown demo preset: ${positional}. Choose one of: `
-          + `${[...DEMO_PROMPT_PRESETS].join(", ")}. Run: fireconnect claude help`,
+          + `${[...DEMO_PROMPT_PRESETS].join(", ")}. Run: nexus claude help`,
       );
     }
     if (!ctx.prompt) {

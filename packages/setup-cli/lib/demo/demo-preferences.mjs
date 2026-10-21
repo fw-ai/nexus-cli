@@ -1,5 +1,5 @@
 /**
- * Persist last demo wizard choices under ~/.fireconnect/demo.json.
+ * Persist last demo wizard choices under ~/.nexus/demo.json.
  */
 
 import path from "node:path";

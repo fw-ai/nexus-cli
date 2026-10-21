@@ -1,9 +1,9 @@
 #!/usr/bin/expect -f
-# Record the interactive model picker for `fireconnect demo` (quit before the race).
+# Record the interactive model picker for `nexus demo` (quit before the race).
 set timeout 120
 
 set env(HOME) /tmp/fc-demo-rec-home
-set env(FIRECONNECT_KEY_STORAGE) file
+set env(NEXUS_KEY_STORAGE) file
 set env(KEYRING_FILE_MASTER_KEY) 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 set env(COLUMNS) 100
 set env(LINES) 40
@@ -11,10 +11,10 @@ set env(TERM) xterm-256color
 
 cd /agent/repos/fireconnect-internal/packages/setup-cli
 
-spawn -noecho bash -c {stty cols 100 rows 40 2>/dev/null; exec node bin/fireconnect.mjs demo --no-open --out /tmp/fc-model-select-out}
+spawn -noecho bash -c {stty cols 100 rows 40 2>/dev/null; exec node bin/nexus.mjs demo --no-open --out /tmp/fc-model-select-out}
 
 expect {
-  -re {FireConnect Demo.{0,3}setup} {}
+  -re {Nexus Demo.{0,3}setup} {}
   timeout {
     puts "timeout waiting for setup form"
     exit 1

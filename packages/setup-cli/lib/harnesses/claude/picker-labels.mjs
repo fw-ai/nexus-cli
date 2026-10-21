@@ -7,6 +7,7 @@ import {
 import { autoDisplayName, firerouterDisplayName, prettyModelName } from "../../fireworks/models.mjs";
 import { stripViaFireworksSuffix } from "../../fireworks/label-suffix.mjs";
 import { isAutoModelId, isFirerouterModelPattern } from "../../fireworks/model-id.mjs";
+import { autoTagline, firerouterTagline } from "../../firerouter/core.mjs";
 
 /**
  * Human-readable label for Fireworks models in Claude Code's subscription picker.
@@ -44,12 +45,10 @@ export function fireworksModelPickerName(modelId) {
  */
 export function fireworksModelPickerDescription(modelId) {
   if (isAutoModelId(modelId)) {
-    return "Intelligent router across open models. Similar performance at lower cost.";
+    return autoTagline(modelId);
   }
-  // Compounds pin the mix's frontier but route through the same mix, so they
-  // share the bare firerouter blurb rather than the generic serverless one.
   if (isFirerouterModelPattern(modelId)) {
-    return "Intelligent router across Claude and open models. Similar performance at lower cost.";
+    return firerouterTagline(modelId);
   }
   const pricing = lookupFireworksPricing(modelId);
   const perMtok = formatAnthropicStylePerMtok(pricing);

@@ -1,8 +1,10 @@
 /**
  * Claude Desktop "profile lane": route Desktop's Chat/Cowork/Code surfaces
  * through Fireworks using Desktop's third-party provider profile mechanism
- * (~/Library/Application Support/Claude-3p/configLibrary/), with a loopback
- * shim in front of Fireworks for model-name mapping.
+ * (<Claude-3p data dir>/configLibrary/ — ~/Library/Application Support on
+ * macOS, ~/.config on Linux), with a loopback shim in front of Fireworks for
+ * model-name mapping. The shim runs as a launchd agent (macOS) or a systemd
+ * user unit (Linux); see platform.mjs.
  *
  * Semantics (validated live):
  * - profile keys: inferenceGatewayBaseUrl, inferenceGatewayApiKey,
@@ -21,17 +23,18 @@ import { randomUUID } from "node:crypto";
 import { cp, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { resolveFireworksKeyWithSource } from "../../keys/api-key.mjs";
 import { loadServerlessCatalog } from "../../fireworks/models.mjs";
+import { isFirerouterModelPattern } from "../../fireworks/model-specs.mjs";
 import { writeFileAtomic } from "../../io/atomic-write.mjs";
 import { printBody, printNote } from "../../cli/messages.mjs";
 import { claudeDesktopDataDir } from "./core.mjs";
 import {
-  SHIM_AGENT_LABEL, buildLaunchAgentPlist, shimTrustOptions, startLaunchAgent, stopLaunchAgent,
+  SHIM_AGENT_LABEL, SUPPORTED_PLATFORMS, buildShimServiceFile, launchAgentPlistPath,
+  retireLegacyShimAgent, shimServiceFilePath, shimTrustOptions, startShimService, stopShimService,
 } from "./platform.mjs";
+import { preferDataDirPath } from "../../system/data-dir.mjs";
 
 const SHIM_DEFAULT_PORT = 8799;
 const SHIM_LABEL = SHIM_AGENT_LABEL;
-
-
 
 export function shimStatePath(home) {
   return path.join(claudeDesktopDataDir(home), "shim-state.json");
@@ -39,20 +42,20 @@ export function shimStatePath(home) {
 function profileStatePath(home) {
   return path.join(claudeDesktopDataDir(home), "profile-state.json");
 }
-function shimPlistPath(home) {
-  return path.join(home, "Library", "LaunchAgents", `${SHIM_LABEL}.plist`);
+/** The owned shim service definition (launchd plist or systemd user unit). */
+export function shimServicePath(home) {
+  return shimServiceFilePath(home, { label: SHIM_LABEL });
+}
+export function shimPlistPath(home) {
+  return launchAgentPlistPath(home, SHIM_LABEL);
 }
 function backupDir(home) {
   return path.join(claudeDesktopDataDir(home), "profile-backup");
 }
 // The pure lineup logic lives in lineup.mjs (the shim imports only that leaf);
 // re-export so existing callers keep working.
-import { DEFAULT_MODEL_MAP, PICKER_MODELS, serverlessLineup, thirdPartyDir } from "./lineup.mjs";
-export { DEFAULT_MODEL_MAP, PICKER_MODELS, serverlessLineup, thirdPartyDir } from "./lineup.mjs";
-
-export function firstPartyDir(home) {
-  return path.join(home, "Library", "Application Support", "Claude");
-}
+import { DEFAULT_MODEL_MAP, PICKER_MODELS, firstPartyDir, serverlessLineup, thirdPartyDir } from "./lineup.mjs";
+export { DEFAULT_MODEL_MAP, PICKER_MODELS, firstPartyDir, serverlessLineup, thirdPartyDir } from "./lineup.mjs";
 function configLibraryDir(home) {
   return path.join(thirdPartyDir(home), "configLibrary");
 }
@@ -77,7 +80,7 @@ export async function detectConnectors(home, { deployments = [firstPartyDir(home
     const sessionsRoot = path.join(root, "local-agent-mode-sessions");
     await walk(sessionsRoot, found, hostedByUuid);
   }
-  // The pre-FireConnect (first-party) deployment's own MCP config is a
+  // The pre-Nexus (first-party) deployment's own MCP config is a
   // detection source too: its mcpServers (http and stdio) are connectors the
   // user already had before the 3p lane existed.
   const firstParty = await readJson(path.join(firstPartyDir(home), "claude_desktop_config.json"));
@@ -195,7 +198,7 @@ export function parseClaudeMcpList(stdout) {
  * Bounded by a timeout; any failure yields [] so sync still completes.
  */
 export async function listOrgConnectorsViaClaudeCli({ timeoutMs = 90_000 } = {}) {
-  if (process.env.FIRECONNECT_TEST === "1") return [];
+  if (process.env.NEXUS_TEST === "1") return [];
   const { execFile } = await import("node:child_process");
   const { tmpdir } = await import("node:os");
   const env = { ...process.env };
@@ -217,11 +220,11 @@ function appliedProfilePath(home, state) {
 async function requireEnabledProfile(home) {
   const state = await readProfileState(home);
   if (!state?.enabled || !state.profileId) {
-    throw new Error("The profile lane is not enabled. Run: fireconnect claude-desktop on");
+    throw new Error("The profile lane is not enabled. Run: nexus claude-desktop on");
   }
   const profilePath = appliedProfilePath(home, state);
   const profile = await readJson(profilePath);
-  if (!profile) throw new Error(`Applied profile ${state.profileId} is missing; run \`fireconnect claude-desktop on\` to rewrite it.`);
+  if (!profile) throw new Error(`Applied profile ${state.profileId} is missing; run \`nexus claude-desktop on\` to rewrite it.`);
   return { state, profilePath, profile };
 }
 
@@ -348,7 +351,7 @@ export async function removeProfileConnector(home, name) {
 }
 
 /**
- * Re-detect connectors (session files + pre-FireConnect config) and merge
+ * Re-detect connectors (session files + pre-Nexus config) and merge
  * them into the applied profile. Detected entries replace same-named ones;
  * profile entries nothing detects anymore (manual adds) are kept.
  */
@@ -496,7 +499,7 @@ async function writeManualModels(home, list) {
  * out). Stored in manual-models.json (durable across off/on).
  */
 export async function customModelEntry(home, shortId, { catalogIds, usedNames } = {}) {
-  const cache = (await readJson(path.join(home, ".fireconnect", "catalog-cache.json")))?.snapshot?.entries ?? [];
+  const cache = (await readJson(path.join(home, ".nexus", "catalog-cache.json")))?.snapshot?.entries ?? [];
   const hit = cache.find((e) => e?.shortId === shortId || e?.id === shortId || e?.baseModelId?.endsWith(`/${shortId}`));
   if (!hit) return null;
   const label = hit.displayName ?? shortId;
@@ -545,7 +548,7 @@ export async function loadDesktopLineup({ apiKey, signedCatalogPath }) {
 }
 
 function buildProfile({ shimUrl, apiKey, models, existingServers, customModels = [] }) {
-  // managedMcpServers are opt-in via `fireconnect claude-desktop mcp add/sync`
+  // managedMcpServers are opt-in via `nexus claude-desktop mcp add/sync`
   // (which rewrite the applied profile directly). A repeat `on` preserves
   // them so a re-run never wipes the user's connectors.
   const servers = Array.isArray(existingServers) ? existingServers : [];
@@ -569,7 +572,7 @@ function buildProfile({ shimUrl, apiKey, models, existingServers, customModels =
   };
 }
 
-/** True when a profile routes through our loopback shim — FireConnect-written,
+/** True when a profile routes through our loopback shim — Nexus-written,
  * regardless of profile-state.json (which older installs may lack). The port
  * alone is not the signal (a user may run another loopback gateway, or the
  * default port may change): fingerprint on the full shape only we write —
@@ -582,13 +585,13 @@ function isShimProfile(profile, shimUrl) {
   const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(host);
   if (!loopback) return false;
   const key = profile?.inferenceGatewayApiKey;
-  // Both Fireworks (fw_) and Fire Pass (fpk_) keys are FireConnect-written.
+  // Older installs also wrote Fire Pass (fpk_) keys; `off` must still find them.
   const fingerprint = typeof key === "string" && /^(fw_|fpk_)/.test(key)
     && profile?.inferenceProvider === "gateway" && profile?.inferenceCredentialKind === "static";
   return fingerprint && (port === "" || port === String(new URL(shimUrl).port));
 }
 
-/** Durable registry of profile ids FireConnect has written (survives off, so
+/** Durable registry of profile ids Nexus has written (survives off, so
  * detection never depends on profile-state.json alone). */
 function writtenProfilesPath(home) {
   return path.join(claudeDesktopDataDir(home), "written-profiles.json");
@@ -666,7 +669,7 @@ async function backupDeviceCatalogConfig(home) {
   return saved;
 }
 
-/** Restore the device config keys to their pre-FireConnect values. */
+/** Restore the device config keys to their pre-Nexus values. */
 async function restoreDeviceCatalogConfig(home, saved) {
   const configPath = path.join(thirdPartyDir(home), "claude_desktop_config.json");
   const config = (await readJson(configPath)) ?? {};
@@ -678,7 +681,7 @@ async function restoreDeviceCatalogConfig(home, saved) {
 }
 
 // `defaultModelEffort` stays in the snapshot list so `off` restores a user's
-// pre-FireConnect value (and clears the key when they had none): `on` itself
+// pre-Nexus value (and clears the key when they had none): `on` itself
 // never writes it — the Desktop app default applies while fireconnected.
 const DEVICE_CATALOG_KEYS = ["modelCatalogEnabled", "catalogUrl", "modelPrefer1mContext", "defaultModelEffort", "toolSearchEnabled"];
 
@@ -689,7 +692,7 @@ async function waitForShim(port, timeoutMs = 10_000) {
       const res = await fetch(`http://127.0.0.1:${port}/`, { signal: AbortSignal.timeout(1000) });
       if (res.ok) return;
     } catch { /* not up yet */ }
-    if (Date.now() > deadline) throw new Error(`Shim did not become ready on 127.0.0.1:${port}; see ~/.fireconnect/claude-desktop/shim.err.log`);
+    if (Date.now() > deadline) throw new Error(`Shim did not become ready on 127.0.0.1:${port}; see ~/.nexus/claude-desktop/shim.err.log`);
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
 }
@@ -718,13 +721,15 @@ export async function enableProfileLane(home, {
   model,
   log = (line) => console.log(line),
 } = {}) {
-  if (process.platform !== "darwin") throw new Error("Claude Desktop support requires macOS.");
+  if (!SUPPORTED_PLATFORMS.includes(process.platform)) {
+    throw new Error("Claude Desktop support requires macOS or Linux.");
+  }
   const key = await resolveFireworksKeyWithSource({ home });
-  if (!key.key) throw new Error("No Fireworks credential found. Run `fireconnect login` or set FIREWORKS_API_KEY first.");
+  if (!key.key) throw new Error("No Fireworks credential found. Run `nexus login` or set FIREWORKS_API_KEY first.");
   if (key.source === "env") {
     throw new Error(
       "The Fireworks key comes from FIREWORKS_API_KEY in this shell only. "
-      + "Run `fireconnect login --api-key <key>` so the shim service can use a stored credential.",
+      + "Run `nexus login --api-key <key>` so the shim service can use a stored credential.",
     );
   }
 
@@ -742,10 +747,16 @@ export async function enableProfileLane(home, {
   });
   printBody("Setting up Fireworks for Claude Desktop…");
 
-  const customModels = await readManualModels(home);
+  const storedCustomModels = await readManualModels(home);
+  // FireRouter customs added by an earlier release are dropped, not
+  // re-registered: FireRouter selections are retired (see model admission).
+  const customModels = storedCustomModels.filter((m) => !isFirerouterModelPattern(m?.shortId ?? ""));
+  if (customModels.length !== storedCustomModels.length) {
+    await writeManualModels(home, customModels);
+  }
   if (model) {
     const pair = await customModelEntry(home, model, { usedNames: models.map((m) => m.name) });
-    if (!pair) throw new Error(`Unknown serverless model: ${model} (see: fireconnect model list)`);
+    if (!pair) throw new Error(`Unknown serverless model: ${model} (see: nexus model list)`);
     if (!customModels.some((m) => m.shortId === pair.shortId)) {
       customModels.push({ shortId: pair.shortId, name: pair.entry.name, label: pair.entry.labelOverride, tier: pair.entry.anthropicFamilyTier });
       await writeManualModels(home, customModels);
@@ -757,20 +768,34 @@ export async function enableProfileLane(home, {
     models: { ...(modelMap.models ?? {}), ...Object.fromEntries(customModels.map((m) => [m.name, m.shortId])) },
   };
   await writeFileAtomic(shimStatePath(home), JSON.stringify({ port, modelMap: stateModelMap }, null, 2));
-  if (process.env.FIRECONNECT_TEST !== "1" && allowSystemChanges) {
-    const entry = new URL(import.meta.url).pathname.replace(/[^/]+$/, "shim.mjs");
-    await mkdir(path.dirname(shimPlistPath(home)), { recursive: true });
-    await writeFileAtomic(shimPlistPath(home), buildLaunchAgentPlist({
-      nodeExec: process.execPath,
-      entry,
-      home,
-      ...shimTrustOptions(),
-      label: SHIM_LABEL,
-      logPath: path.join(dataDir, "shim.log"),
-      errorPath: path.join(dataDir, "shim.err.log"),
-    }));
-    await startLaunchAgent(shimPlistPath(home), { allowSystemChanges, label: SHIM_LABEL });
-    await waitForShim(port);
+  if (process.env.NEXUS_TEST !== "1" && allowSystemChanges) {
+    const entry = preferDataDirPath(new URL(import.meta.url).pathname.replace(/[^/]+$/, "shim.mjs"));
+    const servicePath = shimServicePath(home);
+    const firstInstall = await stat(servicePath).then(() => false, () => true);
+    try {
+      await mkdir(path.dirname(servicePath), { recursive: true });
+      await writeFileAtomic(servicePath, buildShimServiceFile({
+        nodeExec: process.execPath,
+        entry,
+        home,
+        ...shimTrustOptions(),
+        label: SHIM_LABEL,
+        logPath: path.join(dataDir, "shim.log"),
+        errorPath: path.join(dataDir, "shim.err.log"),
+      }));
+      await retireLegacyShimAgent(home, { allowSystemChanges }).catch(() => {});
+      await startShimService(servicePath, { allowSystemChanges, label: SHIM_LABEL });
+      await waitForShim(port);
+    } catch (error) {
+      // No profile state is written yet, so `off` would not know to remove
+      // a service this run installed; undo it here (e.g. no systemd user
+      // session over SSH). A pre-existing service is left for `off`.
+      if (firstInstall) {
+        await stopShimService({ allowSystemChanges, label: SHIM_LABEL, unitPath: servicePath }).catch(() => {});
+        await rm(servicePath, { force: true });
+      }
+      throw error;
+    }
   }
 
   const connectors = (await detectConnectors(home)).map((c) =>
@@ -786,7 +811,7 @@ export async function enableProfileLane(home, {
   const shimProfileId = await detectShimProfileId(lib, shimUrl, home);
   const profileId = priorState?.profileId ?? shimProfileId ?? randomUUID();
   const appliedIsOurs = existing?.appliedId === profileId;
-  // A repeat on must not wipe the path to the user's pre-FireConnect profiles.
+  // A repeat on must not wipe the path to the user's pre-Nexus profiles.
   const backup = appliedIsOurs
     ? (priorState?.backup ?? null)
     : existing
@@ -808,7 +833,7 @@ export async function enableProfileLane(home, {
   await rememberWrittenProfile(home, profileId);
 
   // Recapture only when there is no prior snapshot — a repeat on would
-  // otherwise back up FireConnect's own keys and off would restore them.
+  // otherwise back up Nexus's own keys and off would restore them.
   const deviceBackup = priorState?.deviceBackup ?? (await backupDeviceCatalogConfig(home));
   await applyDeviceCatalogConfig(home, shimUrl);
   await markHarnessEnabled(home);
@@ -824,7 +849,7 @@ export async function enableProfileLane(home, {
   }, null, 2));
 
   // Reconcile the freshly written profile with every detection source (session
-  // files, pre-FireConnect config, org registry) — this is what actually lands
+  // files, pre-Nexus config, org registry) — this is what actually lands
   // the detected connectors; the write above only seeds/restores them.
   let synced = null;
   try {
@@ -870,19 +895,20 @@ export async function disableProfileLane(home, {
     const entries = (meta.entries ?? []).filter((e) => e.id !== state.profileId);
     await writeFileAtomic(path.join(lib, "_meta.json"), JSON.stringify({ appliedId: entries[0]?.id ?? null, entries }, null, 2), { mode: 0o600 });
     await sanitizeAppliedId(lib, `http://127.0.0.1:${state.port ?? SHIM_DEFAULT_PORT}`);
-    log("Removed the FireWorks provider profile.");
+    log("Removed the Fireworks provider profile.");
   } else {
     log("The applied 3p profile is not ours; leaving profiles untouched.");
   }
 
-  if (process.env.FIRECONNECT_TEST !== "1" && allowSystemChanges) {
-    await stopLaunchAgent({ allowSystemChanges, label: SHIM_LABEL });
+  if (process.env.NEXUS_TEST !== "1" && allowSystemChanges) {
+    await stopShimService({ allowSystemChanges, label: SHIM_LABEL, unitPath: shimServicePath(home) });
+    await retireLegacyShimAgent(home, { allowSystemChanges }).catch(() => {});
   }
   // Only now that profiles are restored and the shim is stopped: uninstall
   // discovery reads this flag, so clearing it earlier would let a failed off
   // drop Claude Desktop (and its profile backup) from a later uninstall.
   await markHarnessEnabled(home, false);
-  await rm(shimPlistPath(home), { force: true });
+  await rm(shimServicePath(home), { force: true });
   await rm(shimStatePath(home), { force: true });
   await rm(profileStatePath(home), { force: true });
   // Sessions are NOT migrated: each deployment keeps its own conversation

@@ -11,7 +11,7 @@ explicit `native` unpin). Precedence, lowest to highest: defaults < saved
 profile < live settings < CLI flags. `--model` is picker-only and never feeds
 the merge; `main` is not a tier slot and is left out of the mapping entirely.
 -/
-namespace FireConnect.SlotMapping
+namespace Nexus.SlotMapping
 
 inductive TierSlot where
   | opus
@@ -114,167 +114,6 @@ theorem ex_spot :
     resolve (fun _ => none) (fun _ => none) exFlags TierSlot.opus = none := by
   decide
 
-/-- `--routing-preference` without `--model` implies a firerouter picker row,
-but only when no tier slot pins a real model: an explicit pin opts out of the
-FireRouter mix, so synthesizing firerouter there would attach a routing header
-the pinned tiers ignore (the `on` guard then rejects instead). A `native` flag
-normalizes to the unpinned sentinel — end-state identical to passing no flag —
-so it must not block the synth. Mirrors `shouldImplyFirerouterPickerRow` in
-`connect.mjs`: `prefSet` = a routing preference was passed, `mainSet` =
-`--model` was passed, `slotSet` = a non-native tier pin was passed. -/
-def implyFirerouterRow (prefSet mainSet slotSet : Bool) : Bool :=
-  prefSet && !mainSet && !slotSet
-
-/-- Full truth table: the synth fires in exactly one of the eight cases. -/
-theorem implyFirerouterRow_table :
-    implyFirerouterRow true false false = true ∧
-    implyFirerouterRow true false true = false ∧
-    implyFirerouterRow true true false = false ∧
-    implyFirerouterRow true true true = false ∧
-    implyFirerouterRow false false false = false ∧
-    implyFirerouterRow false false true = false ∧
-    implyFirerouterRow false true false = false ∧
-    implyFirerouterRow false true true = false := by
-  decide
-
-/-- Bare `--routing-preference` implies the firerouter row. -/
-theorem implyFirerouterRow_bare_preference :
-    implyFirerouterRow true false false = true := by
-  decide
-
-/-- Explicit pins keep the rejection guard reachable (a pinned slot never gets
-a synthesized firerouter row alongside it). -/
-theorem implyFirerouterRow_slots_block :
-    implyFirerouterRow true false true = false := by
-  decide
-
-/-- An explicit `--model` never gets a synthesized row either. -/
-theorem implyFirerouterRow_model_blocks :
-    implyFirerouterRow true true false = false := by
-  decide
-
-/-- A tier flag counts as opting out of the mix only when it pins a real
-model. `native` normalizes to the unpinned sentinel (`none`), which is
-end-state identical to passing no flag — so it must not block the synth.
-Mirrors the pin check inside `shouldImplyFirerouterPickerRow`: only
-`some (some _)` values count. -/
-def hasNonNativePin (flags : Override) : Bool :=
-  [TierSlot.opus, TierSlot.sonnet, TierSlot.haiku, TierSlot.fable,
-    TierSlot.subagent].any fun slot => match flags slot with
-      | some (some _) => true
-      | _ => false
-
-/-- `native` flags do not block the synth (an unpin is not a pin). -/
-theorem native_flags_do_not_block :
-    hasNonNativePin (fun s => if s = TierSlot.sonnet then some none else none) = false ∧
-    hasNonNativePin (fun _ => some none) = false ∧
-    hasNonNativePin (fun _ => none) = false := by
-  decide
-
-/-- A real pin blocks the synth. -/
-theorem real_pin_blocks :
-    hasNonNativePin (fun s => if s = TierSlot.sonnet then some (some "glm-latest") else none) = true := by
-  decide
-
-/-! ## Fire Pass merge
-
-Fire Pass starts from curated router defaults rather than all-native, and also
-merges `--model` into `main` (not a tier slot, so it is an absent override
-here). The old chain stopped before the tier flags, silently dropping them;
-the fixed chain merges them last, so they win like they do on standard keys. -/
-
-/-- Every tier slot, for guards that scan the whole mapping. -/
-def allSlots : List TierSlot :=
-  [TierSlot.opus, TierSlot.sonnet, TierSlot.haiku, TierSlot.fable, TierSlot.subagent]
-
-theorem mem_allSlots (slot : TierSlot) : slot ∈ allSlots := by
-  cases slot <;> simp [allSlots]
-
-/-- Pre-fix Fire Pass chain: tier flags never reach the merge. -/
-def resolveFirePassOld (curated : Mapping) (saved live mainOv : Override) : Mapping :=
-  mergeOne (mergeOne (mergeOne curated saved) live) mainOv
-
-/-- Fixed Fire Pass chain: tier flags merge last (`activation.mjs`). -/
-def resolveFirePass (curated : Mapping) (saved live mainOv flags : Override) : Mapping :=
-  mergeOne (resolveFirePassOld curated saved live mainOv) flags
-
-/-- An explicit tier flag wins on Fire Pass, whatever the curated defaults. -/
-theorem firePass_flags_win (curated : Mapping) (saved live mainOv flags : Override)
-    (slot : TierSlot) (v : SlotValue) (h : flags slot = some v) :
-    resolveFirePass curated saved live mainOv flags slot = v := by
-  simp [resolveFirePass, mergeOne, h]
-
-/-- The `on` guard rejecting native slots on Fire Pass ("Claude default slots
-require a Fireworks API key"). -/
-def firePassRejectsNative (m : Mapping) : Bool :=
-  allSlots.any fun slot => m slot == none
-
-/-- `--<tier> native` on Fire Pass now trips the guard: it fails loudly instead
-of exiting 0 with the flag ignored. -/
-theorem firePass_native_flag_rejected (curated : Mapping) (saved live mainOv flags : Override)
-    (slot : TierSlot) (h : flags slot = some none) :
-    firePassRejectsNative (resolveFirePass curated saved live mainOv flags) = true := by
-  apply List.any_eq_true.mpr
-  exact ⟨slot, mem_allSlots slot, by simp [resolveFirePass, mergeOne, h]⟩
-
-/-- The Fire Pass FireRouter guard (`claudeMappingUsesAnyFirerouter`): reject
-when any slot holds a FireRouter route. `isRoute` abstracts
-`isFirerouterModelPattern`, which matches bare `firerouter` and every
-`firerouter/*` compound. -/
-def firePassRejectsRouter (isRoute : String → Bool) (m : Mapping) : Bool :=
-  allSlots.any fun slot => match m slot with
-    | some id => isRoute id
-    | none => false
-
-/-- Any FireRouter tier flag on Fire Pass — bare or compound — is rejected,
-because the flag wins the merge and the guard scans every slot. -/
-theorem firePass_router_flag_rejected (isRoute : String → Bool) (curated : Mapping)
-    (saved live mainOv flags : Override) (slot : TierSlot) (route : String)
-    (h : flags slot = some (some route)) (hr : isRoute route = true) :
-    firePassRejectsRouter isRoute (resolveFirePass curated saved live mainOv flags) = true := by
-  apply List.any_eq_true.mpr
-  exact ⟨slot, mem_allSlots slot, by simp [resolveFirePass, mergeOne, h, hr]⟩
-
-/-- The pre-fix guard matched only bare `firerouter`, so a compound pin slipped
-through (the Bugbot finding). With `isBareOnly` = exact `"firerouter"` match,
-`firerouter/gpt-5p6` is not rejected by the old guard but is by the new one. -/
-def isBareOnly (id : String) : Bool := id == "firerouter"
-def isAnyRoute (id : String) : Bool := id == "firerouter" || id.startsWith "firerouter/"
-def opusCompoundFlag : Override
-  | .opus => some (some "firerouter/gpt-5p6")
-  | _ => none
-
-theorem firePass_compound_regression :
-    firePassRejectsRouter isBareOnly
-        (resolveFirePass (fun _ => some "kimi-fast-latest") (fun _ => none) (fun _ => none)
-          (fun _ => none) opusCompoundFlag) = false ∧
-    firePassRejectsRouter isAnyRoute
-        (resolveFirePass (fun _ => some "kimi-fast-latest") (fun _ => none) (fun _ => none)
-          (fun _ => none) opusCompoundFlag) = true := by
-  native_decide
-
-/-- The pre-fix chain ignores tier flags entirely: its result does not depend
-on them (the reported Bugbot finding). -/
-theorem firePassOld_ignores_flags (curated : Mapping) (saved live mainOv : Override)
-    (flagsA flagsB : Override) :
-    (fun _ : Override => resolveFirePassOld curated saved live mainOv) flagsA =
-      (fun _ : Override => resolveFirePassOld curated saved live mainOv) flagsB := rfl
-
-/-- Concrete regression: curated `kimi-fast-latest` everywhere plus
-`--sonnet native` — the old chain kept the router (flag dropped), the fixed
-chain unpins it so the guard fires. -/
-def kimiCurated : Mapping := fun _ => some "kimi-fast-latest"
-def sonnetNativeFlag : Override
-  | .sonnet => some none
-  | _ => none
-
-theorem firePass_regression :
-    resolveFirePassOld kimiCurated (fun _ => none) (fun _ => none) (fun _ => none)
-        TierSlot.sonnet = some "kimi-fast-latest" ∧
-    resolveFirePass kimiCurated (fun _ => none) (fun _ => none) (fun _ => none)
-        sonnetNativeFlag TierSlot.sonnet = none := by
-  decide
-
 /-! ## OpenAI key attach
 
 Mirrors `claudeMappingNeedsOpenaiKey` in `model-profile.mjs`: the key rides
@@ -345,4 +184,4 @@ unchanged by considering the default. -/
 theorem selected_wins (selected : String) (savedServable : Option String) :
     defaultModel (some selected) savedServable = selected := rfl
 
-end FireConnect.SlotMapping
+end Nexus.SlotMapping

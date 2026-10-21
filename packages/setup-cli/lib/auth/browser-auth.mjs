@@ -7,7 +7,7 @@ import { isRemoteContext } from "../config/remote-context.mjs";
 import { BRAND } from "../ui/tokens.mjs";
 
 /**
- * Browser sign-in for `fireconnect login`.
+ * Browser sign-in for `nexus login`.
  *
  * Primary flow: OAuth authorization-code + PKCE against the Cognito hosted UI,
  * catching the redirect on http://localhost:18000 — the redirect URI already
@@ -26,13 +26,13 @@ import { BRAND } from "../ui/tokens.mjs";
  * public OAuth client — no secret exists). Env overrides are for pointing at
  * the dev pool during development.
  */
-export const OAUTH_CLIENT_ID = process.env.FIRECONNECT_OAUTH_CLIENT_ID?.trim()
+export const OAUTH_CLIENT_ID = process.env.NEXUS_OAUTH_CLIENT_ID?.trim()
   || "sueas7prsfrdp16nantbeqcjv";
-export const COGNITO_DOMAIN = process.env.FIRECONNECT_COGNITO_DOMAIN?.trim()
+export const COGNITO_DOMAIN = process.env.NEXUS_COGNITO_DOMAIN?.trim()
   || "https://fireworks.auth.us-west-2.amazoncognito.com";
-export const COGNITO_POOL_ID = process.env.FIRECONNECT_COGNITO_POOL_ID?.trim()
+export const COGNITO_POOL_ID = process.env.NEXUS_COGNITO_POOL_ID?.trim()
   || "us-west-2_feAWJl2Gd";
-export const DEVICE_AUTH_URL = process.env.FIRECONNECT_DEVICE_AUTH_URL?.trim()
+export const DEVICE_AUTH_URL = process.env.NEXUS_DEVICE_AUTH_URL?.trim()
   || "https://device-auth.fireworks.ai";
 
 /** The exact redirect URI registered on the Cognito app client (root path, port 18000). */
@@ -86,7 +86,7 @@ export function callbackPage(ok) {
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${title} — FireConnect</title>
+<title>${title} — Nexus</title>
 <style>
 :root{color-scheme:dark}
 body{margin:0;background:#101014;color:#e7e5ee;min-height:100vh;box-sizing:border-box;padding:24px;
@@ -117,7 +117,7 @@ h1{margin:0 0 20px;font-size:24px;font-weight:600;letter-spacing:-.02em;
 <h1>${title}</h1>
 <div class="term">${term}</div>${fallback}
 </div>
-<div class="foot">FireConnect · Fireworks AI</div>
+<div class="foot">Nexus · Fireworks AI</div>
 </body></html>`;
 }
 
@@ -237,7 +237,7 @@ export async function signInViaLocalhostCallback({
       return;
     }
     onStatus(`Couldn't open a browser here. To sign in, open this URL in a browser on this machine:\n  ${link(url)}`);
-    onStatus("Or press Ctrl+C and run  fireconnect login --paste  to paste a key instead.");
+    onStatus("Or press Ctrl+C and run  nexus login --paste  to paste a key instead.");
   }, { timeoutMs });
   if (!code) {
     return failed(failure, fatal);

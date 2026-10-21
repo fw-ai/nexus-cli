@@ -1,5 +1,5 @@
 /**
- * Measurement and cost math for `fireconnect demo` (§6 of the brief).
+ * Measurement and cost math for `nexus demo` (§6 of the brief).
  *
  * Everything here is pure and deterministic so the math can be unit-tested and
  * audited. Display rounding is applied only at format time; internal values and

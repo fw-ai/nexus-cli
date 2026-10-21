@@ -19,7 +19,7 @@ export async function finishEnvHarnessOn(home, options = {}) {
   // Skipped in test context to avoid subprocess overhead/flakiness in CI; the
   // self-check is exercised directly in test/secret-backend.test.mjs.
   const harnessId = options.harnessId ?? "this harness";
-  const isTestContext = process.env.NODE_ENV === "test" || process.env.FIRECONNECT_TEST === "1";
+  const isTestContext = process.env.NODE_ENV === "test" || process.env.NEXUS_TEST === "1";
   const config = await readGlobalConfig(home);
   const needsShellExport = await needsFireworksShellExport(
     home,

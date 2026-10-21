@@ -63,17 +63,17 @@ describe("firerouter provider key shapes", () => {
   });
 
   it("resolveFirerouterPlan reports both provider requirements", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter" }, { keyType: "fireworks" }), {
+    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter" }), {
       mainModel: "firerouter",
       isFirerouter: true,
       requiresAnthropicKey: true,
       requiresOpenaiKey: false,
       namesAnthropicModel: false,
     });
-    const opus = resolveFirerouterPlan({ main: "firerouter/opus" }, { keyType: "fireworks" });
+    const opus = resolveFirerouterPlan({ main: "firerouter/opus" });
     assert.equal(opus.requiresAnthropicKey, true);
     assert.equal(opus.requiresOpenaiKey, false);
-    const gpt = resolveFirerouterPlan({ main: "firerouter/gpt-5p6" }, { keyType: "fireworks" });
+    const gpt = resolveFirerouterPlan({ main: "firerouter/gpt-5p6" });
     assert.equal(gpt.isFirerouter, true);
     assert.equal(gpt.requiresOpenaiKey, true);
   });

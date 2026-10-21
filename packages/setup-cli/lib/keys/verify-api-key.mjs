@@ -25,7 +25,7 @@ import { fireworksGatewayFetchSignal } from "../fireworks/gateway-fetch.mjs";
  */
 export async function verifyFireworksApiKey(apiKey, { gatewayUrl = "" } = {}) {
   const base = gatewayUrl
-    || process.env.FIRECONNECT_GATEWAY_URL?.trim()
+    || process.env.NEXUS_GATEWAY_URL?.trim()
     || FIREWORKS_GATEWAY_URL;
 
   let response;

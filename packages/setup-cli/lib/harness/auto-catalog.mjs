@@ -5,21 +5,16 @@ import path from "node:path";
 import {
   isEnabledFireworksHarness,
   readGlobalConfig,
-  setHarnessState,
 } from "../config/global-config.mjs";
 import {
   copilotAppPathsFor,
   copilotCliPathsFor,
   cursorPathsFor,
-  piPathsFor,
 } from "./context.mjs";
 import { HARNESS, HARNESSES } from "./id.mjs";
 import { readJsonIfExists, writeJson } from "../io/json.mjs";
 import { writeFileAtomic } from "../io/atomic-write.mjs";
-import { fullFireworksResourceId, shortFireworksModelRef } from "../fireworks/model-id.mjs";
-import { resolveManagedDisplayName } from "../fireworks/model-display.mjs";
-import { isFirepassKey } from "../keys/key-type.mjs";
-import { byokEnvFromHeaders } from "../firerouter/core.mjs";
+import { shortFireworksModelRef } from "../fireworks/model-id.mjs";
 import { buildFireconnectTelemetryHeaders } from "../telemetry/request-headers.mjs";
 import {
   copilotModelIds,
@@ -32,10 +27,10 @@ import {
   isCopilotRunning,
   listCopilotProviderModels,
 } from "../harnesses/copilot-app/sqlite.mjs";
-import { providerApiKey } from "../harnesses/copilot-app/core.mjs";
 import { buildCliModels, readCopilotCliState } from "../harnesses/copilot-cli/config.mjs";
 import {
   APPLICATION_USER_KEY,
+  CURSOR_AUTO_MODEL_ID,
   addUserModel,
   cursorProviderStatus,
   fireconnectRegisteredModels,
@@ -45,8 +40,6 @@ import { applyCursorWrites, isCursorRunning } from "../harnesses/cursor/sqlite.m
 import {
   codexCatalogPath,
   codexConfigPath,
-  codexStoredAuthRef,
-  effectiveCodexApiKey,
   fireconnectManagedVariant,
 } from "../harnesses/codex/core.mjs";
 import { parseToml } from "../harnesses/codex/toml.mjs";
@@ -58,7 +51,6 @@ import { isChatGptRunning } from "../harnesses/codex/ide-running.mjs";
 import {
   OPENCODE_FIREWORKS_PROVIDER_ID,
   buildOpencodeModelEntry,
-  effectiveOpencodeApiKey,
   opencodeConfigPath,
   opencodeProviderModelKey,
   opencodeProviderStatus,
@@ -66,33 +58,22 @@ import {
   writeOpencodeConfig,
 } from "../harnesses/opencode/core.mjs";
 import {
-  piProviderStatus,
-  resolvePiApiKeyValue,
-} from "../harnesses/pi/core.mjs";
-import {
-  PI_AUTO_ENABLED_MODEL,
-  buildPiCustomFireworksModelEntry,
-  piEnabledModels,
-} from "../harnesses/pi/fireworks-models.mjs";
-import {
   buildModelEntry,
   chatLanguageModelsPath,
   findFireconnectProvider as findVscodeProvider,
   isVscodeRunning,
   readChatLanguageModels,
-  readVscodeStoredKey,
-  vscodeStoredByokHeaders,
   writeChatLanguageModels,
 } from "../harnesses/vscode/core.mjs";
-import { withFireconnectRequestHeadersForModels } from "../harnesses/vscode/request-headers.mjs";
+import { withFireconnectRequestHeaders } from "../harnesses/vscode/request-headers.mjs";
 
 /**
  * Ensure the `auto` mix is registered in one harness's picker catalog.
  *
- * Single entry point for the auto backfill: `fireconnect upgrade` (via the
+ * Single entry point for the auto backfill: `nexus update` (via the
  * forward migrations) and any other caller switch on the harness id here.
- * Every branch is key-independent (static spec, no network), skips Fire Pass
- * installs and running IDEs, and never touches the active model selection.
+ * Every branch is key-independent (static spec, no network), skips running
+ * IDEs, and never touches the active model selection.
  * Claude is separately handled and DeepSeek has no catalog, so both no-op.
  * Unknown ids throw, like the harness registry.
  *
@@ -106,11 +87,12 @@ export async function ensureAutoCatalogEntry(harnessId, home, opts = {}) {
   switch (harnessId) {
     case HARNESS.CLAUDE:
     case HARNESS.DEEPSEEK:
-      // Claude is separately handled; DeepSeek has no catalog.
+    case HARNESS.PI:
+      // Claude and Pi are separately handled (Pi by refreshPiCatalog);
+      // DeepSeek has no catalog.
       return false;
     case HARNESS.OPENCODE:
     case HARNESS.CODEX:
-    case HARNESS.PI:
     case HARNESS.CURSOR:
     case HARNESS.VSCODE:
     case HARNESS.COPILOT_APP:
@@ -129,8 +111,6 @@ export async function ensureAutoCatalogEntry(harnessId, home, opts = {}) {
       return ensureOpencodeAuto(home);
     case HARNESS.CODEX:
       return ensureCodexAuto(home, opts);
-    case HARNESS.PI:
-      return ensurePiAuto(home);
     case HARNESS.CURSOR:
       return ensureCursorAuto(home, opts);
     case HARNESS.VSCODE:
@@ -177,9 +157,6 @@ async function ensureOpencodeAuto(home) {
   if (Object.keys(models).some((id) => opencodeProviderModelKey(id) === "auto")) {
     return false;
   }
-  if (isFirepassKey(effectiveOpencodeApiKey(provider.options?.apiKey))) {
-    return false;
-  }
   const storedApiKey = provider.options?.apiKey;
   await writeOpencodeConfig(resolvedPath, {
     ...config,
@@ -205,9 +182,6 @@ async function ensureCodexAuto(home, { isRunning = isChatGptRunning } = {}) {
   }
   const doc = parseToml(snapshot.raw);
   if (fireconnectManagedVariant(doc) !== "fireworks") {
-    return false;
-  }
-  if (isFirepassKey(effectiveCodexApiKey(codexStoredAuthRef(doc)))) {
     return false;
   }
   const ref = typeof doc.root.model_catalog_json === "string" ? doc.root.model_catalog_json.trim() : "";
@@ -243,65 +217,6 @@ function resolveCodexCatalogPath(home, ref) {
   return codexCatalogPath(home);
 }
 
-async function ensurePiAuto(home) {
-  const { settingsPath, authPath, modelsPath } = piPathsFor({ home });
-  const [settingsSnap, authSnap, modelsSnap] = await Promise.all([
-    readRawIfExists(settingsPath),
-    readRawIfExists(authPath),
-    readRawIfExists(modelsPath),
-  ]);
-  if (!settingsSnap.existed || !settingsSnap.raw.trim()) {
-    return false;
-  }
-  let settings = JSON.parse(settingsSnap.raw);
-  if (piProviderStatus(settings) !== "fireworks") {
-    return false;
-  }
-  const auth = authSnap.existed && authSnap.raw.trim() ? JSON.parse(authSnap.raw) : {};
-  if (isFirepassKey(resolvePiApiKeyValue(auth?.fireworks?.key ?? ""))) {
-    return false;
-  }
-  const modelsConfig = modelsSnap.existed && modelsSnap.raw.trim() ? JSON.parse(modelsSnap.raw) : {};
-
-  let changed = false;
-  const providers = { ...(modelsConfig.providers ?? {}) };
-  const fireworks = { ...(providers.fireworks ?? {}) };
-  const rows = [...(fireworks.models ?? [])];
-  if (!rows.some((model) => fullFireworksResourceId(model?.id) === "auto")) {
-    rows.unshift(buildPiCustomFireworksModelEntry("auto", resolveManagedDisplayName("auto")));
-    fireworks.models = rows;
-    providers.fireworks = fireworks;
-    changed = true;
-  }
-
-  const { harnesses } = await readGlobalConfig(home);
-  const profiles = { ...(harnesses[HARNESS.PI]?.profiles ?? {}) };
-  const managed = Array.isArray(profiles.managedModelIds) ? [...profiles.managedModelIds] : [];
-  if (!managed.some((id) => fullFireworksResourceId(id) === "auto")) {
-    managed.unshift("auto");
-    profiles.managedModelIds = managed;
-    changed = true;
-  }
-
-  const scope = Array.isArray(settings.enabledModels)
-    ? [...settings.enabledModels]
-    : piEnabledModels(settings.defaultModel);
-  if (!scope.includes(PI_AUTO_ENABLED_MODEL)) {
-    scope.push(PI_AUTO_ENABLED_MODEL);
-  }
-  if (JSON.stringify(scope) !== JSON.stringify(settings.enabledModels)) {
-    settings = { ...settings, enabledModels: scope };
-    await writeJson(settingsPath, settings);
-    changed = true;
-  }
-
-  if (changed) {
-    await writeJson(modelsPath, { ...modelsConfig, providers });
-    await setHarnessState(home, HARNESS.PI, { profiles });
-  }
-  return changed;
-}
-
 async function ensureCursorAuto(home, { isRunning = isCursorRunning } = {}) {
   const resolvedDbPath = cursorPathsFor({ home }).dbPath;
   if (!existsSync(resolvedDbPath)) {
@@ -314,12 +229,9 @@ async function ensureCursorAuto(home, { isRunning = isCursorRunning } = {}) {
   if (cursorProviderStatus(blob, openAIKey) !== "fireworks") {
     return false;
   }
-  if (isFirepassKey(openAIKey)) {
-    return false;
-  }
   const toShortRef = (id) => shortFireworksModelRef(String(id ?? ""));
-  if (fireconnectRegisteredModels(blob).map(toShortRef).includes("auto")
-    || (blob?.aiSettings?.userAddedModels ?? []).map(toShortRef).includes("auto")) {
+  if (fireconnectRegisteredModels(blob).map(toShortRef).includes(CURSOR_AUTO_MODEL_ID)
+    || (blob?.aiSettings?.userAddedModels ?? []).map(toShortRef).includes(CURSOR_AUTO_MODEL_ID)) {
     return false;
   }
   const next = addUserModel(blob, "auto");
@@ -340,20 +252,15 @@ async function ensureVscodeAuto(home, { isRunning = isVscodeRunning } = {}) {
   if (ids.includes("auto")) {
     return false;
   }
-  const storedKey = await readVscodeStoredKey(jsonPath, undefined, arr);
-  if (isFirepassKey(storedKey)) {
-    return false;
-  }
   if (isRunning()) {
     return false;
   }
-  const models = withFireconnectRequestHeadersForModels(
-    [buildModelEntry("auto"), ...(provider.models ?? [])],
-    {
-      telemetryHeaders: buildFireconnectTelemetryHeaders(HARNESS.VSCODE),
-      byokHeaders: byokEnvFromHeaders(vscodeStoredByokHeaders(arr)),
-    },
-  );
+  // Only the new row gets headers. Existing models keep theirs as written by
+  // `on`, so an upgrade can't drop a BYOK key.
+  const autoEntry = withFireconnectRequestHeaders(buildModelEntry("auto"), {
+    telemetryHeaders: buildFireconnectTelemetryHeaders(HARNESS.VSCODE),
+  });
+  const models = [autoEntry, ...(provider.models ?? [])];
   await writeChatLanguageModels(
     jsonPath,
     arr.map((p) => (p === provider ? { ...p, models } : p)),
@@ -371,9 +278,6 @@ async function ensureCopilotAppAuto(home, { isRunning = isCopilotRunning } = {})
   }
   const provider = await findCopilotProvider(resolvedDbPath);
   if (!provider) {
-    return false;
-  }
-  if (isFirepassKey(providerApiKey(provider))) {
     return false;
   }
   const ids = copilotModelIds(
@@ -395,9 +299,6 @@ async function ensureCopilotCliAuto(home) {
     return false;
   }
   if (copilotModelIds(state.models).includes("auto")) {
-    return false;
-  }
-  if (isFirepassKey(state.apiKey)) {
     return false;
   }
   if (!Array.isArray(config.models)) {

@@ -39,7 +39,7 @@ export function isChatGptRunning() {
  * Interactive: when the app is running and stdin is a TTY, prints a "quit it"
  * message and re-prompts (waiting for Enter) until it's no longer running, then
  * returns so the caller's write proceeds. `force` skips the wait (warns
- * instead). Non-interactive throws `CHATGPT_RUNNING_MESSAGE`. fireconnect does
+ * instead). Non-interactive throws `CHATGPT_RUNNING_MESSAGE`. nexus does
  * not close or reopen the app — the user does.
  * @param {{ force?: boolean }} [opts]
  */
@@ -120,8 +120,8 @@ function ownProcessLines(psOutput, uid) {
 function listCodexProcesses() {
   // Never read (and so never signal) the developer's real Codex under test:
   // specs that drive `codex on`/`off` describe the processes they want here.
-  if (process.env.FIRECONNECT_TEST === "1") {
-    return classifyCodexProcesses(process.env.FIRECONNECT_TEST_CODEX_PS ?? "");
+  if (process.env.NEXUS_TEST === "1") {
+    return classifyCodexProcesses(process.env.NEXUS_TEST_CODEX_PS ?? "");
   }
   if (os.platform() === "win32") {
     return { sessions: [], daemons: [] };
@@ -144,7 +144,7 @@ function listCodexProcesses() {
 
 /** SIGTERM `pid`; a no-op under test, where the listed pids are made up. */
 function signalCodexProcess(pid) {
-  if (process.env.FIRECONNECT_TEST === "1") {
+  if (process.env.NEXUS_TEST === "1") {
     return;
   }
   process.kill(pid, "SIGTERM");
@@ -167,7 +167,7 @@ export const CODEX_SESSION_RUNNING_MESSAGE =
  * config. Same interaction as {@link ensureChatGptStopped}: interactive waits
  * for the user, `force` warns and skips the wait, non-interactive throws. The
  * daemon is left alone whenever a session is still open (`force`, or
- * continue-anyway after the wait). fireconnect never ends a session — the
+ * continue-anyway after the wait). nexus never ends a session — the
  * user does.
  * @param {{ force?: boolean }} [opts]
  */
@@ -195,7 +195,7 @@ const CODEX_DAEMON_STOP_TIMEOUT_MS = 10_000;
  *   false when the subcommand is missing (older Codex), fails, or times out.
  */
 function stopDaemonViaCodex() {
-  if (process.env.FIRECONNECT_TEST === "1") {
+  if (process.env.NEXUS_TEST === "1") {
     return false;
   }
   try {

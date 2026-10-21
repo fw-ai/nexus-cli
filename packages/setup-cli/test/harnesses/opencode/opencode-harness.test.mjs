@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
@@ -18,10 +19,15 @@ import {
   cacheServerlessCatalogSnapshot,
   setServerlessCatalogSnapshot,
 } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
-import { FIRECONNECT_REFERER, GLM_FAST_LATEST, mockServerlessModel } from "../../helpers.mjs";
-import { seedOnCommandCatalog } from "../../helpers.mjs";
+import {
+  FIRECONNECT_REFERER,
+  GLM_FAST_LATEST,
+  mockServerlessModel,
+  mockServerlessModelRows,
+} from "../../helpers.mjs";
+import { isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
 
-const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "fireconnect.mjs");
+const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "nexus.mjs");
 
 function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
@@ -29,10 +35,11 @@ function runFireconnect(args, env = {}) {
     const child = spawn(process.execPath, [CLI, ...args], {
       env: {
         ...process.env,
-        FIRECONNECT_SECRET_STORE: "memory",
+        NEXUS_SECRET_STORE: "memory",
         ANTHROPIC_API_KEY: "sk-ant-test-12345", // pragma: allowlist secret
-        FIRECONNECT_TEST: "1",
+        NEXUS_TEST: "1",
         ...env,
+        HOME: isolatedChildHome(env),
         FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -192,10 +199,17 @@ describe("opencode harness integration", () => {
     const configPath = opencodeConfigPath(home);
     await writeFile(configPath, JSON.stringify({ model: "openai/gpt-4", provider: {} }, null, 2) + "\n");
 
-    // Seed the vision-capable Kimi K3 row so the kimi-fast-latest alias the
-    // Fire Pass fallback registers resolves its image modalities.
+    // A seeded catalog resolves offline, so the full set registers
+    // deterministically; the vision-capable Kimi K3 row gives kimi-fast-latest
+    // its image modalities.
     seedServerlessCatalogRows(home, [
-      mockServerlessModel({
+      ...mockServerlessModelRows({
+        aliases: [
+          "accounts/fireworks/routers/glm-fast-latest",
+          "accounts/fireworks/routers/glm-latest",
+        ],
+      }),
+      ...mockServerlessModelRows({
         id: "accounts/fireworks/models/kimi-k3",
         display_name: "Kimi K3",
         aliases: ["accounts/fireworks/routers/kimi-fast-latest"],
@@ -204,10 +218,8 @@ describe("opencode harness integration", () => {
       }),
     ]);
 
-    // A Fire Pass key resolves an offline catalog (no network), so the full set
-    // registers deterministically.
     const onResult = await runFireconnect(
-      ["opencode", "on", "--api-key", "fpk_test_firepass_key"],
+      ["opencode", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(onResult.code, 0, onResult.stderr);
@@ -226,8 +238,7 @@ describe("opencode harness integration", () => {
     assert.equal(models["glm-fast-latest"].modalities, undefined);
     assert.ok(!ids.includes("glm-5p2-fast"));
     assert.ok(!ids.includes("kimi-k3-fast"));
-    // Fire Pass pins kimi-fast-latest (not the fireworks-key default, `auto`).
-    assert.equal(enabled.model, `${OPENCODE_FIREWORKS_PROVIDER_ID}/kimi-fast-latest`);
+    assert.equal(enabled.model, `${OPENCODE_FIREWORKS_PROVIDER_ID}/auto`);
 
     const offResult = await runFireconnect(["opencode", "off"], { HOME: home });
     assert.equal(offResult.code, 0);
@@ -241,8 +252,10 @@ describe("opencode harness integration", () => {
     const configPath = opencodeConfigPath(home);
     await writeFile(configPath, JSON.stringify({ model: "openai/gpt-4", provider: {} }, null, 2) + "\n");
 
-    // First on registers the Fire Pass catalog.
-    let on = await runFireconnect(["opencode", "on", "--api-key", "fpk_test_firepass_key"], { HOME: home, FIREWORKS_API_KEY: "" });
+    // A "cataloged" key gets a live catalog from the mock gateway, so re-on
+    // prunes against it instead of trusting the offline set.
+    const apiKey = "fw_test_cataloged_v2_key_12345";
+    let on = await runFireconnect(["opencode", "on", "--api-key", apiKey], { HOME: home, FIREWORKS_API_KEY: "" });
     assert.equal(on.code, 0, on.stderr);
 
     // Simulate a model that was registered previously but is no longer in the catalog.
@@ -253,12 +266,12 @@ describe("opencode harness integration", () => {
     await writeFile(configPath, JSON.stringify(config, null, 2) + "\n");
 
     // Re-on removes entries absent from the current catalog.
-    on = await runFireconnect(["opencode", "on", "--api-key", "fpk_test_firepass_key"], { HOME: home, FIREWORKS_API_KEY: "" });
+    on = await runFireconnect(["opencode", "on", "--api-key", apiKey], { HOME: home, FIREWORKS_API_KEY: "" });
     assert.equal(on.code, 0, on.stderr);
     const models = JSON.parse(await readFile(configPath, "utf8")).provider[OPENCODE_FIREWORKS_PROVIDER_ID].models;
     assert.equal(Object.keys(models).includes(staleId), false, "stale model should be dropped on re-on");
     assert.equal(Object.keys(models).includes("deepseek-v4-flash"), false, "catalog model should not be duplicated");
-    assert.ok(Object.keys(models).includes("glm-fast-latest"));
+    assert.ok(Object.keys(models).includes("glm-latest"));
   });
 
   it("custom --data-dir keeps a single backup across model switches; off restores the original", async () => {
@@ -282,7 +295,7 @@ describe("opencode harness integration", () => {
     assert.equal((await readJsonIfExists(backupPath)).snapshot?.raw, original);
 
     const routerOn = await runFireconnect(
-      ["opencode", "on", "--model", "firerouter", ...dataDirArg, "--api-key", "fw_test_key_12345"],
+      ["opencode", "on", "--model", "glm-latest", ...dataDirArg, "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(routerOn.code, 0);
@@ -294,7 +307,7 @@ describe("opencode harness integration", () => {
     assert.equal((await readJsonIfExists(backupPath)).snapshot, undefined);
   });
 
-  it("persists --anthropic-api-key in provider headers for firerouter", async () => {
+  it("rejects --anthropic-api-key with a FireRouter model and persists nothing", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firerouter-byok-flag-"));
     const configPath = opencodeConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -309,16 +322,12 @@ describe("opencode harness integration", () => {
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
-    assert.equal(on.code, 0, on.stderr);
-
-    const config = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(
-      config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers["x-anthropic-api-key"],
-      anthropicKey,
-    );
+    assert.notEqual(on.code, 0);
+    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(configPath), false);
   });
 
-  it("persists --openai-api-key in provider headers for firerouter", async () => {
+  it("rejects --openai-api-key with a FireRouter model and persists nothing", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firerouter-openai-flag-"));
     const configPath = opencodeConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -333,21 +342,36 @@ describe("opencode harness integration", () => {
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
-    assert.equal(on.code, 0, on.stderr);
-
-    const config = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(
-      config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers["x-openai-api-key"],
-      openaiKey,
-    );
-    // A mislabeled Anthropic key is never seated as the OpenAI credential.
-    assert.equal(
-      config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers["x-anthropic-api-key"],
-      undefined,
-    );
+    assert.notEqual(on.code, 0);
+    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(configPath), false);
   });
 
-  it("connects firerouter/sol without provider keys and attaches no BYOK headers", async () => {
+  it("clears a routing-preference header an earlier release wrote, keeping user headers", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-routing-preference-reon-"));
+    const configPath = opencodeConfigPath(home);
+    await mkdir(path.dirname(configPath), { recursive: true });
+    const env = { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" };
+    const onArgs = ["opencode", "on", "--api-key", "fw_test_key_12345"];
+    const headersOf = async () =>
+      JSON.parse(await readFile(configPath, "utf8")).provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers ?? {};
+
+    const first = await runFireconnect(onArgs, env);
+    assert.equal(first.code, 0, first.stderr);
+
+    const config = JSON.parse(await readFile(configPath, "utf8"));
+    const options = config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options;
+    options.headers = { ...(options.headers ?? {}), "x-routing-preference": "5", "X-User-Trace": "keep" };
+    await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+    const reon = await runFireconnect(onArgs, env);
+    assert.equal(reon.code, 0, reon.stderr);
+    const headers = await headersOf();
+    assert.equal(headers["x-routing-preference"], undefined);
+    assert.equal(headers["X-User-Trace"], "keep");
+  });
+
+  it("rejects firerouter/sol as a model selection", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firerouter-sol-"));
     const configPath = opencodeConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -356,42 +380,43 @@ describe("opencode harness integration", () => {
       ["opencode", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter/sol"],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
-    assert.equal(on.code, 0, on.stderr);
-
-    const config = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(config.model, `${OPENCODE_FIREWORKS_PROVIDER_ID}/firerouter/sol`);
-    const headers = config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers ?? {};
-    assert.equal(headers["x-anthropic-api-key"], undefined);
-    assert.equal(headers["x-openai-api-key"], undefined);
+    assert.notEqual(on.code, 0);
+    assert.match(on.stderr, /--model firerouter\/sol is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(configPath), false);
   });
 
-  it("recovers the stored OpenAI key on re-on without re-passing the flag", async () => {
+  it("drops a stored FireRouter selection and its BYOK headers on plain re-on", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firerouter-openai-reen-"));
     const configPath = opencodeConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
     const openaiKey = "sk-proj-opencode-reen-12345";
 
     const first = await runFireconnect(
-      [
-        "opencode", "on",
-        "--api-key", "fw_test_key_12345",
-        "--model", "firerouter",
-        "--openai-api-key", openaiKey,
-      ],
+      ["opencode", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.equal(first.code, 0, first.stderr);
 
+    // What an earlier release wrote for `--model firerouter --openai-api-key …`.
+    const seeded = JSON.parse(await readFile(configPath, "utf8"));
+    seeded.model = `${OPENCODE_FIREWORKS_PROVIDER_ID}/firerouter`;
+    seeded.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers = {
+      ...(seeded.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers ?? {}),
+      "x-openai-api-key": openaiKey,
+    };
+    await writeFile(configPath, `${JSON.stringify(seeded, null, 2)}\n`);
+
     const second = await runFireconnect(
-      ["opencode", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"],
+      ["opencode", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.equal(second.code, 0, second.stderr);
 
     const config = JSON.parse(await readFile(configPath, "utf8"));
+    assert.equal(config.model, `${OPENCODE_FIREWORKS_PROVIDER_ID}/auto`);
     assert.equal(
-      config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers["x-openai-api-key"],
-      openaiKey,
+      config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers?.["x-openai-api-key"],
+      undefined,
     );
   });
 
@@ -511,8 +536,8 @@ describe("opencode harness integration", () => {
           HOME: home,
           FIREWORKS_API_KEY: "",
           ANTHROPIC_API_KEY: "sk-ant-should-not-attach-12345",
-          FIRECONNECT_GATEWAY_URL: gateway.url,
-          FIRECONNECT_GATEWAY_GRPC_WEB_URL: `${gateway.url}/grpc`,
+          NEXUS_GATEWAY_URL: gateway.url,
+          NEXUS_GATEWAY_GRPC_WEB_URL: `${gateway.url}/grpc`,
         },
       );
       assert.equal(on.code, 0, on.stderr);

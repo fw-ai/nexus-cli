@@ -6,7 +6,6 @@ import {
 } from "../../cli/messages.mjs";
 import process from "node:process";
 import { defaultMainModel, shortFireworksModelRef } from "../../fireworks/model-id.mjs";
-import { readJsonIfExists } from "../../io/json.mjs";
 import {
   PI_API_KEY_ENV_REF,
   PI_AZURE_PROVIDER,
@@ -16,8 +15,10 @@ import {
   piAuthKeyMode,
   piAzureAuthKeyMode,
   piAzureCurrentModelId,
+  piNexusProviderStatus,
   piProviderStatus,
   piStoredByokHeaders,
+  readJsonFile,
   resolvePiApiKeyValue,
   resolvePiAzureApiKeyValue,
 } from "./core.mjs";
@@ -27,7 +28,7 @@ import {
 import {
   loadRegisterableModels,
 } from "../../fireworks/models.mjs";
-import { detectApiKeyType, isFireworksKey } from "../../keys/key-type.mjs";
+import { isFireworksKey } from "../../keys/key-type.mjs";
 import { DEFAULT_AZURE_MODEL } from "../../fireworks/azure-core.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import {
@@ -57,7 +58,7 @@ function piAzureBaseUrl(modelsConfig) {
  */
 async function piResolveKey(ctx) {
   const { authPath } = piPathsFor(ctx);
-  const auth = await readJsonIfExists(authPath);
+  const auth = await readJsonFile(authPath);
   const key = resolvePiApiKeyValue(piStoredApiKeyRef(auth));
   return isFireworksKey(key) ? key.trim() : "";
 }
@@ -74,12 +75,12 @@ export default defineHarnessProfile({
   },
   telemetryHeaders: true,
   readByokEnv: async (_ctx, paths) => byokEnvFromHeaders(
-    piStoredByokHeaders(await readJsonIfExists(paths.modelsPath)),
+    piStoredByokHeaders(await readJsonFile(paths.modelsPath)),
   ),
   azure: {
     read: async (_ctx, paths) => {
-      const settings = await readJsonIfExists(paths.settingsPath);
-      const modelsConfig = await readJsonIfExists(paths.modelsPath);
+      const settings = await readJsonFile(paths.settingsPath);
+      const modelsConfig = await readJsonFile(paths.modelsPath);
       return {
         active: piProviderStatus(settings) === "azure",
         storedKey: piStoredAzureApiKeyRef(modelsConfig),
@@ -100,7 +101,7 @@ export default defineHarnessProfile({
     restart: () => printPiRestartHint(),
   },
   getExistingHarnessKey: async (_ctx, paths) => {
-    const auth = await readJsonIfExists(paths.authPath);
+    const auth = await readJsonFile(paths.authPath);
     return piStoredApiKeyRef(auth);
   },
   enable: async ({
@@ -108,7 +109,6 @@ export default defineHarnessProfile({
     paths,
     apiKeyRef,
     effectiveKey,
-    keyType,
     modelId,
     byokHeaders,
     telemetryHeaders,
@@ -118,7 +118,7 @@ export default defineHarnessProfile({
     // A TTL-cached snapshot serves offline fine; only a cold start with no
     // network throws here, and that must fail the `on` rather than register a
     // model list that was never fetched.
-    const { ids: catalogModelIds, available: catalogAvailable } = await loadRegisterableModels({
+    const { ids: catalogModelIds } = await loadRegisterableModels({
       apiKey: effectiveKey,
       includeFirerouter,
     });
@@ -128,22 +128,16 @@ export default defineHarnessProfile({
       apiKey: apiKeyRef,
       effectiveApiKey: effectiveKey,
       modelId,
-      keyType,
       byokHeaders,
       telemetryHeaders,
       catalogModelIds,
-      catalogAvailable,
     });
   },
   envHookOn: (ctx) => finishEnvHarnessOn(ctx.home, { harnessId: "pi" }),
   restartHint: () => printPiRestartHint(),
 
-  disable: async ({ ctx, paths, wasEnabled }) => {
-    const { changed } = await disablePiFireworks({
-      ...paths,
-      home: ctx.home,
-      wasEnabled,
-    });
+  disable: async ({ ctx, paths }) => {
+    const { changed } = await disablePiFireworks({ ...paths, home: ctx.home });
     return changed ? "restored" : "unchanged";
   },
   restartHintOff: (outcome) => {
@@ -153,17 +147,15 @@ export default defineHarnessProfile({
   },
   async providerStatus(ctx) {
     ensureHomeForHarness(ctx, HARNESS.PI);
-    const { settingsPath } = piPathsFor(ctx);
-    const settings = await readJsonIfExists(settingsPath);
-    return piProviderStatus(settings);
+    return piNexusProviderStatus({ ...piPathsFor(ctx), home: ctx.home });
   },
 
   async status(ctx) {
     ensureHomeForHarness(ctx, HARNESS.PI);
     const { settingsPath, authPath, modelsPath } = piPathsFor(ctx);
-    const settings = await readJsonIfExists(settingsPath);
-    const modelsConfig = await readJsonIfExists(modelsPath);
-    const provider = piProviderStatus(settings);
+    const settings = await readJsonFile(settingsPath);
+    const modelsConfig = await readJsonFile(modelsPath);
+    const provider = await piNexusProviderStatus({ settingsPath, authPath, home: ctx.home });
 
     if (provider === "azure") {
       const storedAzure = piStoredAzureApiKeyRef(modelsConfig);
@@ -190,9 +182,8 @@ export default defineHarnessProfile({
       return;
     }
 
-    const auth = await readJsonIfExists(authPath);
+    const auth = await readJsonFile(authPath);
     const authKey = piStoredApiKeyRef(auth);
-    const keyType = detectApiKeyType(resolvePiApiKeyValue(authKey));
     const model = typeof settings.defaultModel === "string" ? settings.defaultModel : null;
     const currentModel = provider === "fireworks" && model
       ? shortFireworksModelRef(model)
@@ -202,7 +193,7 @@ export default defineHarnessProfile({
       provider,
       hasAuthToken: Boolean(authKey || process.env.FIREWORKS_API_KEY),
       apiKeyMode: piAuthKeyMode(authKey),
-      defaults: { main: defaultMainModel(keyType) },
+      defaults: { main: defaultMainModel() },
       current: { main: currentModel },
       defaultProvider: settings.defaultProvider ?? null,
       model,

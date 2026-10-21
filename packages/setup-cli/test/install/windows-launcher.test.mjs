@@ -51,7 +51,7 @@ esac
     },
   });
   assert.equal(result.status, 0, result.stderr);
-  return readFile(path.join(home, ".local/bin/fireconnect.cmd"), "utf8");
+  return readFile(path.join(home, ".local/bin/nexus.cmd"), "utf8");
 }
 
 describe("Windows installer launcher", () => {
@@ -61,11 +61,11 @@ describe("Windows installer launcher", () => {
       const node22 = await generatedWindowsShim(root, 22);
       assert.match(
         node22,
-        /"C:\\repro\\node" --disable-warning=ExperimentalWarning "C:\\repro\\fireconnect\.mjs" %\*/,
+        /"C:\\repro\\node" --disable-warning=ExperimentalWarning "C:\\repro\\nexus\.mjs" %\*/,
       );
 
       const node18 = await generatedWindowsShim(root, 18);
-      assert.match(node18, /"C:\\repro\\node" "C:\\repro\\fireconnect\.mjs" %\*/);
+      assert.match(node18, /"C:\\repro\\node" "C:\\repro\\nexus\.mjs" %\*/);
       assert.doesNotMatch(node18, /--disable-warning/);
     } finally {
       await rm(root, { recursive: true, force: true });

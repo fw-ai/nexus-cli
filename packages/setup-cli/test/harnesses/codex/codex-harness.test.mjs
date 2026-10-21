@@ -18,7 +18,6 @@ import { clearListPriceCache, setListPriceCacheRates } from "../../../lib/pricin
 import { parseToml } from "../../../lib/harnesses/codex/toml.mjs";
 import {
   FIRECONNECT_REFERER,
-  FPK_KEY,
   FW_CODEX_KEY,
   SK_ANT_KEY,
   mockServerlessModel,
@@ -135,7 +134,7 @@ describe("codex harness integration", () => {
     assert.ok(catalog.models.some((model) => model.slug === "cached-model"));
   });
 
-  it("the full firerouter router id selects the FireRouter row without Anthropic credentials", async () => {
+  it("rejects the full firerouter router id as a model selection", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-firerouter-manual-"));
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const result = await runFireconnect(
@@ -149,13 +148,12 @@ describe("codex harness integration", () => {
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
-    assert.equal(result.code, 0, result.stderr);
-    const config = await readFile(codexConfigPath(home), "utf8");
-    assert.match(config, /^model = "firerouter\/astra"$/m);
-    assert.match(config, /model_provider = "fireworks-ai"/);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(codexConfigPath(home)), false);
   });
 
-  it("a first plain on selects firerouter/astra without Anthropic credentials", async () => {
+  it("a first plain on selects auto without Anthropic credentials", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-plain-on-"));
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const result = await runFireconnect(
@@ -165,12 +163,12 @@ describe("codex harness integration", () => {
     assert.equal(result.code, 0, result.stderr);
     const config = await readFile(codexConfigPath(home), "utf8");
     assert.match(config, /model_provider = "fireworks-ai"/);
-    assert.match(config, /model = "firerouter\/astra"/);
+    assert.match(config, /^model = "auto"$/m);
     assert.doesNotMatch(config, /x-anthropic-api-key/);
     assert.doesNotMatch(result.stderr, /ANTHROPIC_API_KEY or workspace BYOK/);
   });
 
-  it("re-on without --model preserves a FireRouter path and model_catalog_json", async () => {
+  it("re-on without --model drops a FireRouter path to auto and keeps model_catalog_json", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-firerouter-path-reron-"));
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const apiKey = "fw_cataloged_v1_adversarial000000";
@@ -179,11 +177,13 @@ describe("codex harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(first.code, 0, first.stderr);
-    const select = await runFireconnect(
-      ["codex", "on", "--api-key", apiKey, "--model", "firerouter/test-model"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.equal(select.code, 0, select.stderr);
+    // What an earlier release wrote for `--model firerouter/test-model`.
+    const seededConfig = (await readFile(codexConfigPath(home), "utf8"))
+      .replace(/^model = .*$/m, 'model = "firerouter/test-model"');
+    await writeFile(codexConfigPath(home), seededConfig);
+    const seededCatalog = JSON.parse(await readFile(codexCatalogPath(home), "utf8"));
+    seededCatalog.models.push({ slug: "firerouter/test-model", display_name: "FireRouter · Test" });
+    await writeFile(codexCatalogPath(home), JSON.stringify(seededCatalog));
     const afterSelect = await readFile(codexConfigPath(home), "utf8");
     assert.match(afterSelect, /model = "firerouter\/test-model"/);
     assert.match(afterSelect, /model_catalog_json/);
@@ -194,10 +194,11 @@ describe("codex harness integration", () => {
     );
     assert.equal(rerun.code, 0, rerun.stderr);
     const afterRerun = await readFile(codexConfigPath(home), "utf8");
-    assert.match(afterRerun, /model = "firerouter\/test-model"/);
+    assert.match(afterRerun, /^model = "auto"$/m);
     assert.match(afterRerun, /model_catalog_json/);
     const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
-    assert.ok(slugs.includes("firerouter/test-model"));
+    assert.ok(slugs.includes("auto"));
+    assert.ok(!slugs.includes("firerouter/test-model"));
   });
 
   it("fresh on with --model seeds the full catalog, not just the selected model", async () => {
@@ -289,7 +290,7 @@ describe("codex harness integration", () => {
     assert.match(result.stderr, /Responses API/);
   });
 
-  it("a FireRouter model signs Codex in and keeps the key in a header", async () => {
+  it("a plain on signs Codex in and keeps the key in a header", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-chatgpt-login-"));
     const configPath = codexConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -297,7 +298,7 @@ describe("codex harness integration", () => {
     await writeFile(configPath, original);
 
     const on = await runFireconnect(
-      ["codex", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"],
+      ["codex", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(on.code, 0, on.stderr);
@@ -386,7 +387,7 @@ describe("codex harness integration", () => {
     assert.equal(table.experimental_bearer_token, undefined);
     assert.equal(table.http_headers?.["x-fireworks-api-key"], "fw_test_key_12345");
     const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
-    assert.ok(slugs.includes("firerouter/astra"), slugs.join(", "));
+    assert.ok(!slugs.includes("firerouter"), slugs.join(", "));
     assert.ok(slugs.includes("gpt-6-astra"), slugs.join(", "));
     assert.ok(slugs.includes("example-model"), slugs.join(", "));
   });
@@ -416,7 +417,7 @@ describe("codex harness integration", () => {
     assert.equal(table.experimental_bearer_token, undefined);
     assert.equal(table.http_headers["x-fireworks-api-key"], "fw_test_key_12345");
     const catalog = JSON.parse(await readFile(path.join(path.dirname(configPath), "fireworks-model-catalog.json"), "utf8"));
-    assert.ok(catalog.models.some((row) => row.slug === "firerouter/astra"));
+    assert.ok(!catalog.models.some((row) => row.slug === "firerouter"));
   });
 
   it("on --model with a GPT picker id skips the serverless catalog and turns Codex's sign-in on", async () => {
@@ -432,10 +433,9 @@ describe("codex harness integration", () => {
     assert.equal(on.code, 0, on.stderr);
     assert.match(on.stdout, /gpt-6-astra then needs an OpenAI Provider Key/);
     assert.match(on.stdout, /docs\.fireworks\.ai\/nexus\/provider-keys/);
-    assert.match(on.stdout, /use `firerouter`, which falls back to open models/);
+    assert.match(on.stdout, /use `auto`, which falls back to open models/);
     assert.doesNotMatch(on.stdout, /codex login --with-api-key/);
-    assert.match(on.stdout, /Also in your model list:[^\n]*\n?\s*firerouter,/);
-    assert.doesNotMatch(on.stdout, /firerouter\/astra/);
+    assert.doesNotMatch(on.stdout, /firerouter/);
     const doc = parseToml(await readFile(configPath, "utf8"));
     assert.equal(doc.root.model, "gpt-6-astra");
     const table = doc.tables["model_providers.fireworks-ai"];
@@ -467,8 +467,6 @@ describe("codex harness integration", () => {
     await writeGlobalConfig(home, { anthropicApiKey: "sk-ant-example-0000", openaiApiKey: "sk-example-0000" });
 
     for (const args of [
-      ["codex", "on", "--model", "firerouter"],
-      ["codex", "on", "--model", "firerouter/opus"],
       ["codex", "on", "--model", "gpt-6-astra"],
       ["codex", "on", "--model", "example-model"],
       ["codex", "on"],
@@ -552,7 +550,7 @@ describe("codex harness integration", () => {
     assert.equal(on.code, 0, on.stderr);
     const before = await readFile(codexConfigPath(home), "utf8");
 
-    const session = { FIRECONNECT_TEST_CODEX_PS: "  301 /usr/local/bin/codex" };
+    const session = { NEXUS_TEST_CODEX_PS: "  301 /usr/local/bin/codex" };
     const unset = await runFireconnect(["configure", "--unset", "openai-api-key"], { HOME: home, ...env, ...session });
     assert.equal(unset.code, 0, unset.stderr);
     assert.match(unset.stdout, /Removed the saved OpenAI key/);
@@ -573,7 +571,7 @@ describe("codex harness integration", () => {
     const text = await runFireconnect(["codex", "status"], { HOME: home, FIREWORKS_API_KEY: "" });
     assert.equal(text.code, 0, text.stderr);
     assert.match(text.stdout, /Auth: Codex sign-in; Fireworks key in x-fireworks-api-key header in config\.toml/);
-    assert.match(text.stdout, /^Model: firerouter$/m);
+    assert.match(text.stdout, /^Model: auto$/m);
     assert.doesNotMatch(text.stdout, /experimental_bearer_token/);
 
     const json = await runFireconnect(["codex", "status", "--json"], { HOME: home, FIREWORKS_API_KEY: "" });
@@ -581,8 +579,8 @@ describe("codex harness integration", () => {
     const payload = JSON.parse(json.stdout);
     assert.equal(payload.chatgptLogin, true);
     assert.equal(payload.fireworksKeyHeader, "x-fireworks-api-key");
-    assert.equal(payload.current.main, "firerouter/astra");
-    assert.equal(payload.defaults.main, "firerouter/astra");
+    assert.equal(payload.current.main, "auto");
+    assert.equal(payload.defaults.main, "auto");
 
     await runFireconnect(
       ["codex", "on", "--api-key", "fw_test_key_12345", "--model", "auto"],
@@ -596,7 +594,7 @@ describe("codex harness integration", () => {
     assert.equal(plain.current.main, "auto");
   });
 
-  it("a first plain on uses firerouter/astra with Codex's sign-in; a re-on keeps the current model", async () => {
+  it("a first plain on uses auto with Codex's sign-in; a re-on keeps the current model", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-chatgpt-auto-default-"));
     const configPath = codexConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -606,8 +604,8 @@ describe("codex harness integration", () => {
 
     const on = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
     assert.equal(on.code, 0, on.stderr);
-    assert.match(await readFile(configPath, "utf8"), /^model = "firerouter\/astra"$/m);
-    assert.match(on.stdout, /Codex → Fireworks · firerouter\n/);
+    assert.match(await readFile(configPath, "utf8"), /^model = "auto"$/m);
+    assert.match(on.stdout, /Codex → Fireworks · auto\n/);
     assert.match(on.stdout, /GPT turns use your plan/);
     assert.equal((await providerTable()).requires_openai_auth, true);
 
@@ -626,7 +624,7 @@ describe("codex harness integration", () => {
     assert.equal((await runFireconnect(["codex", "off"], env)).code, 0);
     const again = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
     assert.equal(again.code, 0, again.stderr);
-    assert.match(await readFile(configPath, "utf8"), /^model = "firerouter\/astra"$/m);
+    assert.match(await readFile(configPath, "utf8"), /^model = "auto"$/m);
     assert.equal((await providerTable()).requires_openai_auth, true);
   });
 
@@ -637,7 +635,7 @@ describe("codex harness integration", () => {
       HOME: home,
       FIREWORKS_API_KEY: "",
       OPENAI_API_KEY: "",
-      FIRECONNECT_TEST_CODEX_MODELS: JSON.stringify({
+      NEXUS_TEST_CODEX_MODELS: JSON.stringify({
         models: [
           { slug: "gpt-9-sol", display_name: "GPT-9-Sol", visibility: "list", priority: 1, context_window: 200000 },
           { slug: "gpt-9-astra", display_name: "GPT-9-Astra", visibility: "list", priority: 2, context_window: 200000 },
@@ -648,8 +646,8 @@ describe("codex harness integration", () => {
     const on = await runFireconnect(["codex", "on"], env);
     assert.equal(on.code, 0, on.stderr);
     const rows = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models;
-    assert.deepEqual(rows.slice(0, 3).map((row) => row.slug), ["firerouter/astra", "gpt-9-sol", "gpt-9-astra"]);
-    assert.equal(rows[1].display_name, "GPT-9-Sol");
+    assert.deepEqual(rows.slice(0, 2).map((row) => row.slug), ["gpt-9-sol", "gpt-9-astra"]);
+    assert.equal(rows[0].display_name, "GPT-9-Sol");
     assert.ok(!rows.some((row) => row.slug === "gpt-9-internal"));
 
     const pick = await runFireconnect(["codex", "on", "--model", "gpt-9-astra"], env);
@@ -666,7 +664,7 @@ describe("codex harness integration", () => {
       HOME: home,
       FIREWORKS_API_KEY: "",
       OPENAI_API_KEY: "",
-      FIRECONNECT_TEST_CODEX_MODELS: JSON.stringify({
+      NEXUS_TEST_CODEX_MODELS: JSON.stringify({
         models: [{ slug: "gpt-9.4", display_name: "GPT-9.4", visibility: "list", priority: 1, context_window: 200000 }],
       }),
     });
@@ -676,11 +674,11 @@ describe("codex harness integration", () => {
     assert.ok(rows.some((row) => row.slug === "gpt-9.4"));
   });
 
-  it("Codex's sign-in lists one FireRouter route and the OpenAI models at the top of the picker", async () => {
+  it("Codex's sign-in lists the OpenAI models at the top of the picker, with no FireRouter row", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-signin-rows-"));
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const env = { HOME: home, FIREWORKS_API_KEY: "" };
-    const signInSlugs = ["firerouter/astra", "gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"];
+    const signInSlugs = ["gpt-6-astra", "gpt-6.1-sol", "gpt-6-luna"];
     const catalogSlugs = async () => JSON.parse(await readFile(codexCatalogPath(home), "utf8"))
       .models.map((row) => row.slug);
     seedServerlessCatalogCache(home, [
@@ -689,7 +687,7 @@ describe("codex harness integration", () => {
 
     const on = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
     assert.equal(on.code, 0, on.stderr);
-    assert.match(on.stdout, /FireRouter is on\. Routes each user turn between GPT Astra, GPT Sol, and open models\./);
+    assert.doesNotMatch(on.stdout, /FireRouter is on/);
     const slugs = await catalogSlugs();
     assert.deepEqual(slugs.slice(0, signInSlugs.length), signInSlugs);
     assert.ok(slugs.slice(signInSlugs.length).includes("example-model"), slugs.join(","));
@@ -698,44 +696,97 @@ describe("codex harness integration", () => {
     assert.equal(astra.display_name, "GPT-6 Astra");
     assert.equal(astra.context_window, 1_050_000);
     assert.deepEqual(astra.input_modalities, ["text", "image"]);
-    const astraRoute = rows.find((row) => row.slug === "firerouter/astra");
-    assert.equal(astraRoute.display_name, "FireRouter");
-    assert.equal(astraRoute.description, "Routes each user turn between GPT Astra, GPT Sol, and open models.");
-    assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), ["firerouter/astra"]);
+    assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
 
     // A re-on refreshes the catalog without dropping or duplicating the block.
     const reOn = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
     assert.equal(reOn.code, 0, reOn.stderr);
     assert.deepEqual(await catalogSlugs(), slugs);
 
-    // `--model firerouter` selects the same FireRouter row.
-    const bare = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"], env);
-    assert.equal(bare.code, 0, bare.stderr);
-    assert.match(await readFile(codexConfigPath(home), "utf8"), /^model = "firerouter\/astra"$/m);
+    // FireRouter selections are rejected and leave the catalog alone.
+    for (const model of ["firerouter", "firerouter/astra"]) {
+      const rejected = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345", "--model", model], env);
+      assert.notEqual(rejected.code, 0, model);
+      assert.match(rejected.stderr, /is a FireRouter route, which is no longer supported/, model);
+    }
+    assert.match(await readFile(codexConfigPath(home), "utf8"), /^model = "auto"$/m);
     assert.deepEqual(await catalogSlugs(), slugs);
   });
 
-  it("a re-on moves a saved bare firerouter onto the FireRouter row with Codex's sign-in", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-bare-firerouter-reon-"));
+  it("a re-on drops a saved firerouter/astra to auto, whichever release saved it", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-explicit-astra-reon-"));
+    const configPath = codexConfigPath(home);
+    await mkdir(path.dirname(configPath), { recursive: true });
+    const env = { HOME: home, FIREWORKS_API_KEY: "" };
+    const on = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
+    assert.equal(on.code, 0, on.stderr);
+    // What an earlier release saved for `--model firerouter/astra`.
+    await writeFile(
+      configPath,
+      (await readFile(configPath, "utf8")).replace(/^model = "auto"$/m, 'model = "firerouter/astra"'),
+    );
+    const seededCatalog = JSON.parse(await readFile(codexCatalogPath(home), "utf8"));
+    seededCatalog.models.push({ slug: "firerouter/astra", display_name: "FireRouter · Astra" });
+    await writeFile(codexCatalogPath(home), JSON.stringify(seededCatalog));
+    // The release that wrote the config doesn't matter; the Astra row's own label does.
+    await writeFile(
+      configPath,
+      (await readFile(configPath, "utf8"))
+        .replace(/"HTTP-Referer" = "fireconnect\/[^"]*"/, '"HTTP-Referer" = "fireconnect/v0.9.9"'),
+    );
+
+    const reOn = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
+    assert.equal(reOn.code, 0, reOn.stderr);
+    assert.match(await readFile(configPath, "utf8"), /^model = "auto"$/m);
+    const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+    assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
+  });
+
+  it("a re-on moves an earlier release's saved firerouter/astra to auto", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-legacy-astra-reon-"));
     const configPath = codexConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
     const env = { HOME: home, FIREWORKS_API_KEY: "" };
     assert.equal((await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env)).code, 0);
     await writeFile(
       configPath,
-      (await readFile(configPath, "utf8")).replace(/^model = "firerouter\/astra"$/m, 'model = "firerouter"'),
+      (await readFile(configPath, "utf8")).replace(/^model = "auto"$/m, 'model = "firerouter/astra"'),
     );
+    // 0.9.8 and 0.9.9 wrote the FireRouter row with the Astra slug.
+    const catalog = JSON.parse(await readFile(codexCatalogPath(home), "utf8"));
+    catalog.models.push({ slug: "firerouter/astra", display_name: "FireRouter", description: "Routes each user turn between GPT Astra, GPT Sol, and open models." });
+    await writeFile(codexCatalogPath(home), JSON.stringify(catalog));
 
     const reOn = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
     assert.equal(reOn.code, 0, reOn.stderr);
-    assert.match(await readFile(configPath, "utf8"), /^model = "firerouter\/astra"$/m);
+    assert.match(await readFile(configPath, "utf8"), /^model = "auto"$/m);
+    const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+    assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
     assert.equal(
       parseToml(await readFile(configPath, "utf8")).tables["model_providers.fireworks-ai"].requires_openai_auth,
       true,
     );
   });
 
-  it("a model outside FireRouter still lists the FireRouter and OpenAI rows", async () => {
+  it("a re-on drops an earlier release's FireRouter row after the user switched models", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-legacy-astra-row-"));
+    const configPath = codexConfigPath(home);
+    await mkdir(path.dirname(configPath), { recursive: true });
+    const env = { HOME: home, FIREWORKS_API_KEY: "" };
+    assert.equal((await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345", "--model", "gpt-6.1-sol"], env)).code, 0);
+    // 0.9.8 and 0.9.9 wrote the FireRouter row with the Astra slug.
+    const catalog = JSON.parse(await readFile(codexCatalogPath(home), "utf8"));
+    catalog.models.push({ slug: "firerouter/astra", display_name: "FireRouter" });
+    await writeFile(codexCatalogPath(home), JSON.stringify(catalog));
+
+    const reOn = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345"], env);
+    assert.equal(reOn.code, 0, reOn.stderr);
+    assert.match(await readFile(configPath, "utf8"), /^model = "gpt-6.1-sol"$/m);
+    const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+    assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
+  });
+
+  it("a model outside FireRouter still lists the OpenAI rows, with no FireRouter row", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-signin-rows-auto-"));
     await mkdir(path.join(home, ".codex"), { recursive: true });
     const on = await runFireconnect(
@@ -745,7 +796,7 @@ describe("codex harness integration", () => {
     assert.equal(on.code, 0, on.stderr);
     const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
     assert.ok(slugs.includes("auto"));
-    assert.equal(slugs[0], "firerouter/astra", slugs.join(","));
+    assert.ok(!slugs.includes("firerouter"), slugs.join(","));
     assert.ok(slugs.includes("gpt-6-astra") && slugs.includes("gpt-6-luna"), slugs.join(","));
   });
 
@@ -781,7 +832,7 @@ describe("codex harness integration", () => {
     assert.doesNotMatch(config, /env_http_headers = \{ "x-anthropic-api-key"/);
   });
 
-  it("a Claude FireRouter route sends no provider key, saved or exported, and a plain re-run keeps the route", async () => {
+  it("a stored Claude FireRouter route sends no provider key, saved or exported, and a plain re-run drops it to auto", async () => {
     const env = {
       FIREWORKS_API_KEY: "",
       ANTHROPIC_API_KEY: "sk-ant-shell-only",
@@ -794,15 +845,25 @@ describe("codex harness integration", () => {
     await seedKeychainConfig(home, "fw_test_key_12345");
     await writeGlobalConfig(home, { anthropicApiKey: "sk-ant-stored", openaiApiKey: "sk-example-0000" });
 
-    for (const args of [["codex", "on", "--model", "firerouter/opus"], ["codex", "on"]]) {
-      const result = await runFireconnect(args, { HOME: home, ...env });
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /Codex doesn't send an Anthropic key/, args.join(" "));
-      const raw = await readFile(codexConfigPath(home), "utf8");
-      assert.match(raw, /^model = "firerouter\/opus"$/m, args.join(" "));
-      assert.doesNotMatch(raw, /x-anthropic-api-key|ANTHROPIC_API_KEY|sk-ant-/, args.join(" "));
-      assert.doesNotMatch(raw, /x-openai-api-key|sk-example-0000/, args.join(" "));
-    }
+    const rejected = await runFireconnect(["codex", "on", "--model", "firerouter/opus"], { HOME: home, ...env });
+    assert.notEqual(rejected.code, 0);
+    assert.match(rejected.stderr, /is a FireRouter route, which is no longer supported/);
+
+    // Seed the route an earlier release wrote, then let a plain re-run drop it.
+    assert.equal((await runFireconnect(["codex", "on"], { HOME: home, ...env })).code, 0);
+    await writeFile(
+      codexConfigPath(home),
+      (await readFile(codexConfigPath(home), "utf8")).replace(/^model = "auto"$/m, 'model = "firerouter/opus"'),
+    );
+    let raw = await readFile(codexConfigPath(home), "utf8");
+    assert.match(raw, /^model = "firerouter\/opus"$/m);
+
+    const plain = await runFireconnect(["codex", "on"], { HOME: home, ...env });
+    assert.equal(plain.code, 0, plain.stderr);
+    raw = await readFile(codexConfigPath(home), "utf8");
+    assert.match(raw, /^model = "auto"$/m);
+    assert.doesNotMatch(raw, /x-anthropic-api-key|ANTHROPIC_API_KEY|sk-ant-/);
+    assert.doesNotMatch(raw, /x-openai-api-key|sk-example-0000/);
     const shellConfig = process.platform === "darwin" ? ".bash_profile" : ".bashrc";
     const shell = await readFile(path.join(home, shellConfig), "utf8").catch(() => "");
     assert.doesNotMatch(shell, /ANTHROPIC_API_KEY/);
@@ -832,10 +893,10 @@ describe("codex harness integration", () => {
 
     const enabled = await readFile(configPath, "utf8");
     assert.match(enabled, /model_provider = "fireworks-ai"/);
-    assert.match(enabled, /model = "firerouter\/astra"/);
+    assert.match(enabled, /^model = "auto"$/m);
     assert.match(enabled, /\[model_providers\.fireworks-ai\]/);
     assert.doesNotMatch(enabled, /profile = "fireconnect"/);
-    assert.doesNotMatch(enabled, /\[profiles\.fireconnect\]/);
+    assert.doesNotMatch(enabled, /\[profiles\.nexus\]/);
     const catalogPath = path.join(home, ".codex", "fireworks-model-catalog.json");
     assert.match(enabled, /requires_openai_auth = true/);
     assert.match(enabled, /"x-fireworks-api-key" = "fw_test_key_12345"/);
@@ -920,7 +981,7 @@ describe("codex harness integration", () => {
 
       const onResult = await runFireconnect(["codex", "on"], { HOME: home, FIREWORKS_API_KEY: "" });
       assert.equal(onResult.code, 0, onResult.stderr);
-      assert.match(onResult.stdout, /Codex → Fireworks · firerouter/);
+      assert.match(onResult.stdout, /Codex → Fireworks · auto/);
 
       const configPath = codexConfigPath(home);
       const enabled = await readFile(configPath, "utf8");
@@ -1067,30 +1128,5 @@ describe("codex harness integration", () => {
 
     const restored = await readFile(configPath, "utf8");
     assert.equal(restored, original);
-  });
-
-  it("codex on rejects Fire Pass key with helpful error", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-fpk-env-"));
-    await mkdir(path.join(home, ".codex"), { recursive: true });
-
-    const env = { HOME: home, FIREWORKS_API_KEY: "" };
-    const result = await runFireconnect(["codex", "on", "--api-key", FPK_KEY], env);
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /\/responses endpoint is not supported for Fire Pass keys yet/);
-    assert.match(result.stderr, /standard Fireworks API key/);
-  });
-
-  it("codex on rejects Fire Pass key sourced from global config", async () => {
-    await withoutEnvFireworksKey(async () => {
-      const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-reset-"));
-      await mkdir(path.join(home, ".codex"), { recursive: true });
-      await seedKeychainConfig(home, FPK_KEY);
-
-      const env = { HOME: home, FIREWORKS_API_KEY: "" };
-      const result = await runFireconnect(["codex", "on"], env);
-      assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /\/responses endpoint is not supported for Fire Pass keys yet/);
-      assert.match(result.stderr, /standard Fireworks API key/);
-    });
   });
 });

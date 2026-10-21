@@ -443,7 +443,7 @@ test("parseCli: claude demo --challenger sets ctx.rightModel (legacy alias)", ()
 test("parseCli: claude demo rejects removed --mode", () => {
   assert.throws(
     () => parseCli(["claude", "demo", "--mode", "harness-swap"]),
-    /Unknown argument: --mode.*Run: fireconnect help/,
+    /Unknown argument: --mode.*Run: nexus help/,
   );
 });
 

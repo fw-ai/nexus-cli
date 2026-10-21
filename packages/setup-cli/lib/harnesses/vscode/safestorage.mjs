@@ -47,7 +47,7 @@ try {
  *            1 iteration. Same KDF/cipher as macOS but with 1 iteration, not
  *            1003 (which is macOS-only).
  *
- * Test seam: when FIRECONNECT_VSCODE_SECRET_PLAINTEXT is set, encrypt/decrypt are
+ * Test seam: when NEXUS_VSCODE_SECRET_PLAINTEXT is set, encrypt/decrypt are
  * the identity (the raw key is stored verbatim). VS Code does NOT read such a
  * value — this is only for exercising the harness's logic headlessly/in CI.
  */
@@ -76,12 +76,12 @@ const DPAPI_PREFIX = "DPAPI";
 
 /**
  * @returns {boolean} whether the plaintext test seam is active.
- * Strictly `=== "1"` so that `FIRECONNECT_VSCODE_SECRET_PLAINTEXT=0` (or any
+ * Strictly `=== "1"` so that `NEXUS_VSCODE_SECRET_PLAINTEXT=0` (or any
  * other value) does NOT enable plaintext — a common footgun with truthy-string
  * env checks. Exported for unit tests.
  */
 export function plaintextMode() {
-  return process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT === "1";
+  return process.env.NEXUS_VSCODE_SECRET_PLAINTEXT === "1";
 }
 
 /** Memoized result of {@link linuxSecretServiceReachable} (process-constant). */
@@ -176,7 +176,7 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
     : variant === "insiders"
       ? "VS Code Insiders"
       : "VS Code";
-  const harnessCmd = variant === "cursor" ? "fireconnect cursor" : "fireconnect vscode";
+  const harnessCmd = variant === "cursor" ? "nexus cursor" : "nexus vscode";
   // encryptSecret uses secret-tool only (forEncrypt). When dbus is up but
   // secret-tool is absent, peanuts/v10 is still written. Only recommend
   // libsecret-tools when a v2 password is already present (python can see it);
@@ -185,7 +185,7 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
     for (const application of linuxApplicationNameCandidates(variant)) {
       if (linuxPythonOsCryptV2PasswordLookup(application)) {
         return (
-          `Note: Secret Service is available but FireConnect could not encrypt ${app}'s API key without \`secret-tool\` `
+          `Note: Secret Service is available but Nexus could not encrypt ${app}'s API key without \`secret-tool\` `
           + "(install libsecret-tools). "
           + `The API key was stored obfuscated for now. Re-run \`${harnessCmd}\` after installing \`secret-tool\` for real encryption.`
         );
@@ -193,7 +193,7 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
     }
     return (
       `Note: ${app}'s Safe Storage key is not in the keyring yet (launch ${app} once so it creates one), `
-      + "and FireConnect also needs `secret-tool` from libsecret-tools to encrypt on Linux. "
+      + "and Nexus also needs `secret-tool` from libsecret-tools to encrypt on Linux. "
       + `The API key was stored obfuscated for now. Re-run \`${harnessCmd}\` after launching ${app} and installing libsecret-tools for real encryption.`
     );
   }
@@ -215,8 +215,8 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
  * and Secret Service availability do not change mid-process and this is called
  * 2-4 times per on/status run.
  *
- * Note: this is independent of FireConnect's own key storage backend
- * (`fireconnect status` → cross-keychain). Both may use libsecret, but they
+ * Note: this is independent of Nexus's own key storage backend
+ * (`nexus status` → cross-keychain). Both may use libsecret, but they
  * store different secrets.
  * @returns {boolean}
  */

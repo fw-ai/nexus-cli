@@ -10,6 +10,7 @@
  * cannot render is simply omitted.
  */
 
+import "../lib/system/legacy-env.mjs";
 import process from "node:process";
 
 /*

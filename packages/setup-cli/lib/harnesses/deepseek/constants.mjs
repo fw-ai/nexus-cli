@@ -1,5 +1,5 @@
 export const DEEPSEEK_HOME_RELATIVE_DIR = ".dsh";
-export const DEEPSEEK_DATA_RELATIVE_DIR = ".fireconnect/deepseek";
+export const DEEPSEEK_DATA_RELATIVE_DIR = ".nexus/deepseek";
 
 /** Provider route id under `llm-pi-ai.providers`. */
 export const DEEPSEEK_FIREWORKS_PROVIDER_ID = "fireworks";

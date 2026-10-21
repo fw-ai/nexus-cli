@@ -53,7 +53,7 @@ async function disableWebsearchMcpForHarness(home, harnessId) {
 }
 
 /**
- * Remove the retired FireConnect-managed `fireworks-websearch` MCP entry.
+ * Remove the retired Nexus-managed `fireworks-websearch` MCP entry.
  * @param {string} home
  * @param {import("../harness/id.mjs").HarnessId} [harnessId]
  */

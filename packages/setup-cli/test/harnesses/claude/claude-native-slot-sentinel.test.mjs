@@ -26,11 +26,10 @@ const SENTINEL_SPELLINGS = [
   "accounts/fireworks/models/claude-default",
 ];
 
-function settingsFor(overrides, keyType = "firepass") {
+function settingsFor(overrides) {
   const { settings } = buildFireworksSettings({ env: {} }, {
     apiKey: FW_KEY,
-    mapping: resolveClaudeModelMapping(overrides, keyType),
-    keyType,
+    mapping: resolveClaudeModelMapping(overrides),
   });
   return settings;
 }
@@ -114,9 +113,9 @@ describe("Claude native slot sentinel canonicalization", () => {
       assert.equal(isAnthropicModelId(normalized), false);
     });
 
-    it(`pins the FireRouter default for ${JSON.stringify(spelling)}`, () => {
-      // No servable selection → firerouter is the default main.
-      assert.equal(settingsFor({ main: spelling }).model, "firerouter[1m]");
+    it(`pins the auto default for ${JSON.stringify(spelling)}`, () => {
+      // No servable selection → auto is the default main.
+      assert.equal(settingsFor({ main: spelling }).model, "auto[1m]");
     });
 
     it(`writes no sonnet pin for ${JSON.stringify(spelling)}`, () => {
@@ -134,29 +133,23 @@ describe("Claude native slot sentinel canonicalization", () => {
     });
   }
 
-  it("still pins concrete Anthropic model ids on firepass", () => {
+  it("still pins concrete Anthropic model ids", () => {
     assert.equal(isAnthropicModelId("claude-sonnet-4-5"), true);
     const { env } = settingsFor({ sonnet: "claude-sonnet-4-5" });
     assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-4-5");
   });
 
-  it("tags concrete Anthropic ids that do ship 1M context on firepass", () => {
+  it("tags concrete Anthropic ids that do ship 1M context", () => {
     const { env } = settingsFor({ sonnet: "claude-sonnet-5" });
     assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5[1m]");
   });
 
-  it("pins main for the default Fire Pass mapping", () => {
-    const settings = settingsFor({}, "firepass");
-    assert.ok(settings.model, "Fire Pass main must pin the default router");
-    assert.match(settings.model, /kimi-fast-latest/);
+  it("pins the auto default for standard Fireworks keys", () => {
+    const settings = settingsFor({});
+    assert.equal(settings.model, "auto[1m]");
   });
 
-  it("pins the FireRouter default for standard Fireworks keys", () => {
-    const settings = settingsFor({}, "fireworks");
-    assert.equal(settings.model, "firerouter[1m]");
-  });
-
-  it("strips a stale FireConnect picker on Fire Pass on", () => {
+  it("keeps an existing FireConnect picker on on", () => {
     const { settings } = buildFireworksSettings({
       env: {},
       modelPicker: {
@@ -166,10 +159,12 @@ describe("Claude native slot sentinel canonicalization", () => {
       },
     }, {
       apiKey: FW_KEY,
-      mapping: resolveClaudeModelMapping({}, "firepass"),
-      keyType: "firepass",
+      mapping: resolveClaudeModelMapping({}),
     });
-    assert.equal(settings.modelPicker, undefined);
+    assert.deepEqual(
+      settings.modelPicker.options.map((row) => row.model),
+      ["auto[1m]"],
+    );
   });
 
   it("clears a sentinel pin left behind by an earlier install", () => {
@@ -181,9 +176,9 @@ describe("Claude native slot sentinel canonicalization", () => {
       },
     }, {
       apiKey: FW_KEY,
-      mapping: resolveClaudeModelMapping({ sonnet: "native" }, "fireworks"),
+      mapping: resolveClaudeModelMapping({ sonnet: "native" }),
     });
-    assert.equal(settings.model, "firerouter[1m]", "sentinel pin replaced by the FireRouter default");
+    assert.equal(settings.model, "auto[1m]", "sentinel pin replaced by the auto default");
     assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL, undefined);
     assert.equal(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME, undefined);
   });
@@ -201,7 +196,6 @@ describe("buildFireworksSettings modelPicker writes", () => {
       env: {},
     }, {
       apiKey: FW_KEY,
-      keyType: "fireworks",
       registerablePickerIds: registerable,
     });
     assert.deepEqual(
@@ -220,7 +214,6 @@ describe("buildFireworksSettings modelPicker writes", () => {
       env: {},
     }, {
       apiKey: FW_KEY,
-      keyType: "fireworks",
       registerablePickerIds: registerable,
     });
     assert.deepEqual(
@@ -233,14 +226,12 @@ describe("buildFireworksSettings modelPicker writes", () => {
   it("creates a managed picker on a clean enable and dedupes repeats", () => {
     const first = buildFireworksSettings({ env: {} }, {
       apiKey: FW_KEY,
-      keyType: "fireworks",
       registerablePickerIds: registerable,
     });
     assert.ok(first.settings.modelPicker.fireconnectManaged === true);
     // Re-running on with the same ids adds nothing.
     const second = buildFireworksSettings(first.settings, {
       apiKey: FW_KEY,
-      keyType: "fireworks",
       registerablePickerIds: registerable,
     });
     assert.deepEqual(

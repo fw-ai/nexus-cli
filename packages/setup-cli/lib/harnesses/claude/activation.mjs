@@ -2,6 +2,8 @@ import { readGlobalConfig } from "../../config/global-config.mjs";
 import { claudePathsFor } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import { readJsonIfExists } from "../../io/json.mjs";
+import { fireworksKeyFromCustomHeaders } from "../../firerouter/core.mjs";
+import { isFirePassKey } from "../../keys/key-type.mjs";
 import {
   claudeFireconnectIntent,
   providerBackupPath,
@@ -15,9 +17,8 @@ import {
   savedClaudeModelMapping,
 } from "./model-profile.mjs";
 import { CLAUDE_TIER_SLOTS, claudeSlotOverridesFromCtx } from "./connect.mjs";
-import { normalizeModelId } from "../../fireworks/model-id.mjs";
 
-/** Tier-slot slice of a mapping; `main` stays picker-managed on standard keys. */
+/** Tier-slot slice of a mapping; `main` stays picker-managed. */
 function tierSlotsOf(mapping = {}) {
   return Object.fromEntries(
     CLAUDE_TIER_SLOTS
@@ -35,54 +36,32 @@ export async function readClaudeActivationSnapshot(ctx) {
     readGlobalConfig(ctx.home),
   ]);
   const intent = claudeFireconnectIntent(settings, { backup, state });
+  const rawProfiles = globalConfig.harnesses[HARNESS.CLAUDE]?.profiles;
   return {
     ...paths,
     settings,
     backup,
     state,
     intent,
-    profiles: normalizeClaudeProfiles(
-      globalConfig.harnesses[HARNESS.CLAUDE]?.profiles,
-    ),
+    profiles: normalizeClaudeProfiles(rawProfiles),
+    // Older releases wrote Fire Pass setups; their live pins must not carry over.
+    legacyFirePass: state.keyType === "firepass"
+      || Boolean(rawProfiles?.firepass)
+      || isFirePassKey(fireworksKeyFromCustomHeaders(settings.env?.ANTHROPIC_CUSTOM_HEADERS)),
   };
 }
 
 export function resolveClaudeActivationPlan({
   ctx,
-  keyType,
   snapshot,
-  activeKeyType,
+  activeMappingIsCurrent,
 }) {
-  if (keyType === "firepass") {
-    const saved = savedClaudeModelMapping(snapshot.profiles, keyType);
-    const active = snapshot.intent && activeKeyType === keyType
-      ? snapshot.intent.mapping
-      : {};
-    const mainOverride = ctx.main?.trim()
-      ? { main: normalizeModelId(ctx.main) }
-      : {};
-    const migratedSaved = migrateLegacyClaudeModelMapping(saved).mapping;
-    const migratedActive = migrateLegacyClaudeModelMapping(active).mapping;
-    // Tier flags merge here too so they are never silently dropped: a Fire Pass
-    // router pin applies, while `native` / `firerouter` reach the Fire Pass
-    // guards in `on` and fail loudly instead of exiting 0 unchanged.
-    const mapping = resolveClaudeModelMapping(
-      mergeClaudeModelMappings(
-        migratedSaved,
-        migratedActive,
-        mainOverride,
-        claudeSlotOverridesFromCtx(ctx),
-      ),
-      keyType,
-    );
-    return { mapping };
-  }
-  // Standard keys default every tier slot to native, but explicit `--opus` …
-  // `--subagent` flags pin slots and re-`on` preserves pins saved by an
-  // earlier `on` (saved profile, then live settings). Explicit flags win;
-  // `native` unpins back to Claude defaults. `--model` stays picker-only.
-  const saved = savedClaudeModelMapping(snapshot.profiles, keyType);
-  const active = snapshot.intent && activeKeyType === keyType
+  // Every tier slot defaults to native, but explicit `--opus` … `--subagent`
+  // flags pin slots and re-`on` preserves pins saved by an earlier `on` (saved
+  // profile, then live settings). Explicit flags win; `native` unpins back to
+  // Claude defaults. `--model` stays picker-only.
+  const saved = savedClaudeModelMapping(snapshot.profiles);
+  const active = snapshot.intent && activeMappingIsCurrent
     ? snapshot.intent.mapping
     : {};
   const overrides = claudeSlotOverridesFromCtx(ctx);
@@ -95,7 +74,6 @@ export function resolveClaudeActivationPlan({
         tierSlotsOf(migratedActive),
         overrides,
       ),
-      keyType,
     ),
   };
 }

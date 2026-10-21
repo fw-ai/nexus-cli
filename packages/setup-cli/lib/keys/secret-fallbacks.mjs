@@ -35,9 +35,10 @@ export function createSecretFallbackHandlers(deps) {
    * @param {string} home
    * @param {unknown} cause
    * @param {string} [account]
+   * @param {{ quiet?: boolean }} [options]
    * @returns {Promise<boolean>}
    */
-  async function storeSecretInFileFallback(value, home, cause, account = deps.secretAccount) {
+  async function storeSecretInFileFallback(value, home, cause, account = deps.secretAccount, { quiet = false } = {}) {
     const trimmed = value?.trim() ?? "";
     const resolvedHome = deps.resolveHome(home);
     if (!builtinFileStoreAvailable()) {
@@ -63,11 +64,13 @@ export function createSecretFallbackHandlers(deps) {
     deps.primeSecureReadCache(resolvedHome, account, trimmed);
 
     const location = secretsFilePath() ?? "~/.local/share/keyring/secrets.json";
-    console.warn(uiWarn(
-      `OS keychain storage was unavailable (${reason}); stored the Fireworks API key `
-        + `in an encrypted file at ${location} (AES-256-GCM, 0600). Run ${accent("fireconnect upgrade")} once an OS `
-        + "keychain is available to move it back to secure storage.",
-    ));
+    if (!quiet) {
+      console.warn(uiWarn(
+        `OS keychain storage was unavailable (${reason}); stored the Fireworks API key `
+          + `in an encrypted file at ${location} (AES-256-GCM, 0600). Run ${accent("nexus update")} once an OS `
+          + "keychain is available to move it back to secure storage.",
+      ));
+    }
     try {
       await deletePlaintextSecret(resolvedHome);
     } catch {
@@ -113,10 +116,10 @@ export function createSecretFallbackHandlers(deps) {
       // plaintext fallback has committed (cache carries the fallback reason).
     }
     deps.clearLastReadError();
-    const location = plaintextSecretPath(home) ?? "~/.fireconnect/.api-key";
+    const location = plaintextSecretPath(home) ?? "~/.nexus/.api-key";
     console.warn(uiWarn(
       `secure storage was unavailable (${reason}); stored the Fireworks API key `
-        + `in a plaintext file at ${location} (0600). Run ${accent("fireconnect upgrade")} once an OS `
+        + `in a plaintext file at ${location} (0600). Run ${accent("nexus update")} once an OS `
         + "keychain is available to move it back to secure storage.",
     ));
   }
@@ -127,9 +130,11 @@ export function createSecretFallbackHandlers(deps) {
    * @param {string} value
    * @param {string} [home]
    * @param {(value: string, home?: string) => Promise<void>} storeSecure
+   * @param {{ quiet?: boolean }} [options] quiet: the key is already in the
+   *   encrypted file, so landing there again is not news
    * @returns {Promise<"secure" | "file" | "plaintext">}
    */
-  async function storeSecretWithFallbacks(value, home, storeSecure) {
+  async function storeSecretWithFallbacks(value, home, storeSecure, { quiet = false } = {}) {
     const trimmed = value?.trim() ?? "";
     const resolvedHome = deps.resolveHome(home);
     try {
@@ -139,7 +144,7 @@ export function createSecretFallbackHandlers(deps) {
       if (isKeyStorageForcedNull()) {
         throw error;
       }
-      if (await storeSecretInFileFallback(trimmed, resolvedHome, error)) {
+      if (await storeSecretInFileFallback(trimmed, resolvedHome, error, deps.secretAccount, { quiet })) {
         return "file";
       }
       if (!plaintextSecretStoreAvailable(resolvedHome)) {

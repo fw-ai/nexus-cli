@@ -22,10 +22,10 @@ import {
 } from "../../lib/demo/list-pricing.mjs";
 
 // Never touch the network from specs; refreshListPriceCache short-circuits.
-process.env.FIRECONNECT_TEST = "1";
+process.env.NEXUS_TEST = "1";
 // HOME-based cache paths like the serverless catalog spec: opt out of the
-// shared FIRECONNECT_CACHE_DIR override, each case gets its own temp HOME.
-delete process.env.FIRECONNECT_CACHE_DIR;
+// shared NEXUS_CACHE_DIR override, each case gets its own temp HOME.
+delete process.env.NEXUS_CACHE_DIR;
 
 function withTempHome(fn) {
   const home = mkdtempSync(path.join(os.tmpdir(), "fc-list-price-test-"));
@@ -164,9 +164,9 @@ describe("list-price disk cache", () => {
   it("treats a zero-age cache as stale", () => {
     withTempHome((home) => {
       deletePersistedListPriceCache();
-      mkdirSync(path.join(home, ".fireconnect"), { recursive: true });
+      mkdirSync(path.join(home, ".nexus"), { recursive: true });
       writeFileSync(
-        path.join(home, ".fireconnect", "list-price-cache.json"),
+        path.join(home, ".nexus", "list-price-cache.json"),
         JSON.stringify({ cachedAt: 0, rates: { anthropic: {} } }),
       );
       assert.equal(isListPriceCacheFresh(), false);
@@ -176,7 +176,7 @@ describe("list-price disk cache", () => {
 
   it("reload picks up rows another process wrote without losing memory on a missing file", () => {
     withTempHome((home) => {
-      const file = path.join(home, ".fireconnect", "list-price-cache.json");
+      const file = path.join(home, ".nexus", "list-price-cache.json");
       setListPriceCacheRates({ anthropic: {} }, { persist: true });
       assert.deepEqual(getListPriceRates(), { anthropic: {} });
       const raw = JSON.parse(readFileSync(file, "utf8"));
@@ -190,7 +190,7 @@ describe("list-price disk cache", () => {
     });
   });
 
-  it("refresh short-circuits under FIRECONNECT_TEST without network", async () => {
+  it("refresh short-circuits under NEXUS_TEST without network", async () => {
     await withTempHome(async () => {
       deletePersistedListPriceCache();
       assert.equal(await refreshListPriceCache(), false);

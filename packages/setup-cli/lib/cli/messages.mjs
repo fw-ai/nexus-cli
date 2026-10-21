@@ -1,16 +1,7 @@
 import { accent, bold, dim, muted, ok } from "../ui.mjs";
 import { AZURE_PROVIDER_LABEL } from "../fireworks/azure-core.mjs";
-import {
-  firerouterTagline,
-  routingPreferenceLevelLabel,
-  routingPreferenceLevelName,
-  routingPreferenceOptionsList,
-} from "../firerouter/core.mjs";
-import { supportsRoutingPreference } from "../firerouter/flag.mjs";
 import { isFirerouterModelPattern, isFirerouterModel } from "../fireworks/model-id.mjs";
 
-export const FIREROUTER_DOCS_URL =
-  "https://docs.fireworks.ai/ecosystem/firerouter/overview";
 export const PROVIDER_KEYS_DOCS_URL = "https://docs.fireworks.ai/nexus/provider-keys";
 
 function displayModel(model) {
@@ -25,27 +16,7 @@ function displayModel(model) {
   return stripped.split("/").at(-1);
 }
 
-function firerouterOnCommand(harnessId) {
-  return harnessId === "claude"
-    ? "fireconnect claude --model firerouter"
-    : `fireconnect ${harnessId} --model firerouter`;
-}
-
-function printRoutingPreferenceHint(harnessId, routingPreference, { supported = true } = {}) {
-  const applied = supported
-    ? routingPreferenceLevelLabel(routingPreference, { defaultLevel: null })
-    : null;
-  if (applied) {
-    printNote(`Routing: ${applied} (applies to firerouter slots)`);
-  }
-  const levelName = routingPreferenceLevelName(routingPreference) ?? "balanced";
-  const command = `${firerouterOnCommand(harnessId)} --routing-preference ${levelName}`;
-  const otherOptions = routingPreferenceOptionsList({ excludeLevel: levelName });
-  printCommandHint("Change routing", command);
-  printNote(`Other levels: ${otherOptions}`);
-}
-
-/** `Label: fireconnect …` with cyan command highlight. */
+/** `Label: nexus …` with cyan command highlight. */
 export function printCommandHint(label, command) {
   const prefix = label.endsWith(":") ? label : `${label}:`;
   console.log(`${prefix} ${accent(command)}`);
@@ -119,8 +90,8 @@ export function printModelsAdded(models = [], { primaryModel } = {}) {
 
 export function printClaudeModelManagementHints() {
   const rows = [
-    ["Browse", "fireconnect model list"],
-    ["Choose model", "fireconnect claude --model <id>"],
+    ["Browse", "nexus model list"],
+    ["Choose model", "nexus claude --model <id>"],
   ];
   console.log("");
   console.log(bold("Manage models"));
@@ -179,76 +150,6 @@ export async function printHarnessOnSuccess({
 }
 
 /**
- * Standard FireRouter footnotes for harness `on` (note + optional routing preference).
- * @param {{
- *   harnessId: string,
- *   firerouter: { byok?: string }|null|undefined,
- *   firerouterIncluded: boolean,
- *   routingPreference?: number|string|null,
- *   routingSupported?: boolean,
- *   firepass?: boolean,
- *   model?: string,
- * }} args
- * @returns {Array<() => void>}
- */
-export function buildFirerouterOnFootnotes({
-  harnessId,
-  firerouter,
-  firerouterIncluded,
-  routingPreference = null,
-  routingSupported = true,
-  firepass = false,
-  model = "",
-}) {
-  if (!firerouter || (!firerouterIncluded && !firepass)) {
-    // Nothing selected, nothing failed — stay quiet.
-    return [];
-  }
-  /** @type {Array<() => void>} */
-  const footnotes = [() => printFirerouterNote({
-    harnessId,
-    included: firerouterIncluded,
-    firepass,
-    model,
-  })];
-  if (firerouterIncluded && supportsRoutingPreference(firerouter)) {
-    footnotes.push(() => printRoutingPreferenceHint(harnessId, routingPreference, { supported: routingSupported }));
-  }
-  return footnotes;
-}
-
-function printFirerouterEnabledNote(model) {
-  printNote(
-    `FireRouter is on. ${firerouterTagline(model)} `
-      + `Learn more: ${FIREROUTER_DOCS_URL}`,
-  );
-}
-
-function printFirerouterUnavailableNote(message) {
-  printNote(`${message} Learn more: ${FIREROUTER_DOCS_URL}`);
-}
-
-export function printFirerouterNote({
-  harnessId,
-  included = false,
-  firepass = false,
-  model = "",
-}) {
-  // Only confirm what the user actually selected or what actually failed —
-  // never advertise FireRouter on a plain `on`. That keeps the success block
-  // short and matches the reader's intent.
-  if (included) {
-    printFirerouterEnabledNote(model);
-    return;
-  }
-  if (firepass) {
-    printFirerouterUnavailableNote(
-      "FireRouter needs a regular Fireworks API key (fw_...), not Fire Pass.",
-    );
-  }
-}
-
-/**
  * Harness turned on via the Azure/Foundry provider: success line, endpoint, and
  * the endpoint.
  * @param {{ id: string, result: { model: string, baseUrl: string, apiKeyMode?: string } }} args
@@ -297,27 +198,30 @@ export function printCodexRestartHint({
 
   // `codex resume` resolves a session's recorded `model_provider` against the
   // live config.toml; the rollout only stores the provider name, not its
-  // definition. The provider table only exists while FireConnect routes that
+  // definition. The provider table only exists while Nexus routes that
   // provider, so resuming without forcing the provider falls back to OpenAI
   // (or 400s if the session used a ChatGPT account). The resume command only
   // applies after an `on` for that provider. After `off` the table is gone and
   // the ChatGPT app refuses to open those threads, so tell users to re-run `on`.
+  // The app has no provider override at all (`turn/start` takes a model, not a
+  // provider), so an OpenAI thread sends a Fireworks pick to ChatGPT, which 400s.
   if (!resume) {
     // `off` waited for every Codex session to close and stopped the shared
     // daemon (codex/ide-running.mjs), so the next `codex` already reads it,
     // unless --force left sessions open. The daemon outlives them, so only a
     // rerun with none open stops it.
     printRestartHint(sessionsOpen
-      ? "Close every Codex session, then run `fireconnect codex off` again to finish."
+      ? "Close every Codex session, then run `nexus codex off` again to finish."
       : "Start Codex again to use the new setup.");
     printRestartHint(
-      `ChatGPT app threads started on ${providerLabel} won't open until you run \`fireconnect codex on\` again.`,
+      `ChatGPT app threads started on ${providerLabel} won't open until you run \`nexus codex on\` again.`,
     );
     return;
   }
   printRestartHint(
     `To resume existing Codex sessions with ${providerLabel}:\n`
-      + `  codex resume <id> -c model_provider="${providerId}"`,
+      + `  codex resume <id> -c model_provider="${providerId}"\n`
+      + `ChatGPT app threads started on OpenAI stay on OpenAI. Start a new thread to use ${providerLabel} models.`,
   );
 }
 

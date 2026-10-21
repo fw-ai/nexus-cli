@@ -1,12 +1,11 @@
 import process from "node:process";
 import { FIREWORKS_BASE_URL } from "../fireworks/model-id.mjs";
-import { ROUTING_PREFERENCE_LEVELS, normalizeRoutingPreference } from "../firerouter/core.mjs";
 import { HARNESSES, HARNESS_ALIASES, AMBIGUOUS_COPILOT_MESSAGE, resolveHarnessAlias } from "../harness/id.mjs";
 import { parseDemoArgs, findDemoInvocation } from "../demo/parse-demo-args.mjs";
 import { withSuggestion } from "../ui.mjs";
 
 const GLOBAL_COMMANDS = new Set([
-  "login", "logout", "status", "model", "models", "configure", "uninstall", "upgrade",
+  "login", "logout", "status", "harnesses", "model", "models", "configure", "auto", "uninstall", "upgrade", "update",
   "help", "key", "banner", "finalize-install",
 ]);
 const KEY_SUBCOMMANDS = new Set(["export"]);
@@ -18,7 +17,8 @@ const HARNESS_VERBS = new Set(["on", "off", "status", "usage", "live", "mcp"]);
  */
 const RENAMED_FLAGS = {
   "--main": "--model",
-  "--router": "--model firerouter",
+  "--router": "--model auto",
+  "--fireworks-only": "--providers fireworks",
   "--model-id": "--model",
   "--anthropic-key": "--anthropic-api-key",
   "--last_n": "--last-n",
@@ -26,12 +26,16 @@ const RENAMED_FLAGS = {
 
 const RETIRED_FLAG_MESSAGES = {};
 
+export const ROUTING_PREFERENCE_DEPRECATION_MESSAGE =
+  "--routing-preference is deprecated and has no effect: FireRouter routes are no longer supported.";
+
 /** Every flag the parser understands — used only for typo suggestions. */
 const KNOWN_FLAGS = [
   "--help", "--version", "--json", "--home", "--settings-path", "--config-path",
   "--data-dir", "--api-key", "--base-url", "--azure", "--provider",
   "--anthropic-api-key", "--openai-api-key", "--unset", "--model", "--opus",
   "--sonnet", "--haiku", "--fable", "--subagent", "--search", "--refresh",
+  "--providers", "--reset",
   "--db-path", "--vscode-path", "--providers-path", "--force", "--stored-only",
   "--last-n", "--plain", "--verbose", "--routing-preference", "--session", "--days",
   "--account", "--anthropic", "--openai", "--paste", "--revoke", "--with-token",
@@ -40,12 +44,12 @@ const KNOWN_FLAGS = [
 
 function helpHint(harnessId = "") {
   return harnessId
-    ? `Run: fireconnect ${harnessId} help`
-    : "Run: fireconnect help";
+    ? `Run: nexus ${harnessId} help`
+    : "Run: nexus help";
 }
 
 function withContextualHelp(message, positionals = []) {
-  if (message.includes("Run: fireconnect")) {
+  if (message.includes("Run: nexus")) {
     return message;
   }
   // Echo the typed name (e.g. `chatgpt`) for the help hint when it is a harness
@@ -72,7 +76,6 @@ export function createBaseContext() {
     apiKeyFromFlag: false,
     baseUrl: FIREWORKS_BASE_URL,
     baseUrlFromFlag: false,
-    routingPreference: null,
     azure: false,
     provider: "",
     anthropicKey: "",
@@ -96,6 +99,7 @@ export function createBaseContext() {
     lastN: "",
     verbose: false,
     plain: false,
+    routingPreferenceDeprecated: false,
     json: false,
     dbPath: "",
     force: false,
@@ -106,6 +110,9 @@ export function createBaseContext() {
     paste: false,
     account: "",
     onboardingMode: "auto",
+    providers: "",
+    providersFromFlag: false,
+    autoReset: false,
   };
 }
 
@@ -133,16 +140,6 @@ function requireDays(flag, value) {
   return days;
 }
 
-function requireRoutingPreference(flag, value) {
-  const raw = requireValue(flag, value);
-  const preference = normalizeRoutingPreference(raw);
-  if (preference === null) {
-    const names = Object.keys(ROUTING_PREFERENCE_LEVELS).join(", ");
-    throw new Error(`${flag} must be one of: ${names} (or 1-5)`);
-  }
-  return preference;
-}
-
 /**
  * Apply one global (command-agnostic) flag to `ctx`. Shared by the main parser
  * and the demo parser so global-flag knowledge lives in exactly one place — the
@@ -159,7 +156,8 @@ export function applyGlobalFlag(ctx, arg, next) {
     case "--verbose":
     case "-v": ctx.verbose = true; return false;
     case "--plain": ctx.plain = true; return false;
-    case "--routing-preference": ctx.routingPreference = requireRoutingPreference(arg, next); return true;
+    // Deprecated: still accepts its value so old commands keep working, then warns.
+    case "--routing-preference": requireValue(arg, next); ctx.routingPreferenceDeprecated = true; return true;
     case "--azure": ctx.azure = true; ctx.provider = "azure"; return false;
     case "--force": ctx.force = true; return false;
     case "--client-id": ctx.clientId = requireValue(arg, next); return true;
@@ -192,6 +190,8 @@ export function applyGlobalFlag(ctx, arg, next) {
       }
       ctx.onboardingMode = "skip";
       return false;
+    case "--providers": ctx.providers = requireValue(arg, next); ctx.providersFromFlag = true; return true;
+    case "--reset": ctx.autoReset = true; return false;
     case "--home": ctx.home = requireValue(arg, next); return true;
     case "--settings-path": ctx.settingsPath = requireValue(arg, next); return true;
     case "--config-path": ctx.configPath = requireValue(arg, next); return true;
@@ -300,7 +300,7 @@ function parseHarnessRoute(harnessId, tokens) {
   }
   if (tokens.length > 1 && verb !== "mcp") {
     throw new Error(
-      `fireconnect ${harnessId} ${verb} does not accept positional arguments. `
+      `nexus ${harnessId} ${verb} does not accept positional arguments. `
         + helpHint(harnessId),
     );
   }
@@ -324,6 +324,11 @@ export function parseCli(argv) {
 
   const { ctx, positional, help, helpTopic, version } = parseFlagsAndPositionals(argv);
 
+  if ((ctx.providersFromFlag || ctx.autoReset) && positional[0] !== "auto") {
+    const flag = ctx.providersFromFlag ? "--providers" : "--reset";
+    throw new Error(`${flag} applies only to \`nexus auto\`. Run: nexus auto --help`);
+  }
+
   if (version) {
     return { kind: "global", command: "version", ctx };
   }
@@ -334,12 +339,12 @@ export function parseCli(argv) {
     return { kind: "global", command: "help", ctx, helpTopic };
   }
 
-  // Bare `fireconnect` opens the interactive launcher (which falls back to
+  // Bare `nexus` opens the interactive launcher (which falls back to
   // help when not attached to a TTY). Help stays reachable via `help`/`--help`.
   if (positional.length === 0) {
     if (ctx.onboardingMode !== "auto") {
       const flag = ctx.onboardingMode === "prompt" ? "--interactive" : "--non-interactive";
-      throw new Error(`${flag} applies only to \`fireconnect claude on\`. Run: fireconnect help`);
+      throw new Error(`${flag} applies only to \`nexus claude on\`. Run: nexus help`);
     }
     return { kind: "global", command: "launcher", ctx };
   }
@@ -355,7 +360,7 @@ export function parseCli(argv) {
     if (rest[0] !== "list" || rest.length !== 1) {
       throw new Error(
         `Unexpected model subcommand: ${rest[0] || "(missing)"}. `
-          + "Run: fireconnect help",
+          + "Run: nexus help",
       );
     }
     return { kind: "global", command: "model", modelSubcommand: "list", ctx };
@@ -365,8 +370,8 @@ export function parseCli(argv) {
   if (first === "models") {
     if (rest.length !== 0) {
       throw new Error(
-        `fireconnect models does not accept positional arguments. `
-          + "Run: fireconnect help",
+        `nexus models does not accept positional arguments. `
+          + "Run: nexus help",
       );
     }
     return { kind: "global", command: "model", modelSubcommand: "list", ctx };
@@ -375,19 +380,19 @@ export function parseCli(argv) {
   if (GLOBAL_COMMANDS.has(first)) {
     if (ctx.onboardingMode !== "auto") {
       const flag = ctx.onboardingMode === "prompt" ? "--interactive" : "--non-interactive";
-      throw new Error(`${flag} applies only to \`fireconnect claude on\`. Run: fireconnect help`);
+      throw new Error(`${flag} applies only to \`nexus claude on\`. Run: nexus help`);
     }
     if (first === "key") {
       const subcommand = rest[0];
       if (!subcommand || !KEY_SUBCOMMANDS.has(subcommand)) {
         throw new Error(
-          "Unknown key command. Manage your key with `fireconnect login`, "
-            + "`fireconnect logout`, or `fireconnect status`. Run: fireconnect help",
+          "Unknown key command. Manage your key with `nexus login`, "
+            + "`nexus logout`, or `nexus status`. Run: nexus help",
         );
       }
       if (rest.length > 1) {
         throw new Error(
-          `fireconnect key ${subcommand} does not accept positional arguments. `
+          `nexus key ${subcommand} does not accept positional arguments. `
             + helpHint(),
         );
       }
@@ -396,7 +401,8 @@ export function parseCli(argv) {
     if (rest.length > 0) {
       throw new Error(`${first} does not accept positional arguments. ${helpHint()}`);
     }
-    return { kind: "global", command: first, ctx };
+    // `update` is the self-update command; `upgrade` is its bare alias.
+    return { kind: "global", command: first === "upgrade" ? "update" : first, ctx };
   }
 
   // `copilot` names two products, so it is never guessed at — say which.

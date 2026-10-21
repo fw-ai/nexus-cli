@@ -88,19 +88,19 @@ async function unsetProviderKeys(home, providers) {
     console.log(`Removed ${keys} from ${names}. Restart ${updated.length === 1 ? names : "them"} to pick that up.`);
   }
   for (const { id, label } of failed) {
-    console.log(`Couldn't update ${label}'s settings. Run ${accent(`fireconnect ${id} off`)}, then turn it on again.`);
+    console.log(`Couldn't update ${label}'s settings. Run ${accent(`nexus ${id} off`)}, then turn it on again.`);
   }
   if (providers.includes("anthropic") && await claudeSignsInWithAnthropicKey(home, config.harnesses)) {
-    console.log("Claude Code still signs in with the Anthropic key in its own settings; FireConnect leaves that alone.");
+    console.log("Claude Code still signs in with the Anthropic key in its own settings; Nexus leaves that alone.");
   }
 }
 /**
- * `fireconnect configure` sets the non-Fireworks-key globals: the provider
+ * `nexus configure` sets the non-Fireworks-key globals: the provider
  * (Fireworks vs a Microsoft Azure AI Foundry endpoint) and the provider BYOK
  * keys for FireRouter mode (Anthropic, OpenAI), which `--unset` clears.
  *
- * It does NOT set the Fireworks API key (use `fireconnect login`) and does NOT
- * register harnesses (enable one with `fireconnect <harness>`). In this
+ * It does NOT set the Fireworks API key (use `nexus login`) and does NOT
+ * register harnesses (enable one with `nexus <harness>`). In this
  * command `--api-key` is the *Azure* endpoint key and is only accepted with
  * `--provider azure`.
  *
@@ -120,8 +120,8 @@ export async function runConfigureCommand(ctx) {
   // `--api-key` here is the Azure endpoint key, not the Fireworks key.
   if (ctx.apiKeyFromFlag && provider !== "azure") {
     throw new Error(
-      "configure doesn't set the Fireworks API key — run `fireconnect login` "
-        + "(or `fireconnect login --with-token` for CI). In configure, --api-key is the "
+      "configure doesn't set the Fireworks API key — run `nexus login` "
+        + "(or `nexus login --with-token` for CI). In configure, --api-key is the "
         + "Azure endpoint key and requires --provider azure.",
     );
   }
@@ -141,12 +141,12 @@ export async function runConfigureCommand(ctx) {
 
   if (!provider && !anthropicKeyProvided && !openaiKeyProvided && !unsetProviders.length) {
     printNote("Nothing to configure.");
-    console.log(`  Sign in / set your key:  ${accent("fireconnect login")}`);
-    console.log(`  Choose a provider:       ${accent("fireconnect configure --provider azure --base-url <url> --api-key <azure-key>")}`);
-    console.log(`  Set the Anthropic key:   ${accent("fireconnect configure --anthropic-api-key sk-ant-…")}`);
-    console.log(`  Set the OpenAI key:      ${accent("fireconnect configure --openai-api-key sk-…")}`);
-    console.log(`  Clear a saved key:       ${accent("fireconnect configure --unset openai-api-key")}`);
-    console.log(`  Enable a harness:        ${accent("fireconnect <harness>")}`);
+    console.log(`  Sign in / set your key:  ${accent("nexus login")}`);
+    console.log(`  Choose a provider:       ${accent("nexus configure --provider azure --base-url <url> --api-key <azure-key>")}`);
+    console.log(`  Set the Anthropic key:   ${accent("nexus configure --anthropic-api-key sk-ant-…")}`);
+    console.log(`  Set the OpenAI key:      ${accent("nexus configure --openai-api-key sk-…")}`);
+    console.log(`  Clear a saved key:       ${accent("nexus configure --unset openai-api-key")}`);
+    console.log(`  Enable a harness:        ${accent("nexus <harness>")}`);
     return;
   }
 
@@ -198,7 +198,7 @@ export async function runConfigureCommand(ctx) {
 
   await writeGlobalConfig(home, update);
 
-  printSuccess("Saved to ~/.fireconnect/config.json");
+  printSuccess("Saved to ~/.nexus/config.json");
   if (update.anthropicApiKey) {
     printNote("Stored Anthropic API key in global config.");
   }

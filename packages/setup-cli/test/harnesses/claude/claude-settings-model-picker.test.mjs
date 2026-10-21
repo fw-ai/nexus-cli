@@ -3,7 +3,6 @@ import { describe, it } from "node:test";
 
 import {
   buildFireconnectModelPickerOptions,
-  FIREPASS_MODEL_PICKER_CONFLICT_MESSAGE,
   INVALID_MODEL_PICKER_MESSAGE,
   isFireconnectModelPicker,
   stripFireconnectModelPicker,
@@ -76,6 +75,82 @@ describe("Claude settings modelPicker", () => {
     );
   });
 
+  it("refresh prunes delisted rows, re-renders kept rows, and keeps claude-* verbatim", () => {
+    const settings = {
+      modelPicker: {
+        fireconnectManaged: true,
+        replaceBuiltInOptions: false,
+        options: [
+          { model: "retired-model[1m]", label: "Retired", description: "gone" },
+          { model: "claude-sonnet-4-6", label: "Mine", description: "user row" },
+          { model: "opus", label: "My Opus", description: "alias row" },
+          { model: "glm-latest[1m]", label: "OLD", description: "stale" },
+          { model: "firerouter/test-model[1m]", label: "Old route", description: "stale" },
+        ],
+      },
+    };
+    const next = withFireconnectModelPicker(
+      settings,
+      ["glm-latest", "auto"],
+      { refresh: true, protectedIds: ["custom-router", "claude-haiku-4-5"] },
+    );
+    const rows = next.modelPicker.options;
+    assert.deepEqual(
+      rows.slice(0, 2),
+      [
+        { model: "claude-sonnet-4-6", label: "Mine", description: "user row" },
+        { model: "opus", label: "My Opus", description: "alias row" },
+      ],
+      "claude rows keep their exact rows and come first",
+    );
+    const ids = rows.map((row) => row.model);
+    assert.ok(!ids.some((id) => id.includes("retired-model")), "delisted row pruned");
+    assert.ok(ids.includes("glm-latest[1m]"));
+    assert.ok(ids.includes("auto[1m]"), "new catalog row added");
+    assert.ok(!ids.some((id) => id.startsWith("firerouter")), "FireRouter rows are pruned, not kept");
+    assert.ok(ids.includes("custom-router[1m]") || ids.includes("custom-router"), "protected id kept");
+    assert.ok(ids.includes("claude-haiku-4-5"), "protected concrete claude-* row rendered");
+    assert.notEqual(rows.find((row) => row.model === "glm-latest[1m]").label, "OLD", "kept row re-rendered");
+    assert.equal(ids.length, new Set(ids).size, "no duplicates");
+    // A second refresh over the refreshed picker changes nothing.
+    assert.equal(withFireconnectModelPicker(next, ["glm-latest", "auto"], { refresh: true, protectedIds: ["custom-router", "claude-haiku-4-5"] }), next);
+  });
+
+  it("refresh with an empty catalog leaves the picker untouched", () => {
+    const settings = {
+      modelPicker: {
+        fireconnectManaged: true,
+        options: [{ model: "glm-latest[1m]", label: "GLM" }],
+      },
+    };
+    assert.equal(withFireconnectModelPicker(settings, [], { refresh: true }), settings);
+    // Older callers synthesized the bare firerouter (and auto) rows even for
+    // a vacant catalog; specials alone must not authorize a prune either.
+    assert.equal(
+      withFireconnectModelPicker(settings, ["firerouter"], { refresh: true, protectedIds: ["custom-router"] }),
+      settings,
+    );
+    assert.equal(
+      withFireconnectModelPicker(settings, ["firerouter", "auto"], { refresh: true }),
+      settings,
+    );
+  });
+
+  it("refresh dedupes claude-* rows by normalized id, keeping the first", () => {
+    const settings = {
+      modelPicker: {
+        fireconnectManaged: true,
+        options: [
+          { model: "claude-opus-4-8", label: "First" },
+          { model: "accounts/fireworks/models/claude-opus-4-8", label: "Second" },
+        ],
+      },
+    };
+    const next = withFireconnectModelPicker(settings, ["auto", "glm-latest"], { refresh: true });
+    const claudeRows = next.modelPicker.options.filter((row) => row.model.includes("claude-opus"));
+    assert.deepEqual(claudeRows, [{ model: "claude-opus-4-8", label: "First" }]);
+  });
+
   it("leaves a complete picker unchanged", () => {
     const settings = withFireconnectModelPicker({}, ["auto"]);
     const refreshed = withFireconnectModelPicker(settings, ["auto", "auto"]);
@@ -113,21 +188,10 @@ describe("Claude settings modelPicker", () => {
     assert.deepEqual(next.modelPicker.options.map((row) => row.model), ["auto[1m]"]);
   });
 
-  it("allows a fresh Fire Pass user picker but rejects a standard-to-Fire-Pass ambiguity", () => {
-    const settings = {
+  it("accepts a well-formed user picker", () => {
+    assert.doesNotThrow(() => validateClaudeModelPicker({
       modelPicker: { options: [{ model: "claude-sonnet-4-6" }] },
-    };
-    assert.doesNotThrow(() => validateClaudeModelPicker(settings, {
-      keyType: "firepass",
-      priorKeyType: "",
     }));
-    assert.throws(
-      () => validateClaudeModelPicker(settings, {
-        keyType: "firepass",
-        priorKeyType: "fireworks",
-      }),
-      (error) => error.message === FIREPASS_MODEL_PICKER_CONFLICT_MESSAGE,
-    );
   });
 
   it("strips only FireConnect-managed modelPicker blocks", () => {

@@ -6,9 +6,7 @@ import {
   firerouterRequiresOpenaiKey,
 } from "../fireworks/model-id.mjs";
 import {
-  ROUTING_PREFERENCE_HEADER,
   firerouterByokHeaders,
-  normalizeRoutingPreference,
   resolveAnthropicKey,
   resolveFirerouterByokKeys,
   resolveOpenaiKey,
@@ -79,16 +77,6 @@ export async function resolveExplicitFirerouterCredential({
 }
 
 /**
- * Whether a harness accepts `--routing-preference` on `on`. Matches the
- * validation in harness.mjs (custom-header BYOK harnesses only).
- * @param {{ byok?: "value"|"none" }|null|undefined} firerouter
- * @returns {boolean}
- */
-export function supportsRoutingPreference(firerouter) {
-  return firerouter?.byok === "value" || firerouter?.routingPreference === true;
-}
-
-/**
  * Whether a harness accepts `--anthropic-api-key` on `on`.
  * Value harnesses embed the key in config headers. Claude Code refuses it:
  * its own sign-in pays for Claude turns.
@@ -133,14 +121,12 @@ export function supportsOpenaiApiKeyFlag(firerouter) {
  * Resolve the routing plan from the requested model. FireRouter is a regular
  * gateway model now (generally available — no account entitlement lookup):
  * `--model firerouter` selects it; anything else keeps the harness's normal
- * default. FireConnect never auto-selects firerouter. The only guard is that
- * Fire Pass keys can't use it (`assertFirerouterKeyType`).
+ * default. Nexus never auto-selects firerouter.
  *
  * @param {{ main?: string }} ctx
- * @param {{ keyType?: string }} [options]
  * @returns {FirerouterPlan}
  */
-export function resolveFirerouterPlan(ctx, { keyType = "" } = {}) {
+export function resolveFirerouterPlan(ctx) {
   const requested = ctx.main?.trim() ?? "";
   if (!requested) {
     return {
@@ -151,7 +137,6 @@ export function resolveFirerouterPlan(ctx, { keyType = "" } = {}) {
       namesAnthropicModel: false,
     };
   }
-  assertFirerouterKeyType(requested, keyType);
   return {
     mainModel: requested,
     isFirerouter: isFirerouterModelPattern(requested),
@@ -159,33 +144,6 @@ export function resolveFirerouterPlan(ctx, { keyType = "" } = {}) {
     requiresOpenaiKey: firerouterRequiresOpenaiKey(requested),
     namesAnthropicModel: firerouterNamesAnthropicModel(requested),
   };
-}
-
-/** FireRouter is only offered for standard Fireworks keys, not Fire Pass. */
-export const FIREROUTER_FIREPASS_UNSUPPORTED_MESSAGE =
-  "FireRouter is not available for Fire Pass keys (fpk_...). Use a standard Fireworks API key (fw_...).";
-
-/**
- * Throw when a FireRouter selection is requested with a Fire Pass key. Call after
- * the effective model + key type are known, before enabling.
- * @param {string} model
- * @param {string} keyType
- */
-export function assertFirerouterKeyType(model, keyType) {
-  if (isFirerouterModelPattern(model) && keyType === "firepass") {
-    throw new Error(FIREROUTER_FIREPASS_UNSUPPORTED_MESSAGE);
-  }
-}
-
-/**
- * Whether explicit FireRouter credential resolution runs on the shared engine's
- * direct Fireworks gateway `on` path. Azure mode returns before this; only
- * standard fw_ keys qualify (Fire Pass cannot use FireRouter).
- * @param {string} keyType
- * @returns {boolean}
- */
-export function firerouterCredentialsApplyOnGateway(keyType) {
-  return keyType === "fireworks";
 }
 
 /**
@@ -200,12 +158,9 @@ export function firerouterCredentialsApplyOnGateway(keyType) {
  * `on`. Returns `{}` when the plan isn't routing through FireRouter.
  * `settingsEnv` surfaces keys a harness already stores.
  *
- * Also carries the `x-routing-preference` header when `ctx.routingPreference`
- * is set, so `--routing-preference` keeps tuning FireRouter under the model path.
- *
  * @param {{
  *   plan: FirerouterPlan,
- *   ctx: { anthropicKey?: string, anthropicKeyFromFlag?: boolean, openaiKey?: string, openaiKeyFromFlag?: boolean, home?: string, routingPreference?: number|string|null },
+ *   ctx: { anthropicKey?: string, anthropicKeyFromFlag?: boolean, openaiKey?: string, openaiKeyFromFlag?: boolean, home?: string },
  *   settingsEnv?: Record<string, string>,
  *   preResolvedAnthropicKey?: string,
  * }} args
@@ -248,10 +203,6 @@ export async function resolveFirerouterByokHeaders({
       home: ctx.home,
     });
     Object.assign(headers, firerouterByokHeaders({ openaiKey }));
-  }
-  const preference = normalizeRoutingPreference(ctx.routingPreference);
-  if (preference !== null) {
-    headers[ROUTING_PREFERENCE_HEADER] = String(preference);
   }
   return headers;
 }

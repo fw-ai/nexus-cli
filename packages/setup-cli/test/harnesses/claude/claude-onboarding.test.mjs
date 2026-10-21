@@ -41,9 +41,9 @@ describe("Claude model onboarding", () => {
     );
   });
 
-  it("prints the picker summary without tier slot rows for fireworks", () => {
+  it("prints the picker summary without tier slot rows", () => {
     const output = outputBuffer();
-    printClaudePickerSummary({ extraPickerModel: null, firepass: false }, output);
+    printClaudePickerSummary({ extraPickerModel: null }, output);
     const text = output.text();
     assert.match(text, /Model picker/);
     assert.match(text, /Anthropic model slots.*unchanged/);
@@ -55,17 +55,8 @@ describe("Claude model onboarding", () => {
     const output = outputBuffer();
     printClaudePickerSummary({
       extraPickerModel: "glm-latest",
-      firepass: false,
     }, output);
     const text = output.text();
     assert.match(text, /Added via --model.*glm-latest/);
-  });
-
-  it("prints the Fire Pass summary instead of the catalog rows", () => {
-    const output = outputBuffer();
-    printClaudePickerSummary({ extraPickerModel: null, firepass: true }, output);
-    const text = output.text();
-    assert.match(text, /Fire Pass.*pinned routers/);
-    assert.doesNotMatch(text, /Anthropic model slots/);
   });
 });

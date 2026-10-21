@@ -35,52 +35,50 @@ describe("harness option validation", () => {
     });
   });
 
-  it("requires a firerouter target before accepting routing-only options", async () => {
+  it("rejects firerouter* model patterns on every harness", async () => {
+    await withTempHome("option-firerouter-reject-", async (home) => {
+      for (const args of [
+        ["codex", "on", "--model", "firerouter"],
+        ["codex", "on", "--model", "firerouter/opus"],
+        ["claude", "on", "--model", "firerouter"],
+        ["claude", "on", "--model", "accounts/fireworks/routers/firerouter"],
+        ["claude", "on", "--opus", "firerouter/opus"],
+        ["opencode", "on", "--model", "firerouter/kimi-k3"],
+        ["pi", "on", "--model", "firerouter-2"],
+        ["cursor", "on", "--model", "firerouter/kimi-k3"],
+        ["vscode", "on", "--model", "firerouter"],
+        ["deepseek", "on", "--model", "firerouter"],
+        ["copilot-cli", "on", "--model", "firerouter"],
+        ["copilot-app", "on", "--model", "firerouter"],
+        ["claude-desktop", "on", "--model", "firerouter"],
+      ]) {
+        await rejects(home, args, /is a FireRouter route, which is no longer supported/);
+      }
+    });
+  });
+
+  it("rejects BYOK options now that FireRouter routes are retired", async () => {
     await withTempHome("option-firerouter-", async (home) => {
-      // Claude's default `on` already lands on firerouter, so an explicit
-      // `--model firerouter` is not required there — but an explicit
-      // non-firerouter picker model still rejects the flag.
-      await rejects(
-        home,
-        [
-          "claude", "on",
-          "--api-key", "fw_test_key_12345",
-          "--model", "glm-latest",
-          "--routing-preference", "balanced",
-        ],
-        /--routing-preference requires a Claude slot set to firerouter/,
-      );
-      await rejects(
-        home,
-        ["opencode", "on", "--routing-preference", "balanced"],
-        /--routing-preference requires .*--model firerouter/,
-      );
       await rejects(
         home,
         ["pi", "on", "--anthropic-api-key", "sk-ant-test"],
-        /--anthropic-api-key requires .*--model firerouter/,
+        /--anthropic-api-key was for FireRouter routes, which are no longer supported/,
       );
     });
   });
 
   it("rejects BYOK flags a harness cannot forward", async () => {
     await withTempHome("option-firerouter-capability-", async (home) => {
-      // Cursor can't forward local provider keys, so both BYOK flags stay
-      // unsupported there even though bare firerouter itself now connects.
+      // FireRouter routes are rejected before BYOK forwarding is considered.
       await rejects(
         home,
         ["cursor", "on", "--model", "firerouter/kimi-k3", "--anthropic-api-key", "sk-ant-test"],
-        /--anthropic-api-key is not supported by this harness/,
+        /is a FireRouter route, which is no longer supported/,
       );
       await rejects(
         home,
         ["cursor", "on", "--model", "firerouter/kimi-k3", "--openai-api-key", "sk-openai-test"],
-        /--openai-api-key is not supported by this harness/,
-      );
-      await rejects(
-        home,
-        ["deepseek", "on", "--model", "firerouter", "--routing-preference", "balanced"],
-        /--routing-preference is not supported/,
+        /is a FireRouter route, which is no longer supported/,
       );
     });
   });
@@ -108,8 +106,8 @@ describe("harness option validation", () => {
         },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /Codex pays for GPT turns with its own sign-in/);
-      assert.match(result.stderr, /codex login --with-api-key/);
+      // The FireRouter model is rejected before the BYOK flag is considered.
+      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
       assert.equal(existsSync(codexConfigPath(home)), false);
       const globalConfig = existsSync(globalConfigPath(home))
         ? JSON.parse(await readFile(globalConfigPath(home), "utf8"))
@@ -141,9 +139,8 @@ describe("harness option validation", () => {
         },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /Codex doesn't send an Anthropic key/);
-      assert.match(result.stderr, /Provider Key/);
-      assert.match(result.stderr, /fireconnect configure --anthropic-api-key/);
+      // The FireRouter model is rejected before the BYOK flag is considered.
+      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
       assert.equal(existsSync(codexConfigPath(home)), false);
       const globalConfig = existsSync(globalConfigPath(home))
         ? JSON.parse(await readFile(globalConfigPath(home), "utf8"))
@@ -152,18 +149,13 @@ describe("harness option validation", () => {
     });
   });
 
-  it("accepts Claude FireRouter with routing preference and no Anthropic BYOK", async () => {
+  it("rejects a Claude FireRouter selection instead of connecting", async () => {
     await withTempHome("option-claude-firerouter-", async (home) => {
-      const result = await runCli(
-        [
-          "claude", "on",
-          "--api-key", "fw_test_key_12345",
-          "--model", "firerouter",
-          "--routing-preference", "balanced",
-        ],
-        { home, env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" } },
+      await rejects(
+        home,
+        ["claude", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"],
+        /--model firerouter is a FireRouter route, which is no longer supported\. Use --model auto instead\./,
       );
-      assert.equal(result.code, 0, result.stderr);
     });
   });
 
@@ -172,9 +164,9 @@ describe("harness option validation", () => {
       await rejects(home, ["pi", "on", "--force"], /--force is only supported/);
       await rejects(home, ["cursor", "on", "--mode", "composer"], /Unknown argument: --mode/);
       await rejects(home, ["cursor", "on", "--slot", "main"], /Unknown argument: --slot/);
-      await rejects(home, ["pi", "on", "--opus", "glm-latest"], /--opus.*apply only to `fireconnect claude on`/);
-      await rejects(home, ["cursor", "on", "--subagent", "glm-latest"], /--subagent.*apply only to `fireconnect claude on`/);
-      await rejects(home, ["claude", "status", "--sonnet", "glm-latest"], /--opus.*apply only to `fireconnect claude on`/);
+      await rejects(home, ["pi", "on", "--opus", "glm-latest"], /--opus.*apply only to `nexus claude on`/);
+      await rejects(home, ["cursor", "on", "--subagent", "glm-latest"], /--subagent.*apply only to `nexus claude on`/);
+      await rejects(home, ["claude", "status", "--sonnet", "glm-latest"], /--opus.*apply only to `nexus claude on`/);
       await rejects(home, ["opencode", "on", "--non-interactive"], /applies only to .*claude on/);
       await rejects(home, ["opencode", "on", "--interactive"], /applies only to .*claude on/);
       await rejects(

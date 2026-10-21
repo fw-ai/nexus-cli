@@ -21,13 +21,13 @@ async function withMemoryStore(fn) {
   const home = await mkdtemp(path.join(os.tmpdir(), "fc-keychain-ref-"));
   const prev = {
     home: process.env.HOME,
-    store: process.env.FIRECONNECT_SECRET_STORE,
-    test: process.env.FIRECONNECT_TEST,
+    store: process.env.NEXUS_SECRET_STORE,
+    test: process.env.NEXUS_TEST,
     fwKey: process.env.FIREWORKS_API_KEY,
   };
   process.env.HOME = home;
-  process.env.FIRECONNECT_SECRET_STORE = "memory";
-  process.env.FIRECONNECT_TEST = "1";
+  process.env.NEXUS_SECRET_STORE = "memory";
+  process.env.NEXUS_TEST = "1";
   delete process.env.FIREWORKS_API_KEY;
   resetSecretStoreForTests();
   try {
@@ -35,8 +35,8 @@ async function withMemoryStore(fn) {
   } finally {
     for (const [k, v] of [
       ["HOME", prev.home],
-      ["FIRECONNECT_SECRET_STORE", prev.store],
-      ["FIRECONNECT_TEST", prev.test],
+      ["NEXUS_SECRET_STORE", prev.store],
+      ["NEXUS_TEST", prev.test],
       ["FIREWORKS_API_KEY", prev.fwKey],
     ]) {
       if (v === undefined) delete process.env[k];
@@ -63,9 +63,9 @@ describe("keychain config ref names the account", () => {
 
   it("resolves the stored key from a config that uses the keychain ref", async () => {
     await withMemoryStore(async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       await writeFile(
-        path.join(home, ".fireconnect", "config.json"),
+        path.join(home, ".nexus", "config.json"),
         JSON.stringify({ apiKey: FIREWORKS_API_KEY_KEYCHAIN_REF, harnesses: {} }),
       );
       await setSecret("fw_stored_key_123", home);

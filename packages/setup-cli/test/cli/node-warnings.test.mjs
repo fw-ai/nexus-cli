@@ -8,12 +8,12 @@ import assert from "node:assert/strict";
 import { runFireconnect, itIfSqlite } from "../helpers.mjs";
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
-const BIN_PATH = path.join(here, "../../bin/fireconnect.mjs");
+const BIN_PATH = path.join(here, "../../bin/nexus.mjs");
 
 describe("node warning filter", () => {
   // `node:sqlite` (Cursor/VS Code state.vscdb access) emits an
   // ExperimentalWarning on import under Node >= 22. The installed launcher
-  // passes --disable-warning, but a direct `node bin/fireconnect.mjs` (dev
+  // passes --disable-warning, but a direct `node bin/nexus.mjs` (dev
   // alias) does not — and the warning used to land in the middle of
   // interactive output like the uninstall checklist.
 

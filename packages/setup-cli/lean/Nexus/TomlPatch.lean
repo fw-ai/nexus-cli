@@ -1,12 +1,12 @@
 /-
 Formal model of `lib/harnesses/codex/toml-patch.mjs`.
 
-Lines are modeled abstractly. `strip` removes FireConnect-owned lines; `patch`
+Lines are modeled abstractly. `strip` removes Nexus-owned lines; `patch`
 prepends an owned routing block to a stripped base. Theorems: strip is a
 fixpoint, patch-then-strip restores the stripped base when the routing block
 is owned (byte-for-byte `off` restoration), and user lines are never dropped.
 -/
-namespace FireConnect.TomlPatch
+namespace Nexus.TomlPatch
 
 inductive Line where
   | userRoot : String → Line
@@ -107,4 +107,4 @@ theorem spot :
       [.userRoot "a", .ownedRoot "model_provider"] := by
   decide
 
-end FireConnect.TomlPatch
+end Nexus.TomlPatch

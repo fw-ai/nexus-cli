@@ -33,6 +33,11 @@ export const FIREWORKS_MODEL_SPECS = {
     pricing: { input: 0.22, cachedInput: 0.007, output: 0.66 },
     capabilities: { contextWindow: 1_000_000, maxOutputTokens: 384_000, vision: false, toolCalling: true },
   },
+  "deepseek-v4p1-flash": {
+    label: "DeepSeek V4.1 Flash",
+    pricing: { input: 0.30, cachedInput: 0.006, output: 1.20 },
+    capabilities: { contextWindow: 1_048_576, maxOutputTokens: 384_000, vision: true, toolCalling: true },
+  },
   "glm-5p3": {
     label: "GLM 5.3",
     pricing: { input: 1.40, cachedInput: 0.26, output: 4.40 },
@@ -186,7 +191,7 @@ export const FIREWORKS_MODEL_SPECS = {
  */
 export const AUTO_MODEL_ID = "auto";
 
-/** Latency-first auto mix (`--model auto-instant`). */
+/** Retired latency-first auto mix. Still recognized (labels, pricing, migration of stored selections); no longer supported as a selection. */
 export const AUTO_INSTANT_MODEL_ID = "auto-instant";
 
 /**
@@ -194,7 +199,7 @@ export const AUTO_INSTANT_MODEL_ID = "auto-instant";
  * canonicalAutoModelId} matches any `auto-*`); this list only controls which
  * names get a discoverable row when the serverless API omits them.
  */
-export const KNOWN_AUTO_MODEL_IDS = [AUTO_MODEL_ID, AUTO_INSTANT_MODEL_ID];
+export const KNOWN_AUTO_MODEL_IDS = [AUTO_MODEL_ID];
 
 /** Cursor's built-in picker — not a Fireworks auto mix. */
 const NON_GATEWAY_AUTO_IDS = new Set(["auto-smart"]);
@@ -534,7 +539,7 @@ function firstCachedServerlessPricing(modelRef) {
 
 export const DEFAULT_FIREWORKS_MODEL_LIMITS = {
   contextWindow: 1_000_000,
-  maxTokens: 16_384,
+  maxTokens: 131_072,
   vision: false,
 };
 
@@ -575,15 +580,8 @@ function resolveFireworksCatalogCost(modelRef, specPricing) {
   };
 }
 
-/**
- * Per-million-token cost block for Pi models.json `cost` fields.
- * Fire Pass is a subscription: it has no per-model pricing, so `firepass`
- * returns null and the harness omits the cost block.
- */
-export function lookupFireworksModelCost(modelRef, { firepass = false } = {}) {
-  if (firepass) {
-    return null;
-  }
+/** Per-million-token cost block for Pi models.json `cost` fields. */
+export function lookupFireworksModelCost(modelRef) {
   const pricing = firstCachedServerlessPricing(modelRef)
     ?? lookupModelSpec(modelRef)?.pricing;
   if (!pricing) {

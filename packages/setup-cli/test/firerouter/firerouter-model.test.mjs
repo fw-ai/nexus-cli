@@ -26,24 +26,14 @@ import {
   preferLatestAliases,
   registerableModelIds,
 } from "../../lib/fireworks/models.mjs";
-import { globalListIncludesFirerouter } from "../../lib/fireworks/model-list.mjs";
 import {
-  FIREROUTER_FIREPASS_UNSUPPORTED_MESSAGE,
-  assertFirerouterKeyType,
-  firerouterCredentialsApplyOnGateway,
   firerouterCredentialsRequiredMessage,
   resolveExplicitFirerouterCredential,
   resolveFirerouterByokHeaders,
   resolveFirerouterPlan,
-  supportsRoutingPreference,
 } from "../../lib/firerouter/flag.mjs";
 
 describe("firerouter model recognition", () => {
-  it("global model list includes FireRouter only for standard keys", () => {
-    assert.equal(globalListIncludesFirerouter("fireworks"), true);
-    assert.equal(globalListIncludesFirerouter("firepass"), false);
-  });
-
   it("recognizes firerouter regardless of prefix or context suffix", () => {
     for (const id of ["firerouter", "FireRouter", "firerouter[1m]", "fireworks-ai/firerouter", "fireworks/firerouter"]) {
       assert.equal(isFirerouterModel(id), true, id);
@@ -255,39 +245,6 @@ describe("firerouter routing plan", () => {
     assert.deepEqual(resolveFirerouterPlan({}), { mainModel: "", isFirerouter: false, requiresAnthropicKey: false, requiresOpenaiKey: false, namesAnthropicModel: false });
   });
 
-  it("resolveFirerouterPlan: Fire Pass with no model is fine (returns the harness default)", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "" }, { keyType: "firepass" }), {
-      mainModel: "",
-      isFirerouter: false,
-      requiresAnthropicKey: false,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-  });
-
-  it("resolveFirerouterPlan: explicit firerouter with a Fire Pass key throws", () => {
-    assert.throws(
-      () => resolveFirerouterPlan({ main: "firerouter" }, { keyType: "firepass" }),
-      new RegExp(FIREROUTER_FIREPASS_UNSUPPORTED_MESSAGE.slice(0, 20)),
-    );
-  });
-
-  it("assertFirerouterKeyType throws for firerouter + Fire Pass, allows otherwise", () => {
-    assert.throws(
-      () => assertFirerouterKeyType(FIREROUTER_MODEL_ID, "firepass"),
-      new RegExp(FIREROUTER_FIREPASS_UNSUPPORTED_MESSAGE.slice(0, 20)),
-    );
-    // firerouter with a standard key is fine.
-    assertFirerouterKeyType(FIREROUTER_MODEL_ID, "fireworks");
-    // a non-firerouter model with a Fire Pass key is fine.
-    assertFirerouterKeyType("accounts/fireworks/routers/glm-fast-latest", "firepass");
-  });
-
-  it("firerouterCredentialsApplyOnGateway is true only for standard Fireworks keys", () => {
-    assert.equal(firerouterCredentialsApplyOnGateway("fireworks"), true);
-    assert.equal(firerouterCredentialsApplyOnGateway("firepass"), false);
-  });
-
   it("resolveExplicitFirerouterCredential never throws for byok:none harnesses", async () => {
     // A harness that can't forward a local key still connects: the credential
     // resolves best-effort (empty here) and FireRouter routes the Fireworks mix.
@@ -472,14 +429,13 @@ describe("firerouter routing plan", () => {
       },
     ];
     assert.deepEqual(
-      registerableModelIds(catalog, "fireworks"),
+      registerableModelIds(catalog),
       ["accounts/fireworks/routers/glm-latest"],
       "registerableModelIds passes the served list through; loadServerlessCatalog adds auto",
     );
     assert.deepEqual(
       registerableModelIds(
         [{ shortId: "auto", id: "auto" }, ...catalog],
-        "fireworks",
         { includeFirerouter: true },
       ),
       [
@@ -489,30 +445,23 @@ describe("firerouter routing plan", () => {
       ],
     );
     assert.deepEqual(
-      registerableModelIds(catalog, "firepass", { includeFirerouter: true }),
-      ["accounts/fireworks/routers/glm-latest"],
-    );
-    assert.deepEqual(
       registerableModelIds(
         [{ shortId: "firerouter", id: FIREROUTER_ROUTER_ID }, ...catalog],
-        "fireworks",
       ),
       ["accounts/fireworks/routers/glm-latest"],
     );
   });
 
-  it("registerableModelIds keeps a served auto row, never for Fire Pass", () => {
+  it("registerableModelIds keeps a served auto row", () => {
     const glmLatest = { shortId: "glm-latest", id: "accounts/fireworks/routers/glm-latest" };
-    // An auto row could arrive keyed either way — either form survives for
-    // standard keys and is stripped for Fire Pass (auto needs a bare slug
-    // Fire Pass keys can't resolve).
+    // An auto row could arrive keyed either way — either form survives.
     for (const autoRow of [
       { shortId: "auto", id: "auto" },
       { shortId: "", id: "accounts/fireworks/routers/auto" },
     ]) {
       const catalog = [glmLatest, autoRow];
       assert.deepEqual(
-        registerableModelIds(catalog, "fireworks", { includeFirerouter: true }),
+        registerableModelIds(catalog, { includeFirerouter: true }),
         [
           FIREROUTER_ROUTER_ID,
           "accounts/fireworks/routers/glm-latest",
@@ -521,31 +470,22 @@ describe("firerouter routing plan", () => {
         autoRow.id,
       );
       assert.deepEqual(
-        registerableModelIds(catalog, "fireworks"),
+        registerableModelIds(catalog),
         ["accounts/fireworks/routers/glm-latest", autoRow.id],
-        autoRow.id,
-      );
-      assert.deepEqual(
-        registerableModelIds(catalog, "firepass"),
-        ["accounts/fireworks/routers/glm-latest"],
         autoRow.id,
       );
     }
   });
 
-  it("catalogWithAutomaticAuto prepends auto unless present, Fire Pass, or empty", () => {
+  it("catalogWithAutomaticAuto prepends auto unless present or empty", () => {
     const glmLatest = { shortId: "glm-latest", id: "accounts/fireworks/routers/glm-latest" };
     assert.deepEqual(
-      catalogWithAutomaticAuto([glmLatest], "fireworks").map((entry) => entry.id),
+      catalogWithAutomaticAuto([glmLatest]).map((entry) => entry.id),
       ["auto", "accounts/fireworks/routers/glm-latest"],
     );
     const withAuto = [{ shortId: "auto", id: "auto" }, glmLatest];
-    assert.equal(catalogWithAutomaticAuto(withAuto, "fireworks"), withAuto);
-    assert.deepEqual(
-      catalogWithAutomaticAuto([glmLatest], "firepass").map((entry) => entry.id),
-      ["accounts/fireworks/routers/glm-latest"],
-    );
-    assert.deepEqual(catalogWithAutomaticAuto([], "fireworks"), [], "empty stays empty");
+    assert.equal(catalogWithAutomaticAuto(withAuto), withAuto);
+    assert.deepEqual(catalogWithAutomaticAuto([]), [], "empty stays empty");
   });
 
   it("keeps a catalog-supplied firerouter row when auto is also present", () => {
@@ -557,7 +497,7 @@ describe("firerouter routing plan", () => {
       { shortId: "glm-latest", id: "accounts/fireworks/routers/glm-latest" },
     ];
     assert.deepEqual(
-      catalogWithAutomaticFirerouter(catalog, "fireworks", { includeFirerouter: true })
+      catalogWithAutomaticFirerouter(catalog, { includeFirerouter: true })
         .map((entry) => entry.id),
       ["auto", FIREROUTER_ROUTER_ID, "accounts/fireworks/routers/glm-latest"],
     );

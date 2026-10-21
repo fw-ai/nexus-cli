@@ -8,7 +8,9 @@ import {
 } from "../../keys/api-key.mjs";
 import { activeKeySourceNote, assertBackendCanStore, keyStorageSummaryLine } from "../../keys/storage-report.mjs";
 import { identityLabel } from "../../keys/verify-api-key.mjs";
-import { accent, check } from "../../ui/term.mjs";
+import { printHarnessRows } from "../../cli/commands/harnesses.mjs";
+import { HARNESS_COMMANDS } from "../../harness/id.mjs";
+import { accent, bold, check } from "../../ui/term.mjs";
 
 // Re-exported for the login flows/command that already import these from here.
 export const KEYS_URL = FIREWORKS_KEYS_URL;
@@ -50,11 +52,20 @@ export function printSuccessBlock(result, notes = [], { nextHint = true } = {}) 
   for (const note of notes.filter(Boolean)) {
     console.log(`  ${note}`);
   }
-  console.log(`  Remove it from this machine anytime with  ${accent("fireconnect logout")}`);
+  console.log(`  Remove it from this machine anytime with  ${accent("nexus logout")}`);
   console.log("");
   if (nextHint) {
-    console.log(`  Next: connect a tool with  ${accent("fireconnect claude")}`);
+    printNextSteps();
   }
+}
+
+function printNextSteps() {
+  const featured = HARNESS_COMMANDS.filter((row) => row.featured)
+    .map(({ command, name }) => ({ command: `nexus ${command}`, name }));
+  console.log(`  ${bold("Next, connect a harness:")}`);
+  printHarnessRows(featured, { indent: "    ", style: accent });
+  console.log("");
+  console.log(`  Using another harness? See them all with  ${accent("nexus harnesses")}`);
 }
 
 /**
@@ -63,7 +74,7 @@ export function printSuccessBlock(result, notes = [], { nextHint = true } = {}) 
  */
 export async function loginNonInteractive(home, key) {
   if (!key) {
-    fail("No key provided. Run fireconnect login --with-token < key.txt to sign in non-interactively.");
+    fail("No key provided. Run nexus login --with-token < key.txt to sign in non-interactively.");
     return;
   }
   let result;

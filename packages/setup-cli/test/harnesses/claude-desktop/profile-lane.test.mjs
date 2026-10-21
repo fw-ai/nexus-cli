@@ -1,16 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import http from "node:http";
 
-import { createShimServer } from "../../../lib/harnesses/claude-desktop/shim.mjs";
+import { createAutoProvidersLoader, createShimServer } from "../../../lib/harnesses/claude-desktop/shim.mjs";
 import {
-  detectConnectors, migrateSkillsPlugin, DEFAULT_MODEL_MAP,
+  detectConnectors, migrateSkillsPlugin, DEFAULT_MODEL_MAP, firstPartyDir, thirdPartyDir,
 } from "../../../lib/harnesses/claude-desktop/profile-lane.mjs";
 
-process.env.FIRECONNECT_TEST = "1";
+process.env.NEXUS_TEST = "1";
 
 async function tempHome() {
   const home = await mkdtemp(path.join(tmpdir(), "fc-profile-lane-"));
@@ -18,7 +18,8 @@ async function tempHome() {
 }
 
 async function writeSession(home, deployment, account, name, servers) {
-  const dir = path.join(home, "Library", "Application Support", deployment, "local-agent-mode-sessions", account, "org");
+  const root = deployment === "Claude-3p" ? thirdPartyDir(home) : firstPartyDir(home);
+  const dir = path.join(root, "local-agent-mode-sessions", account, "org");
   await mkdir(dir, { recursive: true });
   await writeFile(path.join(dir, name), JSON.stringify({
     sessionId: name, remoteMcpServersConfig: servers,
@@ -56,8 +57,8 @@ test("detectConnectors returns [] when no sessions exist (offline/cold cache)", 
 test("migrateSkillsPlugin copies skills/plugin assets one-way, additively", async () => {
   const { home, cleanup } = await tempHome();
   try {
-    const first = path.join(home, "Library", "Application Support", "Claude");
-    const third = path.join(home, "Library", "Application Support", "Claude-3p");
+    const first = firstPartyDir(home);
+    const third = thirdPartyDir(home);
     const srcSkill = path.join(first, "local-agent-mode-sessions", "skills-plugin", "org-1", "acct-1", "skills", "demo", "SKILL.md");
     await mkdir(path.dirname(srcSkill), { recursive: true });
     await writeFile(srcSkill, "# demo skill");
@@ -128,11 +129,11 @@ test("shim model mapping: exact names, then family substrings, then passthrough"
 });
 
 async function enableFakeProfile(home, servers = []) {
-  const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
+  const lib = path.join(thirdPartyDir(home), "configLibrary");
   await mkdir(lib, { recursive: true });
   await writeFile(path.join(lib, "prof-1.json"), JSON.stringify({ managedMcpServers: servers }));
   await writeFile(path.join(lib, "_meta.json"), JSON.stringify({ appliedId: "prof-1", entries: [{ id: "prof-1", name: "Fireworks" }] }));
-  const dataDir = path.join(home, ".fireconnect", "claude-desktop");
+  const dataDir = path.join(home, ".nexus", "claude-desktop");
   await mkdir(dataDir, { recursive: true });
   await writeFile(path.join(dataDir, "profile-state.json"), JSON.stringify({ enabled: true, lane: "profile", profileId: "prof-1" }));
 }
@@ -171,7 +172,7 @@ test("sync rebuilds from sources; org-registered entries kept with oauth", async
     await writeSession(home, "Claude", "acct-1", "local_a.json", [
       { uuid: "1", name: "Linear", url: "https://mcp.linear.app/mcp" },
     ]);
-    const fp = path.join(home, "Library", "Application Support", "Claude");
+    const fp = firstPartyDir(home);
     await mkdir(fp, { recursive: true });
     await writeFile(path.join(fp, "claude_desktop_config.json"), JSON.stringify({
       mcpServers: { slack: { type: "http", url: "https://mcp.slack.com/mcp" } },
@@ -263,7 +264,7 @@ test("mcp add/remove/sync mirror the connector setup into the durable store", as
   const { home, cleanup } = await tempHome();
   try {
     await enableFakeProfile(home);
-    const storePath = path.join(home, ".fireconnect", "claude-desktop", "connectors.json");
+    const storePath = path.join(home, ".nexus", "claude-desktop", "connectors.json");
     await addProfileConnector(home, { name: "linear", url: "https://mcp.linear.app/mcp", oauth: { clientId: "x" } });
     await addProfileConnector(home, { name: "fs", command: "uvx", args: ["mcp-fs"] });
     await removeProfileConnector(home, "fs");
@@ -291,18 +292,18 @@ test("off snapshots the connector setup before deleting the profiles", async () 
     await enableFakeProfile(home, [
       { name: "slack", transport: "http", url: "https://mcp.slack.com/mcp" },
     ]);
-    const statePath = path.join(home, ".fireconnect", "claude-desktop", "profile-state.json");
+    const statePath = path.join(home, ".nexus", "claude-desktop", "profile-state.json");
     const state = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, JSON.stringify({ ...state, excludedConnectors: ["granola"] }));
     const { disableProfileLane } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
     await disableProfileLane(home, { log: () => {} });
     const store = JSON.parse(await readFile(
-      path.join(home, ".fireconnect", "claude-desktop", "connectors.json"), "utf8"));
+      path.join(home, ".nexus", "claude-desktop", "connectors.json"), "utf8"));
     assert.deepEqual(store.servers.map((s) => s.name), ["slack"]);
     assert.deepEqual(store.excluded, ["granola"]);
     // The applied profile itself is gone, as before.
     await assert.rejects(() => readFile(path.join(
-      home, "Library", "Application Support", "Claude-3p", "configLibrary", "prof-1.json"), "utf8"));
+      thirdPartyDir(home), "configLibrary", "prof-1.json"), "utf8"));
   } finally { await cleanup(); }
 });
 
@@ -359,7 +360,7 @@ const SHIM_PROFILE_BODY = {
 test("detectShimProfileId fingerprints our profile; lookalikes on the same port don't match", async () => {
   const { home, cleanup } = await tempHome();
   try {
-    const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
     await mkdir(lib, { recursive: true });
     // Ours (even a stale old-format one, as long as the fingerprint holds).
     await writeFile(path.join(lib, "stale-fw.json"), JSON.stringify({ ...SHIM_PROFILE_BODY, modelCatalogEnabled: true }));
@@ -374,7 +375,7 @@ test("detectShimProfileId fingerprints our profile; lookalikes on the same port 
     assert.equal(await detectShimProfileId(lib, "http://127.0.0.1:8799", home), "stale-fw");
     // A different default port must not match the fingerprint.
     assert.equal(await detectShimProfileId(lib, "http://127.0.0.1:9000", home), null);
-    // Fire Pass (fpk_) keys fingerprint as ours too.
+    // Legacy profiles written with an fpk_ key still fingerprint as ours.
     await writeFile(path.join(lib, "stale-fpk.json"), JSON.stringify({ ...SHIM_PROFILE_BODY, inferenceGatewayApiKey: "fpk_testkey" }));
     await writeFile(path.join(lib, "stale-fw.json"), JSON.stringify({ ...SHIM_PROFILE_BODY, inferenceGatewayBaseUrl: "https://elsewhere.example" }));
     assert.equal(await detectShimProfileId(lib, "http://127.0.0.1:8799", home), null); // stale-fw no longer loopback, fpk not in _meta entries
@@ -388,7 +389,7 @@ test("detectShimProfileId fingerprints our profile; lookalikes on the same port 
 test("detectShimProfileId prefers the durable written-profiles registry over content", async () => {
   const { home, cleanup } = await tempHome();
   try {
-    const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
     await mkdir(lib, { recursive: true });
     // Registry says "registered-id" is ours even though its file is not
     // shim-shaped (e.g. mid-rewrite); the fingerprint finds nothing.
@@ -396,7 +397,7 @@ test("detectShimProfileId prefers the durable written-profiles registry over con
     await writeFile(path.join(lib, "_meta.json"), JSON.stringify({
       appliedId: null, entries: [{ id: "registered-id", name: "Fireworks" }],
     }));
-    const dataDir = path.join(home, ".fireconnect", "claude-desktop");
+    const dataDir = path.join(home, ".nexus", "claude-desktop");
     await mkdir(dataDir, { recursive: true });
     await writeFile(path.join(dataDir, "written-profiles.json"), JSON.stringify(["registered-id"]));
     assert.equal(await detectShimProfileId(lib, "http://127.0.0.1:8799", home), "registered-id");
@@ -408,16 +409,16 @@ test("off never leaves a shim-pointing profile applied (stale backup appliedId)"
   try {
     const { disableProfileLane } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
     await enableFakeProfile(home); // prof-1 with managedMcpServers: [] — shim-URL body
-    const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
-    // A stale backup whose appliedId points at a FireConnect profile — the
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
+    // A stale backup whose appliedId points at a Nexus profile — the
     // failure mode seen live: off must not leave the app on the dead shim.
-    const backup = path.join(home, ".fireconnect", "claude-desktop", "profile-backup", "configLibrary-stale");
+    const backup = path.join(home, ".nexus", "claude-desktop", "profile-backup", "configLibrary-stale");
     await mkdir(backup, { recursive: true });
     await writeFile(path.join(backup, "old-fw.json"), JSON.stringify(SHIM_PROFILE_BODY));
     await writeFile(path.join(backup, "_meta.json"), JSON.stringify({
       appliedId: "old-fw", entries: [{ id: "old-fw", name: "Fireworks" }],
     }));
-    const statePath = path.join(home, ".fireconnect", "claude-desktop", "profile-state.json");
+    const statePath = path.join(home, ".nexus", "claude-desktop", "profile-state.json");
     const state = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, JSON.stringify({ ...state, backup }));
     await disableProfileLane(home, { log: () => {} });
@@ -432,14 +433,14 @@ test("off keeps a healthy non-shim appliedId from the backup", async () => {
   try {
     const { disableProfileLane } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
     await enableFakeProfile(home);
-    const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
-    const backup = path.join(home, ".fireconnect", "claude-desktop", "profile-backup", "configLibrary-ok");
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
+    const backup = path.join(home, ".nexus", "claude-desktop", "profile-backup", "configLibrary-ok");
     await mkdir(backup, { recursive: true });
     await writeFile(path.join(backup, "user-prof.json"), JSON.stringify({ inferenceGatewayBaseUrl: "https://gateway.example.com" }));
     await writeFile(path.join(backup, "_meta.json"), JSON.stringify({
       appliedId: "user-prof", entries: [{ id: "user-prof", name: "Mine" }],
     }));
-    const statePath = path.join(home, ".fireconnect", "claude-desktop", "profile-state.json");
+    const statePath = path.join(home, ".nexus", "claude-desktop", "profile-state.json");
     const state = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, JSON.stringify({ ...state, backup }));
     await disableProfileLane(home, { log: () => {} });
@@ -501,6 +502,71 @@ test("shim relaxes tool schema bounds on the upstream copy", async () => {
   }
 });
 
+test("shim sends the saved auto scope for auto-routed turns only, live from config", async () => {
+  const { home, cleanup } = await tempHome();
+  const catalogDir = await mkdtemp(path.join(tmpdir(), "fc-shim-catalog-"));
+  const configPath = path.join(home, "config.json");
+  await writeFile(configPath, JSON.stringify({ auto: { providers: ["fireworks"] } }));
+  const loader = createAutoProvidersLoader({ configPath });
+  assert.equal(await loader(), "fireworks");
+
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    let d = ""; req.on("data", (c) => { d += c; }).on("end", () => {
+      seen.push({
+        model: JSON.parse(d).model,
+        providers: req.headers["x-nexus-providers"],
+        title: req.headers["x-title"],
+        referer: req.headers["http-referer"],
+      });
+      res.writeHead(200, { "content-type": "application/json" }); res.end("{}");
+    });
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const server = createShimServer({
+    modelMap: DEFAULT_MODEL_MAP, catalogDir,
+    upstreamOrigin: `http://127.0.0.1:${upstream.address().port}`,
+    autoProvidersLoader: loader,
+    log: () => {},
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const post = (model, headers = {}) => fetch(`http://127.0.0.1:${server.address().port}/v1/messages`, {
+    method: "POST", headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({ model, messages: [] }),
+  });
+  try {
+    await post("claude-opus-4-8");                       // routes to auto
+    await post("claude-sonnet-4-8");                     // routes to glm-latest
+    await post("claude-opus-4-8", { "x-nexus-providers": "spoofed", "x-title": "spoofed" });
+    // Every forwarded turn carries the Nexus attribution the other
+    // harnesses send; only auto-routed turns carry the scope.
+    for (const turn of seen) {
+      assert.equal(turn.title, "Claude Desktop");
+      assert.match(turn.referer, /^nexus\/v\d+\.\d+\.\d+$/);
+    }
+    assert.deepEqual(seen.map(({ model, providers }) => ({ model, providers })), [
+      { model: "auto", providers: "fireworks" },
+      { model: "glm-latest", providers: undefined },
+      { model: "auto", providers: "fireworks" },
+    ]);
+
+    // A later `nexus auto --reset` (providers: null) applies on the next
+    // request, with no shim restart.
+    await writeFile(configPath, JSON.stringify({ auto: { providers: null } }));
+    const later = new Date(Date.now() + 5000);
+    await utimes(configPath, later, later);
+    assert.equal(await loader(), "");
+    await post("claude-opus-4-8");
+    assert.equal(seen.at(-1).model, "auto");
+    assert.equal(seen.at(-1).providers, undefined);
+  } finally {
+    await new Promise((r) => server.close(r));
+    await new Promise((r) => upstream.close(r));
+    await rm(catalogDir, { recursive: true, force: true });
+    await cleanup();
+  }
+});
+
 import { normalizeThinking } from "../../../lib/harnesses/claude-desktop/shim.mjs";
 
 test("normalizeThinking maps UI effort spellings onto Fireworks ladders", () => {
@@ -550,8 +616,8 @@ test("off keeps the harness enabled flag when the profile restore fails", async 
     const { disableProfileLane } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
     await enableFakeProfile(home);
     await setHarnessEnabled(home, "claude-desktop", true, "fireworks");
-    // The recorded backup is missing, so restoring the pre-FireConnect profiles fails.
-    const statePath = path.join(home, ".fireconnect", "claude-desktop", "profile-state.json");
+    // The recorded backup is missing, so restoring the pre-Nexus profiles fails.
+    const statePath = path.join(home, ".nexus", "claude-desktop", "profile-state.json");
     const state = JSON.parse(await readFile(statePath, "utf8"));
     await writeFile(statePath, JSON.stringify({ ...state, backup: path.join(home, "missing-backup") }));
     await assert.rejects(disableProfileLane(home, { log: () => {} }));
@@ -640,9 +706,9 @@ test("secret-bearing profile files are written owner-only (0600)", async () => {
   try {
     await enableFakeProfile(home);
     await addProfileConnector(home, { name: "linear", url: "https://mcp.linear.app/mcp", oauth: { clientId: "example-client", clientSecret: "example-secret" } });
-    const lib = path.join(home, "Library", "Application Support", "Claude-3p", "configLibrary");
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
     const profileMode = (await stat(path.join(lib, "prof-1.json"))).mode & 0o777;
-    const oauthMode = (await stat(path.join(home, ".fireconnect", "claude-desktop", "oauth-clients.json"))).mode & 0o777;
+    const oauthMode = (await stat(path.join(home, ".nexus", "claude-desktop", "oauth-clients.json"))).mode & 0o777;
     assert.equal(profileMode, 0o600); // holds the Fireworks gateway key
     assert.equal(oauthMode, 0o600); // holds connector OAuth client secrets
   } finally { await cleanup(); }
@@ -653,12 +719,45 @@ test("loadDesktopLineup: cold cache + offline falls back to the curated list", a
   try {
     const { loadDesktopLineup } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
     // No serverless cache, no signed catalog, and the fetch is offline
-    // (FIRECONNECT_TEST gates real fetches) — the curated fallback answers.
+    // (NEXUS_TEST gates real fetches) — the curated fallback answers.
     const { full, models, modelMap } = await loadDesktopLineup({
       apiKey: "test", signedCatalogPath: path.join(home, "nowhere", "catalog.json"),
     });
     assert.equal(full, false);
     assert.ok(models.length >= 3);
     assert.ok(Object.keys(modelMap.models).length >= 3);
+  } finally { await cleanup(); }
+});
+
+test("upgrade scrub removes FireRouter custom models from manual list, shim map, and profile", async () => {
+  const { migrateClaudeDesktopFirerouterOnUpgrade } = await import("../../../lib/harnesses/claude-desktop/upgrade-migrations.mjs");
+  const { shimStatePath } = await import("../../../lib/harnesses/claude-desktop/profile-lane.mjs");
+  const { home, cleanup } = await tempHome();
+  try {
+    await enableFakeProfile(home);
+    const lib = path.join(thirdPartyDir(home), "configLibrary");
+    await writeFile(path.join(lib, "prof-1.json"), JSON.stringify({
+      inferenceModels: [{ name: "claude-custom-1" }, { name: "claude-keep" }],
+    }));
+    const dataDir = path.join(home, ".nexus", "claude-desktop");
+    await writeFile(path.join(dataDir, "manual-models.json"), JSON.stringify([
+      { shortId: "firerouter/opus", name: "claude-custom-1", label: "FireRouter · Opus", tier: "opus" },
+      { shortId: "glm-latest", name: "claude-keep", label: "GLM", tier: "sonnet" },
+    ]));
+    await writeFile(shimStatePath(home), JSON.stringify({
+      port: 1234,
+      modelMap: { models: { "claude-custom-1": "firerouter/opus", "claude-keep": "glm-latest" } },
+    }));
+
+    assert.equal(await migrateClaudeDesktopFirerouterOnUpgrade(home), true);
+
+    const manual = JSON.parse(await readFile(path.join(dataDir, "manual-models.json"), "utf8"));
+    assert.deepEqual(manual.map((m) => m.shortId), ["glm-latest"]);
+    const state = JSON.parse(await readFile(shimStatePath(home), "utf8"));
+    assert.deepEqual(state.modelMap.models, { "claude-keep": "glm-latest" });
+    const profile = JSON.parse(await readFile(path.join(lib, "prof-1.json"), "utf8"));
+    assert.deepEqual(profile.inferenceModels, [{ name: "claude-keep" }]);
+
+    assert.equal(await migrateClaudeDesktopFirerouterOnUpgrade(home), false, "second run no-ops");
   } finally { await cleanup(); }
 });

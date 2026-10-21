@@ -53,9 +53,9 @@ async function readStdinToken() {
 
 function printKeyRotationHints({ tty = stdin.isTTY } = {}) {
   if (tty) {
-    console.log(`  Rotate without prompting:  ${accent("fireconnect login --force")}`);
+    console.log(`  Rotate without prompting:  ${accent("nexus login --force")}`);
   }
-  console.log(`  Or pass a key directly:      ${accent("fireconnect login --api-key <key>")}`);
+  console.log(`  Or pass a key directly:      ${accent("nexus login --api-key <key>")}`);
 }
 
 async function fireconnectExportsEnvKey(home) {
@@ -69,14 +69,14 @@ async function fireconnectExportsEnvKey(home) {
 
 async function printEnvKeyRotationHints(home) {
   if (await fireconnectExportsEnvKey(home)) {
-    console.log("  FireConnect's shell hook exports this from the keychain — login won't run while it's set.");
-    console.log(`  To rotate:  ${accent("unset FIREWORKS_API_KEY")}  then  ${accent("fireconnect login")}`);
+    console.log("  Nexus's shell hook exports this from the keychain — login won't run while it's set.");
+    console.log(`  To rotate:  ${accent("unset FIREWORKS_API_KEY")}  then  ${accent("nexus login")}`);
     console.log("  Your next shell picks up the new key automatically.");
     return;
   }
   console.log("  This key comes from your environment — login won't store behind it.");
   console.log(`  To rotate: update ${accent("FIREWORKS_API_KEY")} wherever you export it, then open a new shell.`);
-  console.log(`  To store in the keychain instead:  ${accent("unset FIREWORKS_API_KEY")}  then  ${accent("fireconnect login")}`);
+  console.log(`  To store in the keychain instead:  ${accent("unset FIREWORKS_API_KEY")}  then  ${accent("nexus login")}`);
 }
 
 /**
@@ -109,7 +109,7 @@ export async function runLoginCommand(ctx) {
 
   if (ctx.paste) {
     if (!stdin.isTTY) {
-      fail("Run fireconnect login --with-token < key.txt to sign in non-interactively.");
+      fail("Run nexus login --with-token < key.txt to sign in non-interactively.");
       return;
     }
     await runInteractiveSignIn(home, { method: "paste" });
@@ -120,7 +120,7 @@ export async function runLoginCommand(ctx) {
     const handled = await runSsoBrowserFlow(home, ctx.account.trim());
     if (!handled) {
       if (!stdin.isTTY) {
-        fail("Run fireconnect login --with-token < key.txt to sign in non-interactively.");
+        fail("Run nexus login --with-token < key.txt to sign in non-interactively.");
         return;
       }
       await runInteractiveSignIn(home, { method: "paste" });
@@ -171,7 +171,7 @@ export async function runLoginCommand(ctx) {
   }
 
   if (!stdin.isTTY) {
-    fail("Run fireconnect login --with-token < key.txt to sign in non-interactively.");
+    fail("Run nexus login --with-token < key.txt to sign in non-interactively.");
     return;
   }
 

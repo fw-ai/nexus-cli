@@ -17,8 +17,8 @@ import {
 } from "../../lib/config/global-config.mjs";
 import { writeJson } from "../../lib/io/json.mjs";
 
-process.env.FIRECONNECT_SECRET_STORE ??= "memory";
-process.env.FIRECONNECT_TEST ??= "1";
+process.env.NEXUS_SECRET_STORE ??= "memory";
+process.env.NEXUS_TEST ??= "1";
 
 describe("global-config", () => {
   it("reads empty apiKey when config file is missing", async () => {

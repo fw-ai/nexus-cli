@@ -1,18 +1,21 @@
 import { writeFileAtomic } from "../../io/atomic-write.mjs";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, unlink } from "node:fs/promises";
+import { chmod, mkdir, readdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
-  DEFAULT_FIREPASS_MAIN_MODEL,
   defaultMainModel,
+  dropRetiredModelId,
   fullFireworksResourceId,
+  isAutoModelId,
+  isFirerouterModelPattern,
+  isRetiredModelId,
   normalizeModelId,
 } from "../../fireworks/model-id.mjs";
+import { resolveManagedDisplayName } from "../../fireworks/model-display.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import { omitHeaders } from "../../firerouter/core.mjs";
 import {
-  detectApiKeyType,
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
@@ -26,29 +29,20 @@ import {
   MISSING_AZURE_BASE_URL_MESSAGE,
   normalizeAzureBaseUrl,
 } from "../../fireworks/azure-core.mjs";
-import { fireworksInputModalities } from "../../fireworks/model-specs.mjs";
 import {
-  readGlobalConfig,
-  setHarnessState,
-} from "../../config/global-config.mjs";
+  fireworksInputModalities,
+  lookupFireworksModelCost,
+  lookupFireworksModelLimits,
+} from "../../fireworks/model-specs.mjs";
+import { readGlobalConfig, setHarnessState } from "../../config/global-config.mjs";
 import { HARNESS } from "../../harness/id.mjs";
-import {
-  PI_AUTO_ENABLED_MODEL,
-  cachedFireworksModelIds,
-  mergePiFireworksRouterModels,
-  piEnabledModels,
-  planPiCatalogUpdate,
-} from "./fireworks-models.mjs";
-import { stripFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
-
-export {
-  mergePiFireworksRouterModels,
-  resolvePiEffectiveFireworksModel,
-} from "./fireworks-models.mjs";
+import { piKnownFireworksModelIds } from "./pi-catalog.mjs";
+import { catalogWithAutomaticAuto, registerableModelIds } from "../../fireworks/models.mjs";
+import { getServerlessCatalogSnapshot } from "../../fireworks/serverless-catalog-cache.mjs";
 
 export const PI_SETTINGS_RELATIVE_PATH = ".pi/agent/settings.json";
 export const PI_MODELS_RELATIVE_PATH = ".pi/agent/models.json";
-export const PI_DATA_RELATIVE_DIR = ".fireconnect/pi";
+export const PI_DATA_RELATIVE_DIR = ".nexus/pi";
 export const PI_API_KEY_ENV_REF = "$FIREWORKS_API_KEY";
 const PI_PROVIDER = "fireworks";
 const PI_MANAGED_BY = "fireconnect";
@@ -56,21 +50,18 @@ const PI_MANAGED_BY = "fireconnect";
 // it never collides with the built-in Fireworks provider.
 export const PI_AZURE_PROVIDER = "fireworks-azure";
 export const PI_AZURE_API_KEY_ENV_REF = `$${AZURE_API_KEY_ENV}`;
-
-function isFireconnectActive(settings) {
-  if (settings.defaultProvider === PI_AZURE_PROVIDER
-    && typeof settings.defaultModel === "string"
-    && settings.defaultModel.length > 0) {
-    return true;
-  }
-  return settings.defaultProvider === PI_PROVIDER
-    && typeof settings.defaultModel === "string"
-    && settings.defaultModel.length > 0;
-}
-
-function isFireconnectManagedAuth(auth) {
-  return auth[PI_PROVIDER]?.managedBy === PI_MANAGED_BY;
-}
+const NEXUS_PROVIDERS = [PI_PROVIDER, PI_AZURE_PROVIDER];
+// Appended to a user's own `enabledModels`: Pi starts on the first scoped
+// model when `defaultModel` falls outside it. `**` because ids contain `/`.
+const PI_FIREWORKS_SCOPE = "fireworks/**";
+const PI_AZURE_SCOPE = `${PI_AZURE_PROVIDER}/**`;
+// Ours, including the entries earlier releases wrote in place of the user's list.
+const NEXUS_SCOPE = [
+  PI_FIREWORKS_SCOPE,
+  PI_AZURE_SCOPE,
+  "fireworks/accounts/fireworks/routers/*",
+  "fireworks/auto",
+];
 
 export function piSettingsPath(home, settingsPath = "") {
   return settingsPath || path.join(home, PI_SETTINGS_RELATIVE_PATH);
@@ -93,154 +84,12 @@ export function piModelsPath(home, settingsPath = "") {
   return path.join(home, PI_MODELS_RELATIVE_PATH);
 }
 
-/** FireConnect-owned session-affinity compat on a Pi provider entry in models.json. */
-function stripManagedSessionAffinityCompat(provider) {
-  if (provider.compat?.sendSessionAffinityHeaders !== true) {
-    return provider;
-  }
-  const next = { ...provider };
-  const compat = { ...next.compat };
-  delete compat.sendSessionAffinityHeaders;
-  if (Object.keys(compat).length) next.compat = compat;
-  else delete next.compat;
-  return next;
-}
-
-/**
- * Remove FireConnect-managed router models and session-affinity compat from a
- * fireworks provider config. Returns whether anything changed.
- * @param {object | undefined} fireworks
- * @param {Iterable<string>} managedModelIds
- */
-function stripManagedFireworksProviderConfig(fireworks, managedModelIds) {
-  if (!fireworks) {
-    return { provider: fireworks, changed: false, dropProvider: false };
-  }
-  const managed = new Set(
-    [...managedModelIds].map(fullFireworksResourceId),
-  );
-  let changed = false;
-  let next = { ...fireworks };
-
-  if (Array.isArray(next.models)) {
-    const remaining = next.models.filter(
-      (model) => !managed.has(fullFireworksResourceId(model.id)),
-    );
-    if (remaining.length !== next.models.length) {
-      changed = true;
-      if (remaining.length) {
-        next.models = remaining;
-      } else {
-        delete next.models;
-      }
-    }
-  }
-
-  if (next.modelOverrides && typeof next.modelOverrides === "object") {
-    const overrides = { ...next.modelOverrides };
-    for (const id of Object.keys(overrides)) {
-      if (managed.has(fullFireworksResourceId(id))) {
-        delete overrides[id];
-        changed = true;
-      }
-    }
-    if (Object.keys(overrides).length) {
-      next.modelOverrides = overrides;
-    } else {
-      delete next.modelOverrides;
-    }
-  }
-
-  const stripped = stripManagedSessionAffinityCompat(next);
-  if (stripped !== next) {
-    changed = true;
-    next = stripped;
-  }
-
-  if (next.headers && typeof next.headers === "object") {
-    const managedRoutingHeaders = new Set([
-      "x-anthropic-api-key",
-      "x-openai-api-key",
-      "x-routing-preference",
-    ]);
-    const withoutTelemetry = stripFireconnectTelemetryHeaders(next.headers);
-    const headers = Object.fromEntries(
-      Object.entries(withoutTelemetry).filter(
-        ([name]) => !managedRoutingHeaders.has(name.toLowerCase()),
-      ),
-    );
-    if (JSON.stringify(headers) !== JSON.stringify(next.headers)) {
-      changed = true;
-      if (Object.keys(headers).length) next.headers = headers;
-      else delete next.headers;
-    }
-  }
-
-  return {
-    provider: next,
-    changed,
-    dropProvider: Object.keys(next).length === 0,
-  };
-}
-
 export function piDataDir(home, dataDir = "") {
   return dataDir || path.join(home, PI_DATA_RELATIVE_DIR);
 }
 
-function backupPath(dataDir, filePath, label) {
-  const key = createHash("sha256").update(path.resolve(filePath)).digest("hex").slice(0, 16);
-  return path.join(dataDir, `${label}-backup.${key}.json`);
-}
-
-// Pre-consolidation state file. Managed model ids now live in the global
-// config (harnesses.pi.profiles.managedModelIds); the enabled flag is the
-// engine's wasEnabled (global flag cross-checked against providerStatus).
-function legacyStatePath(dataDir) {
-  return path.join(dataDir, "state.json");
-}
-
-/**
- * Model ids FireConnect registered in models.json on the last `on` — the only
- * record of which entries are ours (model rows carry no per-entry marker).
- * Primary source is the global config; falls back to the legacy state.json
- * (pre-consolidation installs) and then to the cached serverless catalog.
- */
-async function readManagedModelIds(home, dataDir) {
-  if (home) {
-    const config = await readGlobalConfig(home);
-    const ids = config.harnesses[HARNESS.PI]?.profiles?.managedModelIds;
-    if (Array.isArray(ids) && ids.length > 0) {
-      return ids;
-    }
-  }
-  const legacy = await readJsonIfExists(legacyStatePath(dataDir));
-  if (Array.isArray(legacy.managedModelIds) && legacy.managedModelIds.length > 0) {
-    return legacy.managedModelIds;
-  }
-  return cachedFireworksModelIds().map(fullFireworksResourceId);
-}
-
-/**
- * Record the registered ids in the global config (empty clears the key) and
- * remove any legacy state.json so old installs migrate on their next on/off.
- */
-async function persistManagedModelIds(home, dataDir, ids, { initialized = false } = {}) {
-  if (home) {
-    const config = await readGlobalConfig(home);
-    const profiles = { ...(config.harnesses[HARNESS.PI]?.profiles ?? {}) };
-    if (ids.length > 0) {
-      profiles.managedModelIds = ids;
-    } else {
-      delete profiles.managedModelIds;
-    }
-    if (initialized) {
-      profiles.catalogInitialized = true;
-    } else {
-      delete profiles.catalogInitialized;
-    }
-    await setHarnessState(home, HARNESS.PI, { profiles });
-  }
-  await unlink(legacyStatePath(dataDir)).catch(() => {});
+function isNexusAuth(auth) {
+  return auth?.[PI_PROVIDER]?.managedBy === PI_MANAGED_BY;
 }
 
 export function resolvePiApiKeyValue(key) {
@@ -301,7 +150,7 @@ export function piProviderStatus(settings) {
 }
 
 /**
- * BYOK header stored on the FireConnect-managed fireworks provider (where the
+ * BYOK header stored on the Nexus-managed fireworks provider (where the
  * firerouter-as-model config keeps x-anthropic-api-key).
  * @param {{ providers?: Record<string, { headers?: Record<string,string> }> }} modelsConfig
  * @returns {Record<string, string>}
@@ -312,12 +161,12 @@ export function piStoredByokHeaders(modelsConfig) {
 
 /**
  * Drop saved provider keys from the Fireworks provider's `headers` in Pi's
- * `models.json`, after `fireconnect configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * `models.json`, after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
  * @param {{ modelsPath: string, headerNames: string[] }} opts
  * @returns {Promise<boolean>} whether models.json changed
  */
 export async function removePiSavedProviderKeys({ modelsPath, headerNames }) {
-  const modelsConfig = await readJsonIfExists(modelsPath);
+  const modelsConfig = await readJsonFile(modelsPath);
   const provider = modelsConfig?.providers?.[PI_PROVIDER];
   const headers = omitHeaders(provider?.headers, headerNames);
   if (!headers) {
@@ -344,7 +193,7 @@ export async function removePiSavedProviderKeys({ modelsPath, headerNames }) {
 export async function refreshPiGatewayKey({ authPath, fireworksKey }) {
   const key = fireworksKey?.trim();
   if (!key) return false;
-  const auth = await readJsonIfExists(authPath);
+  const auth = await readJsonFile(authPath);
   const entry = auth?.[PI_PROVIDER];
   if (entry?.managedBy !== PI_MANAGED_BY) {
     return false;
@@ -390,84 +239,223 @@ export function buildPiAzureModelEntry(deploymentName) {
   };
 }
 
-function mergePiAzureProvider(config, { baseUrl, apiKey, modelId }) {
-  const next = config && typeof config === "object"
-    ? structuredClone(config)
-    : { providers: {} };
-  next.providers ??= {};
-  next.providers[PI_AZURE_PROVIDER] = {
-    name: AZURE_PROVIDER_LABEL,
-    baseUrl,
-    api: "openai-completions",
-    authHeader: true,
-    apiKey,
-    models: [buildPiAzureModelEntry(modelId)],
-  };
-  return next;
-}
+
+/*
+ * The integration. Nexus owns exactly these keys and nothing else:
+ *   auth.json      `fireworks` (the API key)
+ *   models.json    `providers.fireworks` (rows for our models Pi's catalog
+ *                  lacks, plus headers)
+ *                  or `providers["fireworks-azure"]`
+ *   settings.json  `defaultProvider` / `defaultModel`
+ * `off` deletes those keys and puts back the previous default.
+ */
 
 /**
- * Remove the FireConnect-managed Fireworks gateway router models from a models
- * config, dropping the `fireworks` provider entirely if nothing else remains.
- * User-added models on that provider are preserved.
- * @param {{ providers?: Record<string, any> }} config
+ * Pi ships and refreshes its own Fireworks catalog with per-model `api`,
+ * `compat` and `thinkingLevelMap`. A models.json row with the same id
+ * replaces Pi's row and drops that tuning. These ids are never in Pi's
+ * catalog: the auto mixes, FireRouter, and custom deployments.
+ * @param {string} id
  */
-function stripManagedFireworksModels(config) {
-  const fireworks = config.providers?.[PI_PROVIDER];
-  const managedIds = cachedFireworksModelIds();
-  const { provider, changed, dropProvider } = stripManagedFireworksProviderConfig(
-    fireworks,
-    managedIds,
-  );
-  if (!changed) {
-    return config;
-  }
-  const next = { ...config, providers: { ...config.providers } };
-  if (dropProvider) {
-    delete next.providers[PI_PROVIDER];
-  } else {
-    next.providers[PI_PROVIDER] = provider;
-  }
-  return next;
+export function isPiNexusOnlyModelId(id) {
+  const canonical = fullFireworksResourceId(id ?? "");
+  return Boolean(canonical) && (isAutoModelId(canonical)
+    || isFirerouterModelPattern(canonical)
+    || !canonical.startsWith("accounts/fireworks/"));
 }
 
-async function writePrivateBackup(dataDir, dest, filePath, snapshot) {
-  await mkdir(dataDir, { recursive: true, mode: 0o700 });
-  await writeJson(dest, { filePath: path.resolve(filePath), snapshot });
-  await chmod(dest, 0o600);
+/** A models.json row for a model Pi's own catalog doesn't carry. */
+export function buildPiCustomFireworksModelEntry(modelId, name) {
+  const limits = lookupFireworksModelLimits(modelId);
+  const cost = lookupFireworksModelCost(modelId);
+  return {
+    id: fullFireworksResourceId(modelId),
+    name,
+    reasoning: true,
+    input: fireworksInputModalities(limits),
+    contextWindow: limits.contextWindow,
+    maxTokens: limits.maxTokens,
+    ...(cost ? { cost } : {}),
+    compat: { sendSessionAffinityHeaders: true },
+  };
 }
 
-async function writeAuthFile(authPath, auth) {
-  await mkdir(path.dirname(authPath), { recursive: true });
-  await writeFileAtomic(authPath, `${JSON.stringify(auth, null, 2)}\n`);
-  await chmod(authPath, 0o600);
+/** Pi accepts `//` comments and trailing commas in its JSON files (its own stripper). */
+function stripJsonComments(input) {
+  return input
+    .replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+    .replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : ""));
 }
 
-async function restoreSnapshot(filePath, snapshot) {
-  if (snapshot.existed) {
-    await mkdir(path.dirname(filePath), { recursive: true });
-    await writeFileAtomic(filePath, snapshot.raw);
-    if (filePath.endsWith("auth.json")) {
-      await chmod(filePath, 0o600);
-    }
-    return;
-  }
-  await unlink(filePath).catch((error) => {
-    if (error.code !== "ENOENT") {
-      throw error;
-    }
-  });
-}
-
-async function parseJsonFile(filePath, snapshot) {
-  if (!snapshot.existed || !snapshot.raw.trim()) {
-    return {};
-  }
+export async function readJsonFile(filePath) {
+  const snapshot = await readRawIfExists(filePath);
+  if (!snapshot.existed || !snapshot.raw.trim()) return {};
   try {
-    return JSON.parse(snapshot.raw);
+    return JSON.parse(stripJsonComments(snapshot.raw.replace(/^\uFEFF/, "")));
   } catch {
     throw new Error(`${filePath} is not valid JSON`);
   }
+}
+
+async function writeJsonFile(filePath, value, mode) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
+  if (mode) await chmod(filePath, mode);
+}
+
+async function readPiProfile(home) {
+  return home ? ((await readGlobalConfig(home)).harnesses[HARNESS.PI]?.profiles ?? {}) : {};
+}
+
+async function writePiProfile(home, profiles) {
+  if (home) await setHarnessState(home, HARNESS.PI, { profiles });
+}
+
+// Releases through 0.10.0 also kept a state.json.
+const LEGACY_FILE = /^state\.json$/;
+
+async function deleteLegacyFiles(dataDir) {
+  await unlink(path.join(dataDir, "state.json")).catch(() => {});
+}
+
+/*
+ * Like every harness, `on` snapshots each Pi file it edits and `off` restores
+ * it byte-for-byte. A later `on` keeps the first snapshot.
+ */
+function backupPath(dataDir, filePath, label) {
+  const key = createHash("sha256").update(path.resolve(filePath)).digest("hex").slice(0, 16);
+  return path.join(dataDir, `${label}-backup.${key}.json`);
+}
+
+const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+
+async function snapshotOnce(dataDir, filePath, label) {
+  const dest = backupPath(dataDir, filePath, label);
+  if ((await readJsonIfExists(dest)).snapshot !== undefined) return;
+  const snapshot = await readRawIfExists(filePath);
+  const mode = snapshot.existed ? (await stat(filePath)).mode & 0o777 : undefined;
+  await mkdir(dataDir, { recursive: true, mode: 0o700 });
+  await writeJsonFile(dest, { filePath: path.resolve(filePath), snapshot, mode }, 0o600);
+}
+
+/** Remember what Nexus last wrote, so `off` can tell whether Pi or the user changed it since. */
+async function markWritten(dataDir, filePath, label) {
+  const dest = backupPath(dataDir, filePath, label);
+  const backup = await readJsonIfExists(dest);
+  if (backup.snapshot === undefined) return;
+  await writeJsonFile(dest, { ...backup, written: sha256((await readRawIfExists(filePath)).raw ?? "") }, 0o600);
+}
+
+async function readSnapshot(dataDir, filePath, label) {
+  const backup = await readJsonIfExists(backupPath(dataDir, filePath, label));
+  if (backup.snapshot === undefined || (backup.filePath && backup.filePath !== path.resolve(filePath))) {
+    return null;
+  }
+  return backup;
+}
+
+/**
+ * Put `filePath` back the way it was before `on`. Byte-for-byte when nothing
+ * touched it since Nexus last wrote it (or the snapshot predates that check);
+ * otherwise Pi or the user changed it while on (Pi rewrites auth.json on
+ * OAuth refresh and /login), so only the keys Nexus owns go back to their
+ * pre-`on` values and everything else is kept.
+ */
+async function restoreFile(dataDir, filePath, label, revertOwnKeys, mode) {
+  const backup = await readSnapshot(dataDir, filePath, label);
+  const current = await readRawIfExists(filePath);
+  // A file that vanished while on can only come back from the snapshot.
+  const untouched = backup && (!current.existed
+    || backup.written === undefined
+    || backup.written === sha256(current.raw ?? ""));
+  if (backup && untouched) {
+    if (backup.snapshot.existed) {
+      await mkdir(path.dirname(filePath), { recursive: true });
+      await writeFileAtomic(filePath, backup.snapshot.raw);
+      if (backup.mode) await chmod(filePath, backup.mode);
+      else if (label === "auth") await chmod(filePath, 0o600);
+    } else {
+      await unlink(filePath).catch(() => {});
+    }
+  } else if (current.existed) {
+    const before = backup?.snapshot?.existed ? parseLoose(backup.snapshot.raw) : {};
+    await writeJsonFile(filePath, revertOwnKeys(await readJsonFile(filePath), before), mode);
+  }
+  await unlink(backupPath(dataDir, filePath, label)).catch(() => {});
+}
+
+function parseLoose(raw) {
+  try {
+    return JSON.parse(stripJsonComments(raw.replace(/^\uFEFF/, "")));
+  } catch {
+    return {};
+  }
+}
+
+function withDefaults(settings, { defaultProvider, defaultModel }, scope) {
+  const next = { ...settings, defaultProvider, defaultModel };
+  if (defaultProvider === undefined) delete next.defaultProvider;
+  if (defaultModel === undefined) delete next.defaultModel;
+  if (Array.isArray(next.enabledModels)) {
+    const own = next.enabledModels.filter((entry) => !NEXUS_SCOPE.includes(entry));
+    if (own.length) next.enabledModels = scope ? [...own, scope] : own;
+    else delete next.enabledModels;
+  }
+  return next;
+}
+
+function withProvider(models, id, entry) {
+  const providers = { ...models.providers };
+  for (const nexus of NEXUS_PROVIDERS) delete providers[nexus];
+  if (entry) providers[id] = entry;
+  return { ...models, providers };
+}
+
+/**
+ * Whether Pi is already routed through Nexus. A `fireworks` default alone
+ * isn't enough: users can point Pi at its own Fireworks provider. Nexus's
+ * auth entry, or the default Nexus recorded at `on`, marks it as ours.
+ */
+function isNexusRouted(settings, auth, profile) {
+  return settings.defaultProvider === PI_AZURE_PROVIDER
+    || isNexusAuth(auth)
+    || (settings.defaultProvider === PI_PROVIDER && profile.previous !== undefined);
+}
+
+/** Pi's provider status, counting a `fireworks` default only when Nexus set it up. */
+export async function piNexusProviderStatus({ settingsPath, authPath, home = "" }) {
+  const settings = await readJsonFile(settingsPath);
+  const status = piProviderStatus(settings);
+  if (status !== "fireworks") return status;
+  return isNexusRouted(settings, await readJsonFile(authPath), await readPiProfile(home)) ? status : "default";
+}
+
+async function connectPi({ settingsPath, authPath, modelsPath, dataDir, home }, { provider, entry, model, scope, authEntry, modelsMode }) {
+  const settings = await readJsonFile(settingsPath);
+  const auth = await readJsonFile(authPath);
+  const profile = await readPiProfile(home);
+  const routed = isNexusRouted(settings, auth, profile);
+  // Snapshot only a config Nexus isn't already routing, so a re-`on` after a
+  // lost data dir can't capture Nexus's own state as the user's.
+  if (!routed) {
+    await snapshotOnce(dataDir, settingsPath, "settings");
+    await snapshotOnce(dataDir, authPath, "auth");
+    await snapshotOnce(dataDir, modelsPath, "models");
+  }
+  // The default to put back: the user's own, unless Pi still points at Nexus.
+  const previous = routed && NEXUS_PROVIDERS.includes(settings.defaultProvider)
+    ? (profile.previous ?? {})
+    : { defaultProvider: settings.defaultProvider, defaultModel: settings.defaultModel };
+  await writeJsonFile(settingsPath, withDefaults(settings, { defaultProvider: provider, defaultModel: model }, scope));
+  await markWritten(dataDir, settingsPath, "settings");
+  if (authEntry) {
+    await writeJsonFile(authPath, { ...auth, [PI_PROVIDER]: authEntry }, 0o600);
+    await markWritten(dataDir, authPath, "auth");
+  }
+  await writeJsonFile(modelsPath, withProvider(await readJsonFile(modelsPath), provider, entry), modelsMode);
+  await markWritten(dataDir, modelsPath, "models");
+  await writePiProfile(home, { previous });
+  await deleteLegacyFiles(dataDir);
 }
 
 export async function enablePiFireworks({
@@ -477,153 +465,61 @@ export async function enablePiFireworks({
   dataDir,
   home = "",
   apiKey,
-  apiKeyFromFlag = false,
   effectiveApiKey = "",
   modelId,
-  keyType = "fireworks",
   byokHeaders = {},
   telemetryHeaders = {},
   catalogModelIds = [],
-  catalogAvailable = false,
 }) {
-  if (!apiKey) {
+  // The resolved literal is baked into auth.json and re-baked by
+  // refreshPiGatewayKey on login/rotation.
+  const key = effectiveApiKey?.trim() || resolvePiApiKeyValue(apiKey ?? "");
+  if (!key?.trim()) {
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
-
-  const settingsSnapshot = await readRawIfExists(settingsPath);
-  const authSnapshot = await readRawIfExists(authPath);
-  const modelsSnapshot = await readRawIfExists(modelsPath);
-  const settings = await parseJsonFile(settingsPath, settingsSnapshot);
-  const auth = await parseJsonFile(authPath, authSnapshot);
-  const modelsConfig = await parseJsonFile(modelsPath, modelsSnapshot);
-
-  // Resolve the key for validation/model policy; the literal is baked into
-  // auth.json and re-baked by refreshPiGatewayKey on login/rotation.
-  const resolvedEffective = effectiveApiKey?.trim() || resolvePiApiKeyValue(apiKey);
-  if (!resolvedEffective?.trim()) {
-    throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
-  }
-  const resolvedKeyType = keyType === "fireworks"
-    ? detectApiKeyType(resolvedEffective)
-    : keyType;
-  const previousKey = resolvePiApiKeyValue(auth[PI_PROVIDER]?.key ?? "");
-  const previousKeyType = previousKey ? detectApiKeyType(previousKey) : "";
-  const currentModel = piProviderStatus(settings) === "fireworks"
-    ? settings.defaultModel
-    : "";
-  let effectiveModelId = modelId;
-  // Repeat `on` is commonly used to refresh a key or catalog. Preserve the
-  // user's active model when the credential type is unchanged; switching
-  // between standard Fireworks and Fire Pass still selects that key type's
-  // compatible default.
-  if (!effectiveModelId && currentModel && (!previousKeyType || previousKeyType === resolvedKeyType)) {
-    effectiveModelId = currentModel;
-  } else if (!effectiveModelId && resolvedKeyType === "firepass") {
-    effectiveModelId = DEFAULT_FIREPASS_MAIN_MODEL;
-  }
-  const resolvedModel = normalizeModelId(
-    effectiveModelId || defaultMainModel(),
-  );
-  const storedModel = fullFireworksResourceId(resolvedModel);
-
-  const settingsBackup = backupPath(dataDir, settingsPath, "settings");
-  const hasActiveBackup = (await readJsonIfExists(settingsBackup)).snapshot !== undefined;
-
-  // Snapshot only a genuinely pre-FireConnect config. `isFireconnectActive`
-  // covers BOTH Fireworks and Azure routing, so switching from Azure back to the
-  // gateway must not re-snapshot the Azure-managed state over the real backup.
-  if (!hasActiveBackup || !isFireconnectActive(settings)) {
-    await writePrivateBackup(dataDir, settingsBackup, settingsPath, settingsSnapshot);
-    if (authSnapshot.existed) {
-      await writePrivateBackup(dataDir, backupPath(dataDir, authPath, "auth"), authPath, authSnapshot);
-    }
-    await writePrivateBackup(dataDir, backupPath(dataDir, modelsPath, "models"), modelsPath, modelsSnapshot);
-  }
-
-  const apiKeyValue = resolvedEffective;
-  // Scope Pi's picker to FireConnect's router rows only, hiding Pi's built-in
-  // concrete Fireworks models (which surface because they share the fireworks
-  // provider auth), plus the active model when it sits outside that scope.
-  // `auto` is always in scope (standard keys) so the picker offers it no
-  // matter which model is active — Fire Pass has no auto entry to scope.
-  // See piEnabledModels.
-  const enabledModels = piEnabledModels(storedModel);
-  if (resolvedKeyType !== "firepass" && !enabledModels.includes(PI_AUTO_ENABLED_MODEL)) {
-    enabledModels.push(PI_AUTO_ENABLED_MODEL);
-  }
-  await writeJson(settingsPath, {
-    ...settings,
-    defaultProvider: PI_PROVIDER,
-    defaultModel: storedModel,
-    enabledModels,
+  const settings = await readJsonFile(settingsPath);
+  // A repeat `on` refreshes the key or catalog and keeps the active model —
+  // except a FireRouter selection carried over from an earlier `on`, which
+  // drops to `auto`. (A FireRouter `--model` is rejected at admission.)
+  const current = piProviderStatus(settings) === "fireworks" ? settings.defaultModel : "";
+  const model = fullFireworksResourceId(normalizeModelId(modelId || dropRetiredModelId(current || "") || defaultMainModel()));
+  const headers = { ...telemetryHeaders, ...byokHeaders };
+  await connectPi({ settingsPath, authPath, modelsPath, dataDir, home }, {
+    provider: PI_PROVIDER,
+    entry: piFireworksProvider(
+      [...catalogModelIds, model],
+      headers,
+      piKnownFireworksModelIds({ settingsPath }),
+    ),
+    model,
+    scope: PI_FIREWORKS_SCOPE,
+    authEntry: { type: "api_key", key, managedBy: PI_MANAGED_BY },
+    // FireRouter BYOK headers carry provider keys.
+    modelsMode: Object.keys(byokHeaders).length ? 0o600 : undefined,
   });
-  await writeAuthFile(authPath, {
-    ...auth,
-    [PI_PROVIDER]: { type: "api_key", key: apiKeyValue, managedBy: PI_MANAGED_BY },
-  });
-  const globalConfig = home ? await readGlobalConfig(home) : {};
-  const profile = globalConfig.harnesses?.[HARNESS.PI]?.profiles;
-  const initialized = profile?.catalogInitialized === true
-    || Array.isArray(profile?.managedModelIds);
-  const previousManagedIds = initialized
-    ? (Array.isArray(profile?.managedModelIds) ? profile.managedModelIds : [])
-    : [];
-  const catalogPlan = planPiCatalogUpdate(
-    resolvedModel,
-    catalogModelIds,
-    previousManagedIds,
-    {
-      modelRequested: Boolean(modelId),
-      catalogAvailable,
-      existingModelIds: (modelsConfig.providers?.[PI_PROVIDER]?.models ?? [])
-        .map((model) => model.id),
-      initialized,
-    },
-  );
-  const fireworksModels = mergePiFireworksRouterModels(
-    modelsConfig,
-    resolvedModel,
-    { ...telemetryHeaders, ...byokHeaders },
-    catalogModelIds,
-    previousManagedIds,
-    {
-      firepass: resolvedKeyType === "firepass",
-      modelRequested: Boolean(modelId),
-      catalogAvailable,
-      catalogPlan,
-    },
-  );
-  if (fireworksModels.providers?.[PI_AZURE_PROVIDER]) {
-    delete fireworksModels.providers[PI_AZURE_PROVIDER];
-  }
-  await writeJson(modelsPath, fireworksModels);
-  const managedModelIds = catalogPlan.managed;
-  await persistManagedModelIds(home, dataDir, managedModelIds, { initialized: true });
+  return { model, apiKeyMode: piAuthKeyMode(key) };
+}
 
+/**
+ * Rows for every id in our model list that Pi's own catalog lacks. When the
+ * installed Pi can't be read, only ids Pi can never know get a row.
+ * @param {string[]} modelIds
+ * @param {Record<string, string>} headers
+ * @param {Set<string> | null} piKnownIds
+ */
+function piFireworksProvider(modelIds, headers, piKnownIds) {
+  const ids = [...new Set(modelIds.filter(Boolean).map(fullFireworksResourceId))]
+    .filter((id) => isPiNexusOnlyModelId(id) || (piKnownIds && !piKnownIds.has(id)));
   return {
-    model: storedModel,
-    modelsAdded: managedModelIds,
-    apiKeyMode: piAuthKeyMode(apiKeyValue),
-    keyType: resolvedKeyType,
+    models: ids.map((id) => buildPiCustomFireworksModelEntry(id, resolveManagedDisplayName(id))),
+    ...(Object.keys(headers).length ? { headers } : {}),
   };
 }
 
 /**
- * Route Pi through Fireworks models served on Microsoft Foundry (Azure).
- * Registers a custom `openai-completions` provider in models.json pointed at
- * the Foundry resource's OpenAI-compatible base, with the Azure key (literal
- * via --api-key, or the `$AZURE_API_KEY` interpolation) and `authHeader: true`.
- * The key lives in models.json (not auth.json), so auth.json is never touched.
- *
- * @param {{
- *   settingsPath: string,
- *   modelsPath: string,
- *   dataDir: string,
- *   apiKey: string,
- *   apiKeyFromFlag?: boolean,
- *   baseUrl: string,
- *   modelId?: string,
- * }} args
+ * Route Pi through Fireworks models served on Microsoft Foundry (Azure): a
+ * custom `openai-completions` provider pointed at the Foundry resource, with
+ * the Azure key (literal via --api-key, or the `$AZURE_API_KEY` reference).
  */
 export async function enablePiAzure({
   settingsPath,
@@ -646,258 +542,116 @@ export async function enablePiAzure({
   if (!effectiveApiKey) {
     throw new Error(MISSING_AZURE_API_KEY_MESSAGE);
   }
-
-  const settingsSnapshot = await readRawIfExists(settingsPath);
-  const modelsSnapshot = await readRawIfExists(modelsPath);
-  const settings = await parseJsonFile(settingsPath, settingsSnapshot);
-  const modelsConfig = await parseJsonFile(modelsPath, modelsSnapshot);
-
-  const resolvedModel = modelId || piAzureCurrentModelId(settings) || DEFAULT_AZURE_MODEL;
-
-  const settingsBackup = backupPath(dataDir, settingsPath, "settings");
-  const hasActiveBackup = (await readJsonIfExists(settingsBackup)).snapshot !== undefined;
-  // Snapshot only a genuinely pre-FireConnect config — a re-`on` or a switch
-  // from the Fireworks gateway must not capture a managed config as the backup.
-  if (!hasActiveBackup || !isFireconnectActive(settings)) {
-    await writePrivateBackup(dataDir, settingsBackup, settingsPath, settingsSnapshot);
-    await writePrivateBackup(dataDir, backupPath(dataDir, modelsPath, "models"), modelsPath, modelsSnapshot);
-  }
-
-  const apiKeyValue = apiKeyFromFlag ? apiKey : PI_AZURE_API_KEY_ENV_REF;
-  const azureSettings = {
-    ...settings,
-    defaultProvider: PI_AZURE_PROVIDER,
-    defaultModel: resolvedModel,
-  };
-  // Azure mode is unscaffolded (no picker scope). Drop a stale Fireworks
-  // enabledModels so switching Fireworks → Azure doesn't leave the picker scoped
-  // to Fireworks routers (which have no auth in Azure mode → empty picker) and
-  // hide the Azure deployment.
-  delete azureSettings.enabledModels;
-  await writeJson(settingsPath, azureSettings);
-  // Drop FireConnect-managed Fireworks gateway router models when switching to
-  // Foundry, so only one managed provider remains (matches OpenCode/Codex).
-  const azureModels = stripManagedFireworksModels(
-    mergePiAzureProvider(modelsConfig, {
+  const model = modelId || piAzureCurrentModelId(await readJsonFile(settingsPath)) || DEFAULT_AZURE_MODEL;
+  await connectPi({
+    settingsPath, authPath: authPath || piAuthPath("", "", settingsPath), modelsPath, dataDir, home,
+  }, {
+    provider: PI_AZURE_PROVIDER,
+    entry: {
+      name: AZURE_PROVIDER_LABEL,
       baseUrl: normalizedBaseUrl,
-      apiKey: apiKeyValue,
-      modelId: resolvedModel,
-    }),
-  );
-  await writeJson(modelsPath, azureModels, { mode: apiKeyFromFlag ? 0o600 : undefined });
-  await persistManagedModelIds(home, dataDir, []);
-
+      api: "openai-completions",
+      authHeader: true,
+      apiKey: apiKeyFromFlag ? apiKey : PI_AZURE_API_KEY_ENV_REF,
+      models: [buildPiAzureModelEntry(model)],
+    },
+    model,
+    scope: PI_AZURE_SCOPE,
+    modelsMode: apiKeyFromFlag ? 0o600 : undefined,
+  });
   return {
-    model: resolvedModel,
+    model,
     baseUrl: normalizedBaseUrl,
     apiKeyMode: apiKeyFromFlag ? "literal" : "env-reference",
   };
 }
 
-async function restoreBackedUpFile(filePath, backupPath, label) {
-  const backup = await readJsonIfExists(backupPath);
-  if (backup.snapshot !== undefined
-    && backup.filePath !== undefined
-    && backup.filePath !== path.resolve(filePath)) {
-    throw new Error(`Backup was taken for ${backup.filePath}, not ${filePath}; refusing to restore ${label}.`);
+export async function disablePiFireworks({ settingsPath, authPath, modelsPath, dataDir, home = "" }) {
+  const profile = await readPiProfile(home);
+  const settings = await readJsonFile(settingsPath);
+  const auth = await readJsonFile(authPath);
+  // A Pi the user pointed at Fireworks themselves isn't Nexus's to undo.
+  const hasSnapshot = Boolean(await readSnapshot(dataDir, settingsPath, "settings"));
+  if (!hasSnapshot && !isNexusRouted(settings, auth, profile)) {
+    return { changed: false };
   }
-  if (backup.snapshot !== undefined) {
-    if (label === "auth" && !backup.snapshot.existed) {
-      await unlink(backupPath).catch(() => {});
-      return false;
+  const previous = profile.previous ?? {};
+  await restoreFile(dataDir, settingsPath, "settings", (current, before) => {
+    if (!NEXUS_PROVIDERS.includes(current.defaultProvider)) return withDefaults(current, current);
+    return withDefaults(current, hasSnapshot ? before : previous);
+  });
+  await restoreFile(dataDir, authPath, "auth", (current, before) => {
+    if (!isNexusAuth(current)) return current;
+    const { [PI_PROVIDER]: _nexus, ...rest } = current;
+    return before[PI_PROVIDER] ? { ...rest, [PI_PROVIDER]: before[PI_PROVIDER] } : rest;
+  }, 0o600);
+  await restoreFile(dataDir, modelsPath, "models", (current, before) => {
+    let next = withProvider(current);
+    for (const id of NEXUS_PROVIDERS) {
+      if (before.providers?.[id]) next = { ...next, providers: { ...next.providers, [id]: before.providers[id] } };
     }
-    await restoreSnapshot(filePath, backup.snapshot);
-    await unlink(backupPath).catch(() => {});
-    return true;
-  }
-  return false;
-}
-
-async function stripManagedSettings(settingsPath) {
-  if (!(await readRawIfExists(settingsPath)).existed) {
-    return false;
-  }
-  const settings = await readJsonIfExists(settingsPath);
-  const next = { ...settings };
-  let changed = false;
-  const wasAzure = next.defaultProvider === PI_AZURE_PROVIDER;
-  const wasFireworks = next.defaultProvider === PI_PROVIDER;
-  if (wasFireworks || wasAzure) {
-    delete next.defaultProvider;
-    changed = true;
-  }
-  // Both direct Fireworks short IDs and Azure deployment names are opaque, so
-  // clear defaultModel whenever FireConnect owned the provider.
-  if (typeof next.defaultModel === "string"
-    && (wasFireworks || wasAzure)) {
-    delete next.defaultModel;
-    changed = true;
-  }
-  // enabledModels is FireConnect's picker scope (routers only). Clear it on off
-  // so Pi's picker returns to its default model set. The backup-restore path
-  // already restores the pre-FireConnect settings; this handles the no-backup
-  // strip path.
-  if (Array.isArray(next.enabledModels) && (wasFireworks || wasAzure)) {
-    delete next.enabledModels;
-    changed = true;
-  }
-  if (changed) {
-    await writeJson(settingsPath, next);
-  }
-  return changed;
-}
-
-async function stripManagedAzureModels(modelsPath) {
-  if (!(await readRawIfExists(modelsPath)).existed) {
-    return false;
-  }
-  const config = await readJsonIfExists(modelsPath);
-  if (!config.providers?.[PI_AZURE_PROVIDER]) {
-    return false;
-  }
-  const next = { ...config, providers: { ...config.providers } };
-  delete next.providers[PI_AZURE_PROVIDER];
-  if (Object.keys(next.providers).length === 0) {
-    await unlink(modelsPath).catch((error) => {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    });
-    return true;
-  }
-  await writeJson(modelsPath, next);
-  return true;
-}
-
-async function stripManagedModels(modelsPath, managedModelIds) {
-  if (!(await readRawIfExists(modelsPath)).existed) {
-    return false;
-  }
-  const config = await readJsonIfExists(modelsPath);
-  const fireworks = config.providers?.[PI_PROVIDER];
-  const { provider, changed, dropProvider } = stripManagedFireworksProviderConfig(
-    fireworks,
-    managedModelIds,
-  );
-  if (!changed) {
-    return false;
-  }
-
-  const next = { ...config, providers: { ...config.providers } };
-  if (dropProvider) {
-    delete next.providers[PI_PROVIDER];
-    if (Object.keys(next.providers).length === 0) {
-      await unlink(modelsPath).catch((error) => {
-        if (error.code !== "ENOENT") {
-          throw error;
-        }
-      });
-      return true;
-    }
-  } else {
-    next.providers[PI_PROVIDER] = provider;
-  }
-  await writeJson(modelsPath, next);
-  return true;
-}
-
-async function stripManagedAuth(authPath) {
-  if (!(await readRawIfExists(authPath)).existed) {
-    return false;
-  }
-  const auth = await readJsonIfExists(authPath);
-  if (!isFireconnectManagedAuth(auth)) {
-    return false;
-  }
-  const next = { ...auth };
-  delete next[PI_PROVIDER];
-  if (Object.keys(next).length === 0) {
-    await unlink(authPath).catch((error) => {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    });
-  } else {
-    await writeAuthFile(authPath, next);
-  }
-  return true;
+    return next;
+  });
+  await writePiProfile(home, {});
+  await deleteLegacyFiles(dataDir);
+  return { changed: true };
 }
 
 /**
- * @param {{
- *   settingsPath: string,
- *   authPath: string,
- *   modelsPath: string,
- *   dataDir: string,
- *   home?: string,
- *   wasEnabled?: boolean,
- * }} args
- * `wasEnabled` is the engine's flag (global config cross-checked against
- * providerStatus); it decides restore-vs-strip alongside backup presence.
+ * Recompute an enabled Pi's Nexus rows from the cached model list and what
+ * the installed Pi knows now, without network. Runs on upgrade, which also
+ * moves configs from releases through 0.10.0 to this layout: a model Pi has
+ * since picked up from pi.dev loses its Nexus row, and a model new to our
+ * list gains one.
+ * @returns {Promise<boolean>} whether Pi's config changed
  */
-export async function disablePiFireworks({ settingsPath, authPath, modelsPath, dataDir, home = "", wasEnabled = false }) {
-  const managedModelIds = await readManagedModelIds(home, dataDir);
-  const settingsBackup = backupPath(dataDir, settingsPath, "settings");
-  const hasBackup = (await readJsonIfExists(settingsBackup)).snapshot !== undefined;
-
-  if (!wasEnabled && !hasBackup) {
-    const auth = await readJsonIfExists(authPath);
-    const settings = await readJsonIfExists(settingsPath);
-    const hasManagedAuth = isFireconnectManagedAuth(auth);
-    if (!hasManagedAuth) {
-      const profiles = home
-        ? (await readGlobalConfig(home)).harnesses[HARNESS.PI]?.profiles
-        : undefined;
-      const hasFireconnectState = (Array.isArray(profiles?.managedModelIds)
-          && profiles.managedModelIds.length > 0)
-        || (await readRawIfExists(legacyStatePath(dataDir))).existed;
-      if (!hasFireconnectState || !isFireconnectActive(settings)) {
-        return { changed: false };
-      }
-    }
-    let changed = false;
-    changed = (await stripManagedSettings(settingsPath)) || changed;
-    if (hasManagedAuth) {
-      changed = (await stripManagedAuth(authPath)) || changed;
-    }
-    changed = (await stripManagedModels(modelsPath, managedModelIds)) || changed;
-    changed = (await stripManagedAzureModels(modelsPath)) || changed;
-    if (!changed) {
-      return { changed: false };
-    }
-    await persistManagedModelIds(home, dataDir, []);
-    return { changed: true };
+export async function refreshPiCatalog({ settingsPath, authPath, modelsPath, dataDir, home = "" }) {
+  const settings = await readJsonFile(settingsPath);
+  if (settings.defaultProvider !== PI_PROVIDER
+    || !isNexusRouted(settings, await readJsonFile(authPath), await readPiProfile(home))) {
+    return false;
   }
-
-  const restoredSettings = await restoreBackedUpFile(settingsPath, settingsBackup, "settings");
-  let changed = restoredSettings;
-  if (!restoredSettings && wasEnabled) {
-    changed = (await stripManagedSettings(settingsPath)) || changed;
-  }
-
-  const restoredAuth = await restoreBackedUpFile(
-    authPath,
-    backupPath(dataDir, authPath, "auth"),
-    "auth",
+  const models = await readJsonFile(modelsPath);
+  const current = models.providers?.[PI_PROVIDER];
+  // Without a cached catalog, our list is the rows Nexus already wrote: the
+  // ones Pi still lacks stay, the ones Pi now carries go. FireRouter rows
+  // never stay — they are retired, catalog or no catalog.
+  const snapshot = getServerlessCatalogSnapshot();
+  const ourIds = snapshot?.entries?.length
+    ? registerableModelIds(catalogWithAutomaticAuto(
+      snapshot.entries.filter(
+        (entry) => !isRetiredModelId(entry?.shortId ?? "") && !isRetiredModelId(entry?.id ?? ""),
+      ),
+    ))
+    : (current?.models ?? [])
+      .map((model) => model.id)
+      .filter((id) => !isRetiredModelId(String(id ?? "")));
+  // An upgrade also drops a FireRouter default to the `auto` mix, and the
+  // BYOK provider-key headers that only ever served FireRouter selections.
+  const model = typeof settings.defaultModel === "string"
+    ? dropRetiredModelId(settings.defaultModel)
+    : settings.defaultModel;
+  const headers = Object.fromEntries(
+    Object.entries(current?.headers ?? {}).filter(
+      ([name]) => !["x-anthropic-api-key", "x-openai-api-key"].includes(name.toLowerCase()),
+    ),
   );
-  if (restoredAuth) {
-    changed = true;
-  } else {
-    changed = (await stripManagedAuth(authPath)) || changed;
-  }
-
-  const restoredModels = await restoreBackedUpFile(
-    modelsPath,
-    backupPath(dataDir, modelsPath, "models"),
-    "models",
+  const entry = piFireworksProvider(
+    [...ourIds, model],
+    headers,
+    piKnownFireworksModelIds({ settingsPath }),
   );
-  if (restoredModels) {
-    changed = true;
-  } else {
-    changed = (await stripManagedModels(modelsPath, managedModelIds)) || changed;
-    changed = (await stripManagedAzureModels(modelsPath)) || changed;
+  const scopeChanged = JSON.stringify(withDefaults(settings, settings, PI_FIREWORKS_SCOPE)) !== JSON.stringify(settings);
+  const legacyFiles = (await readdir(dataDir).catch(() => [])).some((name) => LEGACY_FILE.test(name));
+  if (JSON.stringify(entry) === JSON.stringify(current) && !scopeChanged && !legacyFiles
+    && model === settings.defaultModel) {
+    return false;
   }
-
-  await persistManagedModelIds(home, dataDir, []);
-  return { changed };
+  await connectPi({ settingsPath, authPath, modelsPath, dataDir, home }, {
+    provider: PI_PROVIDER,
+    entry,
+    model,
+    scope: PI_FIREWORKS_SCOPE,
+  });
+  return true;
 }

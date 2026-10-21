@@ -25,10 +25,7 @@ import {
 import {
   loadRegisterableModels,
 } from "../../fireworks/models.mjs";
-import {
-  detectApiKeyType,
-  isFireworksKey,
-} from "../../keys/key-type.mjs";
+import { isFireworksKey } from "../../keys/key-type.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import {
   ensureHomeForHarness,
@@ -112,7 +109,6 @@ export default defineHarnessProfile({
     paths,
     apiKeyRef,
     effectiveKey,
-    keyType,
     modelId,
     byokHeaders,
     telemetryHeaders,
@@ -131,7 +127,6 @@ export default defineHarnessProfile({
       apiKey: apiKeyRef,
       effectiveApiKey: effectiveKey,
       modelId,
-      keyType,
       byokHeaders,
       telemetryHeaders,
       catalogModelIds,
@@ -163,10 +158,6 @@ export default defineHarnessProfile({
     const azure = config.provider?.[OPENCODE_AZURE_PROVIDER_ID] ?? null;
     const provider = opencodeProviderStatus(config);
     const storedRef = provider === "azure" ? opencodeAzureStoredApiKeyRef(config) : opencodeStoredApiKeyRef(config);
-    const effectiveKey = provider === "azure"
-      ? effectiveAzureApiKey(storedRef)
-      : (effectiveOpencodeApiKey(storedRef) || process.env.FIREWORKS_API_KEY || "");
-    const keyType = detectApiKeyType(effectiveKey);
     const payload = {
       harness: HARNESS.OPENCODE,
       provider,
@@ -177,7 +168,7 @@ export default defineHarnessProfile({
       defaults: {
         main: provider === "azure"
           ? DEFAULT_AZURE_MODEL
-          : defaultMainModel(keyType),
+          : defaultMainModel(),
       },
       current: { main: model },
     };

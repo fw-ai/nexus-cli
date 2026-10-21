@@ -198,7 +198,7 @@ describe("resolveAzureOnApiKey", () => {
       /cannot be a Fireworks key/,
     );
     await assert.rejects(
-      () => resolveAzureOnApiKey({ getExistingKey: async () => "fpk_wrong" }),
+      () => resolveAzureOnApiKey({ getExistingKey: async () => "fw_wrong" }),
       /cannot be a Fireworks key/,
     );
     await assert.rejects(

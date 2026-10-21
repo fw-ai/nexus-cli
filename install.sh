@@ -5,13 +5,19 @@ BASE_URL="${FIREWORKS_BASE_URL:-https://api.fireworks.ai/inference}"
 # When install.sh is piped (curl | bash), BASH_SOURCE[0] is unset; bootstrap from git.
 if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-  CLI="${SCRIPT_DIR}/packages/setup-cli/bin/fireconnect.mjs"
+  CLI="${SCRIPT_DIR}/packages/setup-cli/bin/nexus.mjs"
 else
   SCRIPT_DIR=""
   CLI=""
 fi
-DEFAULT_SOURCE="https://github.com/fw-ai/fireconnect.git"
-SOURCE="${FIRECONNECT_SOURCE:-${DEFAULT_SOURCE}}"
+# Honor pre-rename FIRECONNECT_* variables under their NEXUS_* names.
+while IFS= read -r legacy_var; do
+  current_var="NEXUS_${legacy_var#FIRECONNECT_}"
+  [[ -n "${!current_var+x}" ]] || export "${current_var}=${!legacy_var}"
+done < <(compgen -e | grep '^FIRECONNECT_' || true)
+
+DEFAULT_SOURCE="https://github.com/fw-ai/nexus-cli.git"
+SOURCE="${NEXUS_SOURCE:-${DEFAULT_SOURCE}}"
 MIN_NODE_MAJOR=18
 CLAUDE_SETTINGS_RESTORED=0
 INSTALL_NOTES=()
@@ -61,7 +67,7 @@ ensure_node_runtime() {
   # Windows (Git Bash / MSYS / Cygwin): Node is frequently installed but not on
   # the PATH the shell inherits (e.g. C:\Program Files\nodejs). Probe the common
   # install location and add it to PATH for this session before giving up, so
-  # the installer doesn't dead-end when Node is present. (gh fw-ai/fireconnect#11)
+  # the installer doesn't dead-end when Node is present. (gh fw-ai/nexus-cli#11)
   case "$(uname -s)" in
     MINGW*|MSYS*|CYGWIN*)
       if ! command -v node >/dev/null 2>&1; then
@@ -100,7 +106,7 @@ ensure_node_runtime() {
   if [[ "$(uname -s)" == "Darwin" ]] && command -v brew >/dev/null 2>&1; then
     # Prompt from the controlling terminal so this works under `curl … | bash`,
     # where stdin is the script stream (a plain `read -p` prompt never shows and
-    # would consume the next line of the script). (gh fw-ai/fireconnect#11)
+    # would consume the next line of the script). (gh fw-ai/nexus-cli#11)
     if [[ -r /dev/tty ]]; then
       read -r -p "Install Node.js with Homebrew now? [y/N] " install_node </dev/tty
     else
@@ -137,25 +143,31 @@ ensure_node_runtime() {
   fi
 }
 
-existing_fireconnect_cli() {
-  local home_launcher="${HOME}/.local/bin/fireconnect"
+# An existing install may predate the rename and only have `fireconnect`.
+existing_cli() {
+  local home_launcher path_launcher
+  home_launcher="${HOME}/.local/bin/nexus"
+  if [[ -e "${home_launcher}" ]] && grep -qE 'packages[\\/]setup-cli[\\/]bin[\\/](nexus|fireconnect)\.mjs' "${home_launcher}" 2>/dev/null; then
+    printf '%s\n' "${home_launcher}"
+    return
+  fi
+  home_launcher="${HOME}/.local/bin/fireconnect"
   if [[ -e "${home_launcher}" || -L "${home_launcher}" ]]; then
     printf '%s\n' "${home_launcher}"
     return
   fi
 
-  local path_launcher
   path_launcher="$(command -v fireconnect 2>/dev/null || true)"
   if [[ -n "${path_launcher}" ]]; then
     printf '%s\n' "${path_launcher}"
   fi
 }
 
-# Print the durable-install FireConnect version (empty when unknown).
+# Print the durable-install Nexus version (empty when unknown).
 # Keep the threshold in sync with CLAUDE_OFF_UPGRADE_BEFORE_VERSION in
 # packages/setup-cli/lib/system/upgrade.mjs.
 installed_fireconnect_version() {
-  local pkg="${HOME}/.fireconnect/cli/packages/setup-cli/package.json"
+  local pkg="${HOME}/.nexus/cli/packages/setup-cli/package.json"
   if [[ ! -f "${pkg}" ]]; then
     return 0
   fi
@@ -176,8 +188,13 @@ NODE
 # Exit 0 when Claude-off preflight is still required (installed < 0.9.0 or unknown).
 # From FireConnect 0.9.0 on, harness settings are preserved across upgrade.
 needs_claude_off_before_upgrade() {
+  version_below "${1:-}" "0.9.0"
+}
+
+# Exit 0 when version $1 is below $2, or unknown.
+version_below() {
   local version="${1:-}"
-  node - "${version}" "0.9.0" <<'NODE'
+  node - "${version}" "$2" <<'NODE'
 const raw = (value) => String(value ?? "").trim().replace(/^v/i, "");
 const parts = (value) => raw(value).split(".").slice(0, 3).map((part) => Number.parseInt(part, 10) || 0);
 const left = raw(process.argv[2]);
@@ -219,7 +236,7 @@ function readJson(relativePath) {
   }
 }
 
-const globalConfig = readJson(".fireconnect/config.json");
+const globalConfig = readJson(".nexus/config.json");
 if (globalConfig?.harnesses?.claude?.enabled === true) {
   process.exit(0);
 }
@@ -236,8 +253,8 @@ if (hostname !== "fireworks.ai" && !hostname.endsWith(".fireworks.ai")) {
   process.exit(1);
 }
 
-const backup = readJson(".fireconnect/claude/provider-backup.json");
-const state = readJson(".fireconnect/claude/provider-state.json");
+const backup = readJson(".nexus/claude/provider-backup.json");
+const state = readJson(".nexus/claude/provider-state.json");
 const headers = typeof env.ANTHROPIC_CUSTOM_HEADERS === "string"
   ? env.ANTHROPIC_CUSTOM_HEADERS.split("\n").map((line) => {
     const colon = line.indexOf(":");
@@ -255,7 +272,7 @@ const hasTelemetry = headers.some(({ name, value }) => [
   "x-title",
   "fireworks-use-case",
   "http-referer",
-].includes(name) || (name === "user-agent" && /^fireconnect\//i.test(value)));
+].includes(name) || (name === "user-agent" && /^(fireconnect|nexus)\//i.test(value)));
 const mappingKeys = [
   "ANTHROPIC_MODEL",
   "ANTHROPIC_DEFAULT_OPUS_MODEL",
@@ -304,7 +321,7 @@ confirm_claude_restore() {
   local response
   if ! exec 3<>/dev/tty; then
     echo "Claude Code must be disconnected before upgrading, but no interactive terminal is available." >&2
-    echo "Rerun in a terminal, or set FIRECONNECT_AUTO_OFF_CLAUDE=1 for automated installation." >&2
+    echo "Rerun in a terminal, or set NEXUS_AUTO_OFF_CLAUDE=1 for automated installation." >&2
     return 1
   fi
 
@@ -327,7 +344,7 @@ confirm_claude_restore() {
 
 preflight_existing_install() {
   local installed_cli
-  installed_cli="$(existing_fireconnect_cli)"
+  installed_cli="$(existing_cli)"
   if [[ -z "${installed_cli}" ]]; then
     return
   fi
@@ -354,12 +371,17 @@ preflight_existing_install() {
     return 1
   fi
 
-  if [[ "${FIRECONNECT_AUTO_OFF_CLAUDE:-}" != "1" ]]; then
+  if [[ "${NEXUS_AUTO_OFF_CLAUDE:-}" != "1" ]]; then
     confirm_claude_restore
   fi
 
+  # Releases before 0.4.0 (they report 0.2.0) only know the top-level `off`.
+  local off_command=(claude off)
+  if [[ -n "${installed_version}" ]] && version_below "${installed_version}" "0.4.0"; then
+    off_command=(off)
+  fi
   echo "Restoring your original Claude Code settings before upgrading..."
-  if ! "${installed_cli}" claude off; then
+  if ! "${installed_cli}" "${off_command[@]}"; then
     echo "Installation stopped because the existing FireConnect CLI could not restore Claude Code settings." >&2
     return 1
   fi
@@ -384,7 +406,7 @@ print_claude_restore_summary() {
   fi
   echo
   echo "Your original Claude Code settings were restored before the upgrade."
-  echo "Reconnect Claude Code through FireConnect: fireconnect claude"
+  echo "Reconnect Claude Code through Nexus: nexus claude"
 }
 
 ensure_durable_source() {
@@ -392,22 +414,27 @@ ensure_durable_source() {
     return
   fi
 
-  local install_dir="${HOME}/.fireconnect/cli"
-  install_progress "Downloading FireConnect..."
+  local install_dir="${HOME}/.nexus/cli"
+  install_progress "Downloading Nexus..."
 
   if ! command -v git >/dev/null 2>&1; then
     echo "Missing required command: git" >&2
     exit 1
   fi
-  rm -rf "${install_dir}"
+  # Clone beside the install and swap it in only once it is complete, so a
+  # failed download leaves the working CLI (and its launcher) intact.
+  local staging="${install_dir}.download"
+  rm -rf "${staging}"
   mkdir -p "$(dirname "${install_dir}")"
-  git clone --quiet --depth 1 "${SOURCE}" "${install_dir}"
-  CLI="${install_dir}/packages/setup-cli/bin/fireconnect.mjs"
-
-  if [[ ! -f "${CLI}" ]]; then
-    echo "FireConnect CLI not found after download." >&2
+  if ! git clone --quiet --depth 1 "${SOURCE}" "${staging}" \
+    || [[ ! -f "${staging}/packages/setup-cli/bin/nexus.mjs" ]]; then
+    rm -rf "${staging}"
+    echo "Couldn't download Nexus from ${SOURCE}; your existing install was left in place." >&2
     exit 1
   fi
+  rm -rf "${install_dir}"
+  mv "${staging}" "${install_dir}"
+  CLI="${install_dir}/packages/setup-cli/bin/nexus.mjs"
 }
 
 # Install runtime dependencies (cross-keychain, used for secure API-key storage).
@@ -415,27 +442,27 @@ ensure_durable_source() {
 # `configure`/`<harness> on --api-key` aborts with "OS keychain is unavailable."
 # Run on every install — including re-installs over an existing CLI — so a
 # broken (dep-missing) install is repaired by re-running the installer, not just
-# by `fireconnect upgrade`. Skips dev/peer deps to keep the install lean.
+# by `nexus update`. Skips dev/peer deps to keep the install lean.
 ensure_dependencies() {
   local setup_dir
   setup_dir="$(cd "$(dirname "${CLI}")/.." && pwd)"
   if [[ ! -f "${setup_dir}/package.json" ]]; then
-    echo "FireConnect source not found; cannot install dependencies." >&2
+    echo "Nexus source not found; cannot install dependencies." >&2
     exit 1
   fi
   install_progress "Installing dependencies..."
   local npm_loglevel=error
   local npm_stdout="/dev/null"
-  if [[ "${FIRECONNECT_INSTALL_VERBOSE:-}" == "1" ]]; then
+  if [[ "${NEXUS_INSTALL_VERBOSE:-}" == "1" ]]; then
     npm_loglevel=notice
     npm_stdout="/dev/tty"
   fi
   # npm's "added N packages in Xms" summary prints to stdout regardless of
   # --loglevel, which clutters the install output with a stray line between our
   # `→` steps. Discard stdout (errors still surface on stderr) unless verbose.
-  if ! (cd "${setup_dir}" && FIRECONNECT_SKIP_POSTINSTALL_FINALIZE=1 \
+  if ! (cd "${setup_dir}" && NEXUS_SKIP_POSTINSTALL_FINALIZE=1 \
     npm install --omit=dev --no-fund --no-audit --loglevel="${npm_loglevel}" 1>"${npm_stdout}"); then
-    echo "Failed to install FireConnect dependencies." >&2
+    echo "Failed to install Nexus dependencies." >&2
     exit 1
   fi
 }
@@ -459,7 +486,7 @@ add_bin_dir_to_path() {
     touch "${shell_config}"
     if ! grep -qxF "${path_entry}" "${shell_config}" 2>/dev/null; then
       echo "${path_entry}" >> "${shell_config}"
-      install_note "Added ${bin_dir} to PATH in ${shell_config} (open a new terminal if fireconnect is not found)."
+      install_note "Added ${bin_dir} to PATH in ${shell_config} (open a new terminal if nexus is not found)."
     fi
   fi
 }
@@ -484,25 +511,27 @@ stable_node_bin() {
 
 install_cli_launcher() {
   local bin_dir="${HOME}/.local/bin"
-  local launcher_path="${bin_dir}/fireconnect"
+  local launcher_path="${bin_dir}/nexus"
 
   mkdir -p "${bin_dir}"
 
   # Resolve an absolute Node path at install time and bake it into the launcher,
   # with a PATH fallback. This keeps the launcher (and the shell env hook's
-  # `fireconnect key export`) working in non-interactive shells where `node`
+  # `nexus key export`) working in non-interactive shells where `node`
   # is not on PATH — common in sandboxes, containers, and CI.
   local node_bin
   node_bin="$(stable_node_bin "$(command -v node 2>/dev/null || true)")"
 
+  rm -f "${launcher_path}"
+
   cat > "${launcher_path}" <<EOF
 #!/usr/bin/env bash
-# FireConnect launcher. Uses the Node binary discovered at install time, falling
+# Nexus launcher. Uses the Node binary discovered at install time, falling
 # back to PATH lookup, so the shell env hook works without \`node\` on PATH.
-NODE_BIN="\${FIRECONNECT_NODE_BIN:-${node_bin}}"
+NODE_BIN="\${NEXUS_NODE_BIN:-${node_bin}}"
 [ -x "\$NODE_BIN" ] || NODE_BIN="\$(command -v node 2>/dev/null)"
 if [ -z "\$NODE_BIN" ] || ! [ -x "\$NODE_BIN" ]; then
-  echo "fireconnect: Node.js was not found. Install Node and re-run the FireConnect installer." >&2
+  echo "nexus: Node.js was not found. Install Node and re-run the Nexus installer." >&2
   exit 1
 fi
 # Suppress Node's ExperimentalWarning for node:sqlite (Node >= 22).
@@ -519,9 +548,51 @@ EOF
   add_bin_dir_to_path
 }
 
+# Exit 0 when $1 exists and isn't a launcher this CLI wrote. Every launcher
+# from every release runs .../packages/setup-cli/bin/{nexus,fireconnect}.mjs.
+foreign_launcher() {
+  [[ -e "$1" || -L "$1" ]] \
+    && ! grep -Eq 'packages[\\/]setup-cli[\\/]bin[\\/](nexus|fireconnect)\.mjs' "$1" 2>/dev/null
+}
+
+# Exit 0 when ~/.nexus holds another program's files. Nexus is recognized by
+# files only it writes (same rule as the CLI's isNexusDataDir).
+foreign_data_dir() {
+  [[ -e "${HOME}/.nexus" ]] || return 1
+  node - "${HOME}/.nexus" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const dir = process.argv[2];
+let entries = [];
+try { entries = fs.readdirSync(dir); } catch { process.exit(0); }
+if (entries.length === 0 || entries.includes("key-storage.json") || entries.includes("rename-complete")
+  || fs.existsSync(path.join(dir, "cli", "packages", "setup-cli", "bin", "nexus.mjs"))) process.exit(1);
+try {
+  const config = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
+  if (config && typeof config === "object" && typeof config.harnesses === "object") process.exit(1);
+} catch {}
+process.exit(0);
+NODE
+}
+
+# Stop before changing anything if another program owns a name Nexus needs.
+check_names_are_ours() {
+  local file
+  for file in "${HOME}/.local/bin/nexus" "${HOME}/.local/bin/nexus.cmd"; do
+    if foreign_launcher "${file}"; then
+      echo "${file} belongs to another program. Rename or remove it, then rerun the installer." >&2
+      return 1
+    fi
+  done
+  if foreign_data_dir; then
+    echo "~/.nexus belongs to another program. Rename or remove it, then rerun the installer." >&2
+    return 1
+  fi
+}
+
 # On Windows (Git Bash / MSYS / Cygwin) the bash launcher above only works from
-# a POSIX shell. Also drop a `fireconnect.cmd` shim so native cmd.exe/PowerShell
-# can run `fireconnect`. Best-effort and Windows-only: it needs `cygpath` to
+# a POSIX shell. Also drop a `nexus.cmd` shim so native cmd.exe/PowerShell
+# can run `nexus`. Best-effort and Windows-only: it needs `cygpath` to
 # translate the Unix node/CLI paths to Windows paths, and silently no-ops
 # otherwise so it can never break a macOS/Linux install.
 install_windows_cmd_shim() {
@@ -533,7 +604,7 @@ install_windows_cmd_shim() {
   command -v cygpath >/dev/null 2>&1 || return 0
 
   local bin_dir="${HOME}/.local/bin"
-  local cmd_path="${bin_dir}/fireconnect.cmd"
+  local cmd_path="${bin_dir}/nexus.cmd"
   local node_src node_win cli_win node_flags node_major_for_shim
   node_src="${node_bin:-$(command -v node 2>/dev/null || true)}"
   [[ -n "${node_src}" ]] || return 0
@@ -549,6 +620,7 @@ install_windows_cmd_shim() {
   fi
 
   mkdir -p "${bin_dir}"
+  rm -f "${cmd_path}"
   if [[ -n "${node_flags}" ]]; then
     cat > "${cmd_path}" <<EOF
 @echo off
@@ -563,8 +635,41 @@ EOF
   install_note "Wrote a Windows launcher shim at ${cmd_path}."
 }
 
+# Move FireConnect's ~/.fireconnect to ~/.nexus and leave ~/.fireconnect as a
+# link to it, so the old launcher and anything else holding that path keep
+# working. An existing ~/.nexus (already checked to be ours) is left for the
+# CLI's finalize step, which keeps it and sets the old directory aside.
+migrate_legacy_data_dir() {
+  local legacy="${HOME}/.fireconnect" target="${HOME}/.nexus"
+  [[ -d "${legacy}" ]] || return 0
+  if [[ -L "${target}" && "$(cd "${target}" 2>/dev/null && pwd -P)" == "$(cd "${legacy}" && pwd -P)" ]]; then
+    rm -f "${target}"
+  fi
+  if [[ -e "${target}" || -L "${target}" ]]; then
+    return 0
+  fi
+  if ! mv "${legacy}" "${target}"; then
+    echo "Couldn't move ~/.fireconnect to ~/.nexus. Quit any running harnesses, then rerun the installer." >&2
+    return 1
+  fi
+  # With -e, process.argv[1] is the first argument (no script path).
+  if node -e '
+const fs = require("node:fs");
+const path = require("node:path");
+const [legacy, target] = process.argv.slice(1);
+if (process.platform === "win32") fs.symlinkSync(target, legacy, "junction");
+else fs.symlinkSync(path.basename(target), legacy, "dir");
+' "${legacy}" "${target}" 2>/dev/null; then
+    install_note "Moved ~/.fireconnect to ~/.nexus."
+  else
+    install_note "Moved ~/.fireconnect to ~/.nexus, but couldn't leave a link at ~/.fireconnect. Restart any open harness sessions."
+  fi
+}
+
 main() {
   ensure_node_runtime
+  check_names_are_ours
+  migrate_legacy_data_dir
   preflight_existing_install
   ensure_durable_source
   ensure_dependencies
@@ -572,16 +677,16 @@ main() {
   install_progress "Installing CLI..."
   install_cli_launcher
 
-  # Shared with `fireconnect upgrade`: deps repair, key-storage probe, rebake
+  # Shared with `nexus update`: deps repair, key-storage probe, rebake
   # enabled harness keys, retire the Claude WebSearch MCP, reconcile shell hook.
   # Best-effort — never abort after the launcher is already on disk.
   install_progress "Finalizing install..."
   if ! node "${CLI}" finalize-install; then
-    install_note "Post-install finalize skipped (non-fatal). Run: fireconnect upgrade"
+    install_note "Post-install finalize skipped (non-fatal). Run: nexus update"
   fi
 
   local banner_script
-  banner_script="$(dirname "${CLI}")/fireconnect-banner.mjs"
+  banner_script="$(dirname "${CLI}")/nexus-banner.mjs"
   node "${banner_script}" --context install
   node "${CLI}" help quick
   print_install_notes

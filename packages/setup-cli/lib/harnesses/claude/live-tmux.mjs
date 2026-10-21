@@ -1,5 +1,5 @@
 /**
- * `fireconnect claude live`: Claude Code on the left, live usage meter on the
+ * `nexus claude live`: Claude Code on the left, live usage meter on the
  * right. Viewer-only — never touches harness settings.
  */
 
@@ -42,7 +42,7 @@ const METER_WIDTH_PERCENT = 50;
 const LIVE_SESSION_COLS = 240;
 const LIVE_SESSION_ROWS = 55;
 const SETUP_CLI_DIR = resolveSetupCliDir();
-const FIRECONNECT_BIN = path.join(SETUP_CLI_DIR, "bin/fireconnect.mjs");
+const FIRECONNECT_BIN = path.join(SETUP_CLI_DIR, "bin/nexus.mjs");
 const USAGE_HELPER = path.join(SETUP_CLI_DIR, "bin/claude-live-usage.mjs");
 
 /**
@@ -192,7 +192,7 @@ function killLiveSession(execFile, env, window = "") {
  * the bare name.
  *
  * The live pane runs `bash -lc`, whose login-shell PATH can resolve `claude` to
- * a different (e.g. older Homebrew) install than the shell that ran `fireconnect
+ * a different (e.g. older Homebrew) install than the shell that ran `nexus
  * claude live`. Pinning the absolute path keeps the pane on the same binary the
  * user invoked.
  *
@@ -367,7 +367,7 @@ export async function runClaudeLiveTmux({
   stdout = process.stdout,
 } = {}) {
   if (!home) {
-    throw new Error("HOME is required for `fireconnect claude live`.");
+    throw new Error("HOME is required for `nexus claude live`.");
   }
 
   if (!tmuxAvailable({ spawn })) {

@@ -4,7 +4,6 @@ import {
   printRestartHint,
 } from "../../cli/messages.mjs";
 import { printStructuredHarnessStatus } from "../../harness/status-display.mjs";
-import { detectApiKeyType } from "../../keys/key-type.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import { ensureHomeForHarness, copilotAppPathsFor } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
@@ -50,7 +49,7 @@ export default defineHarnessProfile({
   // The provider row carries a headersJson map, so attribution rides along with
   // the Authorization header.
   telemetryHeaders: true,
-  enable: async ({ ctx, paths, effectiveKey, keyType, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
+  enable: async ({ ctx, paths, effectiveKey, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
     // Register the preferred catalog; a TTL-cached snapshot serves offline. A
     // cold start with no network must fail the `on` rather than register from
     // an empty model list. When no catalog entries are available at all, treat
@@ -65,7 +64,6 @@ export default defineHarnessProfile({
       dataDir: paths.dataDir,
       apiKey: effectiveKey,
       modelId,
-      keyType,
       extraModels,
       extraHeaders: telemetryHeaders,
       catalogUnavailable: !catalogAvailable,
@@ -104,7 +102,7 @@ export default defineHarnessProfile({
       baseUrl: provider ? COPILOT_FIREWORKS_BASE_URL : null,
       providerName: provider ? provider.name : null,
       hasKey: Boolean(apiKey),
-      keyType: provider_ === "none" ? "none" : detectApiKeyType(apiKey),
+      keyType: provider_ === "none" ? "none" : "fireworks",
       registeredModels: models.map((model) => model.model_id),
     };
 

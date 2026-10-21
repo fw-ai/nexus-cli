@@ -10,7 +10,6 @@ import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mj
 import { setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
 import { lookupFireworksPricing } from "../../../lib/fireworks/pricing.mjs";
 import {
-  claudeRoutingPreferenceLabel,
   claudeStatusLineCommand,
   claudeStatusLineModelLabel,
   claudeStatusLineSettings,
@@ -629,8 +628,8 @@ describe("claude status line", () => {
     });
   });
 
-  it("shows the applied routing level beside the firerouter slot", async () => {
-    await withTempHome("statusline-routing", async (home) => {
+  it("ignores a routing-preference header left by an earlier release", async () => {
+    await withTempHome("statusline-retired-routing", async (home) => {
       await mkdir(path.join(home, ".claude"), { recursive: true });
       await writeFile(
         path.join(home, ".claude", "settings.json"),
@@ -640,81 +639,13 @@ describe("claude status line", () => {
               "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 1",
           },
         }),
-      );
-      assert.equal(
-        await claudeRoutingPreferenceLabel("firerouter[1m]", home),
-        "max-intelligence (1)",
       );
       const line = await renderClaudeStatusLine({
         model: { id: "firerouter[1m]" },
         // A brand-new session: Claude Code names a transcript before writing it.
         transcript_path: path.join(home, "does-not-exist.jsonl"),
       }, { home });
-      assert.equal(stripAnsi(line), "FireRouter · max-intelligence (1)");
-    });
-  });
-
-  it("leaves the slot label alone without a routing preference", async () => {
-    await withTempHome("statusline-no-routing", async (home) => {
-      assert.equal(await claudeRoutingPreferenceLabel("firerouter[1m]", home), null);
-      assert.equal(await claudeRoutingPreferenceLabel("glm-latest", home), null);
-      const line = await renderClaudeStatusLine({
-        model: { id: "firerouter[1m]" },
-        transcript_path: path.join(home, "does-not-exist.jsonl"),
-      }, { home });
       assert.equal(stripAnsi(line), "FireRouter");
-    });
-  });
-
-  it("keeps the routing level visible once the spend bar takes over", async () => {
-    await withTempHome("statusline-routing-bar", async (home) => {
-      await mkdir(path.join(home, ".claude"), { recursive: true });
-      await writeFile(
-        path.join(home, ".claude", "settings.json"),
-        JSON.stringify({
-          env: {
-            ANTHROPIC_CUSTOM_HEADERS:
-              "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 1",
-          },
-        }),
-      );
-      const transcript = path.join(home, "session.jsonl");
-      await writeFile(transcript, [
-        assistantLine({ id: "m1", model: "accounts/fireworks/models/deepseek-v4-flash", output: 1_000_000 }),
-      ].join("\n"));
-
-      const plain = stripAnsi(await renderClaudeStatusLine({
-        model: { id: "firerouter[1m]" },
-        transcript_path: transcript,
-      }, { home }));
-      const [line1] = plain.split("\n");
-      // The bar displaces the slot label, but the applied level must survive it.
-      assert.match(line1, /max-intelligence \(1\)/, plain);
-      assert.match(line1, /\$/, plain);
-    });
-  });
-
-  it("never reports a routing level for auto or firerouter compounds", async () => {
-    await withTempHome("statusline-no-compound-routing", async (home) => {
-      await mkdir(path.join(home, ".claude"), { recursive: true });
-      await writeFile(
-        path.join(home, ".claude", "settings.json"),
-        JSON.stringify({
-          env: {
-            ANTHROPIC_CUSTOM_HEADERS:
-              "X-Fireworks-Api-Key: fw_test\nx-routing-preference: 3",
-          },
-        }),
-      );
-      // The header is honored for bare firerouter only — compounds pin their
-      // own targets and auto routes open models, so neither may claim it.
-      assert.equal(await claudeRoutingPreferenceLabel("firerouter/kimi-k3", home), null);
-      assert.equal(await claudeRoutingPreferenceLabel("auto", home), null);
-      const line = await renderClaudeStatusLine({
-        model: { id: "firerouter/kimi-k3" },
-        transcript_path: path.join(home, "does-not-exist.jsonl"),
-      }, { home });
-      assert.doesNotMatch(stripAnsi(line), /max-intelligence|balanced|savings/, line);
     });
   });
 
@@ -901,6 +832,338 @@ describe("claude status line", () => {
       assert.ok(labels.includes("DeepSeek V4 Flash"), labels.join(", "));
       // "What is serving me now" stays the main thread's model.
       assert.match(usage.lastModel, /glm-5p2/);
+    });
+  });
+
+  it("names the model that served the routed model on line 1 for auto and firerouter", async () => {
+    await withTempHome("statusline-last-turn", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", output: 1_000_000 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/glm-5p2", output: 1_000_000 }),
+        assistantLine({ id: "m3", model: "claude-opus-5", input: 1, output: 1 }),
+      ].join("\n"));
+
+      for (const slotId of [
+        "auto[1m]",
+        "auto-instant[1m]",
+        "firerouter[1m]",
+        "firerouter/opus[1m]",
+        "firerouter/kimi-k3/glm-5p2[1m]",
+        "firerouter/auto[1m]",
+      ]) {
+        const plain = stripAnsi(await renderClaudeStatusLine({
+          model: { id: slotId },
+          transcript_path: transcript,
+        }, { home }));
+        const [line1, legend] = plain.split("\n");
+
+        assert.match(line1, /routed model: Claude Opus 5/, `${slotId}: ${line1}`);
+        assert.doesNotMatch(line1, /routed model: GLM/, `${slotId}: ${line1}`);
+        assert.doesNotMatch(legend, /routed model/, `${slotId}: ${legend}`);
+        assert.equal((plain.match(/routed model:/g) ?? []).length, 1, `${slotId}: ${plain}`);
+      }
+    });
+  });
+
+  it("does not show routed model when the active model is a pinned static model", async () => {
+    await withTempHome("statusline-last-turn-static-slot", async (home) => {
+      const sessionId = "22222222-3333-4444-5555-666666666666";
+      const transcript = path.join(home, `${sessionId}.jsonl`);
+      await writeFile(transcript, [
+        assistantLine({ id: "p1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+      ].join("\n"));
+      const subagentDir = path.join(home, sessionId, "subagents");
+      await mkdir(subagentDir, { recursive: true });
+      await writeFile(path.join(subagentDir, "agent-abc.jsonl"), [
+        assistantLine({ id: "s1", model: "accounts/fireworks/models/deepseek-v4-flash", input: 1, output: 1 }),
+      ].join("\n"));
+
+      for (const staticSlot of ["glm-latest[1m]", "firerouter/kimi-k3[1m]", "firerouter/glm-5p2"]) {
+        const plain = stripAnsi(await renderClaudeStatusLine({
+          model: { id: staticSlot },
+          transcript_path: transcript,
+        }, { home }));
+        assert.doesNotMatch(plain, /routed model/, `${staticSlot}: ${plain}`);
+      }
+    });
+  });
+
+  it("follows the latest turn when the router switches models mid-session", async () => {
+    await withTempHome("statusline-last-turn-moves", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      const opusFirst = [
+        JSON.stringify({ type: "user", message: { role: "user", content: "turn 1" } }),
+        assistantLine({ id: "m1", model: "claude-opus-5", input: 1, output: 1 }),
+        JSON.stringify({ type: "user", message: { role: "user", content: "turn 2" } }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+      ];
+      await writeFile(transcript, opusFirst.join("\n"));
+      const first = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.match(first, /routed model: GLM 5\.2/, first);
+
+      // A new user prompt has been submitted (including one starting with `<`
+      // such as HTML/XML), and no assistant response has arrived for turn 3
+      // yet: do not claim turn 2's model for turn 3.
+      const pendingTurn3 = [
+        ...opusFirst,
+        JSON.stringify({ type: "user", message: { role: "user", content: "<div>turn 3</div>" } }),
+      ];
+      await writeFile(transcript, pendingTurn3.join("\n"));
+      const pending = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.doesNotMatch(pending, /routed model/, pending);
+
+      // Harness metadata tags (`<system-reminder>`, `<local-command-stdout>`)
+      // and `tool_result` continuations inside turn 2 are not new user turns,
+      // so they keep the turn's routed model visible.
+      await writeFile(transcript, [
+        ...opusFirst,
+        JSON.stringify({ type: "user", message: { role: "user", content: "<system-reminder>note</system-reminder>" } }),
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "ok" }] },
+        }),
+      ].join("\n"));
+      const toolCont = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.match(toolCont, /routed model: GLM 5\.2/, toolCont);
+
+      // Modern transcripts: harness-injected user records carry no
+      // `promptSource` key value, so they are not new turns either, while a
+      // stamped prompt (`promptSource: "typed"`) is one even when its text
+      // starts with `<`.
+      await writeFile(transcript, [
+        ...opusFirst,
+        JSON.stringify({ type: "user", promptSource: null, message: { role: "user", content: "<task-notification>done</task-notification>" } }),
+        JSON.stringify({ type: "user", promptSource: null, message: { role: "user", content: "<local-command-stderr>err</local-command-stderr>" } }),
+      ].join("\n"));
+      const injected = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.match(injected, /routed model: GLM 5\.2/, injected);
+
+      await writeFile(transcript, [
+        ...opusFirst,
+        JSON.stringify({ type: "user", promptSource: "typed", message: { role: "user", content: "<div>turn 3</div>" } }),
+      ].join("\n"));
+      const stamped = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.doesNotMatch(stamped, /routed model/, stamped);
+
+      await writeFile(transcript, [
+        ...pendingTurn3,
+        assistantLine({ id: "m3", model: "claude-opus-5", input: 1, output: 1 }),
+      ].join("\n"));
+      const second = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.match(second, /routed model: Claude Opus 5/, second);
+      assert.doesNotMatch(second, /routed model: GLM/, second);
+    });
+  });
+
+  it("keeps the last-turn label on the main thread's model, not a subagent's", async () => {
+    await withTempHome("statusline-last-turn-subagent", async (home) => {
+      const sessionId = "11111111-2222-3333-4444-555555555555";
+      const transcript = path.join(home, `${sessionId}.jsonl`);
+      await writeFile(transcript, [
+        assistantLine({ id: "p1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+      ].join("\n"));
+      const subagentDir = path.join(home, sessionId, "subagents");
+      await mkdir(subagentDir, { recursive: true });
+      await writeFile(path.join(subagentDir, "agent-abc.jsonl"), [
+        assistantLine({ id: "s1", model: "accounts/fireworks/models/deepseek-v4-flash", input: 1, output: 1 }),
+      ].join("\n"));
+
+      const line1 = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home })).split("\n")[0];
+      assert.match(line1, /routed model: GLM 5\.2/, line1);
+      assert.doesNotMatch(line1, /DeepSeek/, line1);
+    });
+  });
+
+  it("does not label a single-model session, where the legend is already the answer", async () => {
+    await withTempHome("statusline-last-turn-single", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+      ].join("\n"));
+
+      const plain = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      assert.doesNotMatch(plain, /routed model/, plain);
+    });
+  });
+
+  it("stays quiet rather than naming a call whose model went unrecorded", async () => {
+    await withTempHome("statusline-last-turn-placeholder", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      const priced = assistantLine({
+        id: "m1",
+        model: "accounts/fireworks/models/glm-5p2",
+        output: 1_000_000,
+      });
+      for (const model of ["?", "", null, "   "]) {
+        await writeFile(transcript, [
+          priced,
+          JSON.stringify({
+            type: "assistant",
+            message: { id: "m2", model, usage: { input_tokens: 1, output_tokens: 1 } },
+          }),
+        ].join("\n"));
+
+        const plain = stripAnsi(await renderClaudeStatusLine({
+          model: { id: "auto[1m]" },
+          transcript_path: transcript,
+        }, { home }));
+        const [line1, legend] = plain.split("\n");
+        assert.doesNotMatch(line1, /routed model|\?|unknown model/, `model ${JSON.stringify(model)}: ${line1}`);
+        assert.match(legend, /GLM 5\.2/, legend);
+      }
+    });
+  });
+
+  it("names an unbilled routed model, skipping only synthetic rows", async () => {
+    await withTempHome("statusline-last-turn-nonbillable", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      const billed = [
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/deepseek-v4-flash", input: 1, output: 1 }),
+      ];
+
+      // Zero usage so far: not in the billed legend yet, but it is the model
+      // this turn routed to, so line 1 names it from its own id.
+      await writeFile(transcript, [
+        ...billed,
+        assistantLine({ id: "m3", model: "claude-opus-5", input: 0, output: 0 }),
+      ].join("\n"));
+      const unbilled = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [unbilledLine1, unbilledLegend] = unbilled.split("\n");
+      assert.match(unbilledLine1, /routed model: Claude Opus 5/, unbilledLine1);
+      assert.doesNotMatch(unbilledLegend, /Claude Opus 5/, unbilledLegend);
+
+      // `<synthetic>` never reached the API: the parser drops it, so the
+      // routed model stays the last real call.
+      await writeFile(transcript, [
+        ...billed,
+        assistantLine({ id: "m4", model: "<synthetic>", input: 5, output: 5 }),
+      ].join("\n"));
+      const synthetic = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [syntheticLine1, syntheticLegend] = synthetic.split("\n");
+      assert.match(syntheticLine1, /routed model: DeepSeek V4 Flash/, syntheticLine1);
+      assert.doesNotMatch(syntheticLine1, /synthetic/, syntheticLine1);
+      const named = syntheticLine1.match(/routed model: (.+)$/);
+      assert.ok(syntheticLegend.includes(`━ ${named[1]} $`), `${syntheticLine1} vs ${syntheticLegend}`);
+    });
+  });
+
+  it("names the last distinct call when one message id spans several records", async () => {
+    await withTempHome("statusline-last-turn-dedup", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 1 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/deepseek-v4-flash", input: 1, output: 1 }),
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", input: 1, output: 900 }),
+      ].join("\n"));
+
+      const plain = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [line1, legend] = plain.split("\n");
+
+      assert.match(line1, /routed model: DeepSeek V4 Flash/, line1);
+      assert.match(legend, /GLM 5\.2/, legend);
+      assert.match(legend, /DeepSeek V4 Flash/, legend);
+    });
+  });
+
+  it("names the routed model exactly as the legend spells it, qualifier and all", async () => {
+    await withTempHome("statusline-last-turn-compaction", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "claude-opus-5", output: 1_000_000 }),
+        assistantLine({
+          id: "m2",
+          model: "accounts/fireworks/models/glm-5p3-flash-us",
+          output: 1_000_000,
+        }),
+      ].join("\n"));
+
+      const plain = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [line1, legend] = plain.split("\n");
+
+      const named = line1.match(/routed model: (.+)$/);
+      assert.ok(named, `no routed-model name in: ${line1}`);
+      assert.ok(legend.includes(`━ ${named[1]} $`), `${line1} vs ${legend}`);
+      assert.doesNotMatch(line1, /\(US\)/, line1);
+    });
+  });
+
+  it("keeps the qualifier on line 1 when the legend has to keep it", async () => {
+    await withTempHome("statusline-last-turn-collision", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "claude-opus-5", output: 1_000_000 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/glm-5p3-flash", output: 1_000_000 }),
+        assistantLine({ id: "m3", model: "accounts/fireworks/models/glm-5p3-flash-us", output: 1_000_000 }),
+      ].join("\n"));
+
+      const plain = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [line1, legend] = plain.split("\n");
+
+      assert.match(line1, /routed model: GLM 5\.3 Flash \(US\)/, line1);
+      const named = line1.match(/routed model: (.+)$/);
+      assert.ok(legend.includes(`━ ${named[1]} $`), `${line1} vs ${legend}`);
+    });
+  });
+
+  it("names an aliased latest model as the legend row it merged into", async () => {
+    await withTempHome("statusline-last-turn-alias", async (home) => {
+      const transcript = path.join(home, "session.jsonl");
+      await writeFile(transcript, [
+        assistantLine({ id: "m1", model: "accounts/fireworks/models/glm-5p2", output: 1_000_000 }),
+        assistantLine({ id: "m2", model: "accounts/fireworks/models/kimi-k3", input: 1, output: 1 }),
+        assistantLine({ id: "m3", model: "kimi-fast-latest", input: 1, output: 1 }),
+      ].join("\n"));
+
+      const plain = stripAnsi(await renderClaudeStatusLine({
+        model: { id: "auto[1m]" },
+        transcript_path: transcript,
+      }, { home }));
+      const [line1, legend] = plain.split("\n");
+      assert.match(line1, /routed model: Kimi K3 Fast(?! \(Latest\))/, line1);
+      assert.doesNotMatch(line1, /\(Latest\)/, line1);
+      assert.match(legend, /Kimi K3 Fast/, legend);
     });
   });
 

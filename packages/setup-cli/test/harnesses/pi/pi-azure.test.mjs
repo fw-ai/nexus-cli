@@ -7,9 +7,9 @@ import assert from "node:assert/strict";
 
 import { PI_AZURE_PROVIDER, piSettingsPath, piModelsPath } from "../../../lib/harnesses/pi/core.mjs";
 import { lookupAzureFoundryModelLimits } from "../../../lib/fireworks/azure-core.mjs";
-import { seedOnCommandCatalog } from "../../helpers.mjs";
+import { isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
 
-const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "fireconnect.mjs");
+const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "nexus.mjs");
 const AZURE_ENDPOINT = "https://msft-fw-foundry-resource.services.ai.azure.com";
 const AZURE_BASE_URL = "https://msft-fw-foundry-resource.services.ai.azure.com/openai/v1";
 const AZURE_KEY = "azure-test-key-1234567890";
@@ -18,7 +18,7 @@ function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) { seedOnCommandCatalog(env.HOME, args); }
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, FIREWORKS_API_KEY: "", AZURE_API_KEY: "", FIRECONNECT_SECRET_STORE: "memory", FIRECONNECT_TEST: "1", ...env },
+      env: { ...process.env, FIREWORKS_API_KEY: "", AZURE_API_KEY: "", NEXUS_SECRET_STORE: "memory", NEXUS_TEST: "1", ...env, HOME: isolatedChildHome(env) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -104,7 +104,7 @@ describe("pi azure harness", () => {
   it("switching from Fireworks to Azure clears the stale Fireworks enabledModels scope", async () => {
     await withHome(async (home) => {
       // Seed a Fireworks-on config, including the router-only picker scope
-      // FireConnect writes on a Fireworks `on`.
+      // Nexus writes on a Fireworks `on`.
       await writeFile(piSettingsPath(home), JSON.stringify({
         defaultProvider: "fireworks",
         defaultModel: "accounts/fireworks/routers/kimi-fast-latest",
@@ -290,7 +290,7 @@ describe("pi azure harness", () => {
       );
       assert.equal((await runFireconnect(["pi", "off"], { HOME: home })).code, 0);
 
-      // off must restore the genuine pre-FireConnect config, not the Azure state.
+      // off must restore the genuine pre-Nexus config, not the Azure state.
       assert.equal(await readFile(settingsPath, "utf8"), origSettings);
       assert.equal(await readFile(modelsPath, "utf8"), origModels);
     });

@@ -1,12 +1,12 @@
 import { spawn } from "node:child_process";
 import process from "node:process";
 
-import { resolveFireconnectCliPath } from "../cli/path.mjs";
+import { resolveCliPath } from "../cli/path.mjs";
 import { warn as uiWarn } from "../ui.mjs";
 
 /**
  * Best-effort self-check that the shell env hook will be able to load the
- * Fireworks API key at shell startup. It spawns `fireconnect key export` the
+ * Fireworks API key at shell startup. It spawns `nexus key export` the
  * same way the hook does, but with `FIREWORKS_API_KEY` stripped from the child
  * environment so it exercises the secret-store (keychain / encrypted file) path
  * rather than a pre-existing env var.
@@ -18,7 +18,7 @@ import { warn as uiWarn } from "../ui.mjs";
  * @returns {Promise<{ ok: boolean, reason?: string }>}
  */
 export async function verifyKeyExportWorks(home, options = {}) {
-  const cliPath = resolveFireconnectCliPath(home);
+  const cliPath = resolveCliPath(home);
   const timeoutMs = options.timeoutMs ?? 8000;
 
   /** @type {Record<string, string>} */
@@ -89,7 +89,7 @@ export function printKeySelfCheckWarning(harnessId, reason) {
   console.warn(uiWarn(
     `${harnessId} reads FIREWORKS_API_KEY from the environment via a shell hook, `
       + `but the key could not be loaded the way the hook loads it. ${reason}. `
-      + `Run \`fireconnect status\` to verify your key is stored, and make sure `
-      + `~/.local/bin/fireconnect runs in a fresh shell (it uses the Node path baked at install time).`,
+      + `Run \`nexus status\` to verify your key is stored, and make sure `
+      + `~/.local/bin/nexus runs in a fresh shell (it uses the Node path baked at install time).`,
   ));
 }

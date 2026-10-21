@@ -150,31 +150,7 @@ describe("structured harness status output", () => {
     assert.match(lines.join("\n"), /\$1\.4 \/ \$4\.4/);
   });
 
-  it("prints the routing level between provider and auth when set", () => {
-    const lines = [];
-    const original = console.log;
-    console.log = (line = "") => lines.push(String(line));
-    try {
-      printStructuredHarnessStatus("claude", {
-        connected: true,
-        provider: "fireworks",
-        routing: "max-intelligence (1)",
-        keyConfigured: true,
-        authMode: "customHeader",
-      });
-    } finally {
-      console.log = original;
-    }
-    const output = lines.join("\n");
-    assert.match(output, /Provider: .*Fireworks/);
-    assert.match(output, /Routing: max-intelligence \(1\)/);
-    assert.ok(
-      output.indexOf("Provider:") < output.indexOf("Routing:")
-        && output.indexOf("Routing:") < output.indexOf("Auth:"),
-    );
-  });
-
-  it("omits the routing line when unset", () => {
+  it("prints no routing line", () => {
     const lines = [];
     const original = console.log;
     console.log = (line = "") => lines.push(String(line));

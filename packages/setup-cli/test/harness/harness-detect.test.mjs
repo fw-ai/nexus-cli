@@ -30,8 +30,24 @@ describe("detectInstalledHarnesses", () => {
       assert.ok(detected.includes("codex"));
       assert.ok(detected.includes("deepseek"));
       assert.ok(!detected.includes("pi"));
+      assert.ok(!detected.includes("claude-desktop"));
     } finally {
       await rm(home, { recursive: true, force: true });
     }
   });
+
+  for (const name of ["Claude", "Claude-3p"]) {
+    it(`detects Claude Desktop from its ${name} data dir`, async () => {
+      const home = await mkdtemp(path.join(os.tmpdir(), "fc-detect-desktop-"));
+      try {
+        const dataDir = process.platform === "linux"
+          ? path.join(home, ".config", name)
+          : path.join(home, "Library", "Application Support", name);
+        await mkdir(dataDir, { recursive: true });
+        assert.ok(detectInstalledHarnesses(home).includes("claude-desktop"));
+      } finally {
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+  }
 });

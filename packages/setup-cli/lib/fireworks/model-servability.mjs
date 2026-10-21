@@ -38,21 +38,19 @@ export function isModelIdValidationApplicable(modelId) {
  *
  * Fetches the live serverless catalog once and checks every applicable id
  * against it. Validation is skipped (no throw) when:
- *   - no id needs validating (all empty / firerouter / custom deployment),
- *   - the key is a Fire Pass key (the account catalog can't be enumerated), or
+ *   - no id needs validating (all empty / firerouter / custom deployment), or
  *   - the catalog fetch fails (offline) — we can't verify, so we don't block.
  *
  * @param {string[]} modelIds
- * @param {{ apiKey: string, keyType?: string }} opts
+ * @param {{ apiKey: string }} opts
  * @returns {Promise<void>}
  */
-export async function assertRequestedModelsServable(modelIds, { apiKey, keyType = "" } = {}) {
+export async function assertRequestedModelsServable(modelIds, { apiKey } = {}) {
   const applicable = modelIds.filter(Boolean).filter(isModelIdValidationApplicable);
   if (applicable.length === 0) return;
-  if (keyType === "firepass") return;
   let catalog;
   try {
-    ({ catalog } = await loadServerlessCatalog({ apiKey, keyType }));
+    ({ catalog } = await loadServerlessCatalog({ apiKey }));
   } catch {
     return; // offline / fetch failed — can't verify, don't block
   }
@@ -68,7 +66,7 @@ export async function assertRequestedModelsServable(modelIds, { apiKey, keyType 
     }
     throw new Error(
       `Model "${shortFireworksModelRef(id)}" is not available on Fireworks. `
-      + `Run \`fireconnect model list\` to see serverless models.`,
+      + `Run \`nexus model list\` to see serverless models.`,
     );
   }
 }
@@ -83,14 +81,14 @@ export function assertRequestedModelServable(modelId, opts) {
  * metadata and no flag, so the only retirement signal is a request: 404
  * "Model not found" at POST /inference/v1/messages. Anything else (2xx, 429,
  * other 4xx) means the model serves. 16-token probe; call from setup paths
- * only (never a hot path); FIRECONNECT_TEST gates real calls.
+ * only (never a hot path); NEXUS_TEST gates real calls.
  * @param {string} modelId
  * @param {string} apiKey
  * @param {{ timeoutMs?: number, fetchImpl?: typeof fetch }} [options]
  * @returns {Promise<boolean>}
  */
 export async function probeModelServable(modelId, apiKey, { timeoutMs = 8_000, fetchImpl = fetch } = {}) {
-  if (process.env.FIRECONNECT_TEST === "1") return true;
+  if (process.env.NEXUS_TEST === "1") return true;
   try {
     const res = await fetchImpl("https://api.fireworks.ai/inference/v1/messages", {
       method: "POST",

@@ -5,7 +5,7 @@ pairing in `serverlessLineup`, the effort-rewrite closure in
 `normalizeThinking`, the device-config backup/restore round trip, and the
 two-lane exclusivity. `native_decide`/`decide` spot checks pin the constants.
 -/
-namespace FireConnect.DesktopPicker
+namespace Nexus.DesktopPicker
 
 /-! ## Pairing: one picker row per router, each with a unique catalog id
 
@@ -94,7 +94,7 @@ theorem rewrite_sources_not_in_ladder :
 `on` rewrites four device keys in `claude_desktop_config.json` and snapshots
 their prior values; `off` restores them. A repeat `on` must keep the ORIGINAL
 snapshot (Bugbot round: recapturing from the already-rewritten config made
-`off` restore FireConnect's own values).
+`off` restore Nexus's own values).
 -/
 
 abbrev Config := String → Option String
@@ -111,7 +111,7 @@ keys pass through untouched. -/
 def restoreOf (saved c : Config) : Config :=
   fun k => if k ∈ deviceKeys then saved k else c k
 
-/-- `off` returns the device keys to their pre-FireConnect values exactly. -/
+/-- `off` returns the device keys to their pre-Nexus values exactly. -/
 theorem restore_backup_roundtrip (c c' : Config) :
     ∀ k ∈ deviceKeys, restoreOf (backupOf c) c' k = c k := by
   intro k hk
@@ -129,4 +129,4 @@ theorem repeat_on_keeps_backup (c c' : Config) :
   intro k hk
   simp [restoreOf, backupOf, hk]
 
-end FireConnect.DesktopPicker
+end Nexus.DesktopPicker

@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
+  readlink,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -53,24 +56,24 @@ async function createFakeCli(home) {
     launcher,
     `#!/usr/bin/env bash
 set -euo pipefail
-printf '%s\\n' "$*" >> "\${FIRECONNECT_FAKE_LOG}"
-if [[ "\${FIRECONNECT_FAKE_MODE:-success}" == "fail" ]]; then
+printf '%s\\n' "$*" >> "\${NEXUS_FAKE_LOG}"
+if [[ "\${NEXUS_FAKE_MODE:-success}" == "fail" ]]; then
   exit 9
 fi
-if [[ "\${FIRECONNECT_FAKE_MODE:-success}" == "noop" ]]; then
+if [[ "\${NEXUS_FAKE_MODE:-success}" == "noop" ]]; then
   exit 0
 fi
-if [[ -n "\${FIRECONNECT_AFTER_CONFIG:-}" ]]; then
-  cp "\${FIRECONNECT_AFTER_CONFIG}" "\${HOME}/.fireconnect/config.json"
+if [[ -n "\${NEXUS_AFTER_CONFIG:-}" ]]; then
+  cp "\${NEXUS_AFTER_CONFIG}" "\${HOME}/.nexus/config.json"
 fi
-if [[ -n "\${FIRECONNECT_AFTER_SETTINGS:-}" ]]; then
+if [[ -n "\${NEXUS_AFTER_SETTINGS:-}" ]]; then
   mkdir -p "\${HOME}/.claude"
-  cp "\${FIRECONNECT_AFTER_SETTINGS}" "\${HOME}/.claude/settings.json"
+  cp "\${NEXUS_AFTER_SETTINGS}" "\${HOME}/.claude/settings.json"
 else
   rm -f "\${HOME}/.claude/settings.json"
 fi
-rm -f "\${HOME}/.fireconnect/claude/provider-backup.json"
-rm -f "\${HOME}/.fireconnect/claude/provider-state.json"
+rm -f "\${HOME}/.nexus/claude/provider-backup.json"
+rm -f "\${HOME}/.nexus/claude/provider-state.json"
 `,
   );
   await chmod(launcher, 0o755);
@@ -100,7 +103,7 @@ function runPreflight({ home, logPath, runner }, env = {}) {
       HOME: home,
       PATH: BASE_PATH,
       SHELL: "/bin/bash",
-      FIRECONNECT_FAKE_LOG: logPath,
+      NEXUS_FAKE_LOG: logPath,
       ...env,
     },
   });
@@ -109,7 +112,7 @@ function runPreflight({ home, logPath, runner }, env = {}) {
 function runPreflightInPty({ home, logPath, runner }, input, env = {}) {
   return spawnSync(
     "script",
-    ["-qfec", 'bash "$FIRECONNECT_TEST_RUNNER"', "/dev/null"],
+    ["-qfec", 'bash "$NEXUS_TEST_RUNNER"', "/dev/null"],
     {
       encoding: "utf8",
       input,
@@ -118,8 +121,8 @@ function runPreflightInPty({ home, logPath, runner }, input, env = {}) {
         HOME: home,
         PATH: BASE_PATH,
         SHELL: "/bin/bash",
-        FIRECONNECT_FAKE_LOG: logPath,
-        FIRECONNECT_TEST_RUNNER: runner,
+        NEXUS_FAKE_LOG: logPath,
+        NEXUS_TEST_RUNNER: runner,
         ...env,
       },
     },
@@ -140,17 +143,17 @@ async function readIfExists(filePath) {
 describe("install.sh Claude upgrade preflight", () => {
   it("skips Claude-off when the installed FireConnect is 0.9.0+", async () => {
     await withFixture("skip-modern", async (fixture) => {
-      await writeJson(path.join(fixture.home, ".fireconnect/config.json"), {
+      await writeJson(path.join(fixture.home, ".nexus/config.json"), {
         harnesses: { claude: { enabled: true, provider: "fireworks" } },
       });
       await writeJson(
-        path.join(fixture.home, ".fireconnect/cli/packages/setup-cli/package.json"),
+        path.join(fixture.home, ".nexus/cli/packages/setup-cli/package.json"),
         { name: "fireconnect", version: "0.9.0" },
       );
 
       const result = runPreflight(fixture, {
         // Would force off if detection ran — assert it never reaches the CLI.
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AUTO_OFF_CLAUDE: "1",
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -161,7 +164,7 @@ describe("install.sh Claude upgrade preflight", () => {
 
   it("still restores Claude when upgrading from FireConnect before 0.9.0", async () => {
     await withFixture("legacy-version", async (fixture) => {
-      const configPath = path.join(fixture.home, ".fireconnect/config.json");
+      const configPath = path.join(fixture.home, ".nexus/config.json");
       const afterConfig = path.join(fixture.root, "config-after.json");
       await writeJson(configPath, {
         harnesses: { claude: { enabled: true, provider: "fireworks" } },
@@ -170,13 +173,13 @@ describe("install.sh Claude upgrade preflight", () => {
         harnesses: { claude: { enabled: false, provider: "fireworks" } },
       });
       await writeJson(
-        path.join(fixture.home, ".fireconnect/cli/packages/setup-cli/package.json"),
+        path.join(fixture.home, ".nexus/cli/packages/setup-cli/package.json"),
         { name: "fireconnect", version: "0.8.9" },
       );
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_AFTER_CONFIG: afterConfig,
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AFTER_CONFIG: afterConfig,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -185,9 +188,35 @@ describe("install.sh Claude upgrade preflight", () => {
     });
   });
 
+  it("uses the top-level off for releases before 0.4.0, which have no `claude off`", async () => {
+    await withFixture("pre-harness-cli", async (fixture) => {
+      const afterConfig = path.join(fixture.root, "config-after.json");
+      await writeJson(path.join(fixture.home, ".nexus/config.json"), {
+        harnesses: { claude: { enabled: true, provider: "fireworks" } },
+      });
+      await writeJson(afterConfig, {
+        harnesses: { claude: { enabled: false, provider: "fireworks" } },
+      });
+      // v0.3.0 and the initial release both shipped with package version 0.2.0.
+      await writeJson(
+        path.join(fixture.home, ".nexus/cli/packages/setup-cli/package.json"),
+        { name: "fireconnect", version: "0.2.0" },
+      );
+
+      const result = runPreflight(fixture, {
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AFTER_CONFIG: afterConfig,
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(await readFile(fixture.logPath, "utf8"), "off\n");
+      assert.match(result.stdout, /restored=1/);
+    });
+  });
+
   it("uses the existing CLI to disable a globally enabled Claude harness", async () => {
     await withFixture("global", async (fixture) => {
-      const configPath = path.join(fixture.home, ".fireconnect/config.json");
+      const configPath = path.join(fixture.home, ".nexus/config.json");
       const afterConfig = path.join(fixture.root, "config-after.json");
       await writeJson(configPath, {
         harnesses: { claude: { enabled: true, provider: "fireworks" } },
@@ -197,8 +226,8 @@ describe("install.sh Claude upgrade preflight", () => {
       });
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_AFTER_CONFIG: afterConfig,
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AFTER_CONFIG: afterConfig,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -210,7 +239,7 @@ describe("install.sh Claude upgrade preflight", () => {
       );
       assert.match(
         result.stdout,
-        /Reconnect Claude Code through FireConnect: fireconnect claude/,
+        /Reconnect Claude Code through Nexus: nexus claude/,
       );
     });
   });
@@ -228,8 +257,8 @@ describe("install.sh Claude upgrade preflight", () => {
       await writeJson(afterSettings, { theme: "dark" });
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_AFTER_SETTINGS: afterSettings,
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AFTER_SETTINGS: afterSettings,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -255,8 +284,8 @@ describe("install.sh Claude upgrade preflight", () => {
       await writeJson(afterSettings, { theme: "dark" });
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_AFTER_SETTINGS: afterSettings,
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_AFTER_SETTINGS: afterSettings,
       });
 
       assert.equal(result.status, 0, result.stderr);
@@ -288,7 +317,7 @@ describe("install.sh Claude upgrade preflight", () => {
 
   it("stops without a controlling terminal and leaves Claude untouched", async () => {
     await withFixture("no-tty", async (fixture) => {
-      await writeJson(path.join(fixture.home, ".fireconnect/config.json"), {
+      await writeJson(path.join(fixture.home, ".nexus/config.json"), {
         harnesses: { claude: { enabled: true } },
       });
 
@@ -296,7 +325,7 @@ describe("install.sh Claude upgrade preflight", () => {
 
       assert.notEqual(result.status, 0);
       assert.match(result.stderr, /no interactive terminal is available/);
-      assert.match(result.stderr, /FIRECONNECT_AUTO_OFF_CLAUDE=1/);
+      assert.match(result.stderr, /NEXUS_AUTO_OFF_CLAUDE=1/);
       assert.equal(await readIfExists(fixture.logPath), "");
     });
   });
@@ -306,7 +335,7 @@ describe("install.sh Claude upgrade preflight", () => {
     { skip: !HAS_UTIL_LINUX_SCRIPT },
     async () => {
       await withFixture("decline", async (fixture) => {
-        await writeJson(path.join(fixture.home, ".fireconnect/config.json"), {
+        await writeJson(path.join(fixture.home, ".nexus/config.json"), {
           harnesses: { claude: { enabled: true } },
         });
 
@@ -326,7 +355,7 @@ describe("install.sh Claude upgrade preflight", () => {
     { skip: !HAS_UTIL_LINUX_SCRIPT },
     async () => {
       await withFixture("accept", async (fixture) => {
-        const configPath = path.join(fixture.home, ".fireconnect/config.json");
+        const configPath = path.join(fixture.home, ".nexus/config.json");
         const afterConfig = path.join(fixture.root, "config-after.json");
         await writeJson(configPath, {
           harnesses: { claude: { enabled: true } },
@@ -336,7 +365,7 @@ describe("install.sh Claude upgrade preflight", () => {
         });
 
         const result = runPreflightInPty(fixture, "\n", {
-          FIRECONNECT_AFTER_CONFIG: afterConfig,
+          NEXUS_AFTER_CONFIG: afterConfig,
         });
 
         assert.equal(result.status, 0, result.stderr);
@@ -347,13 +376,13 @@ describe("install.sh Claude upgrade preflight", () => {
 
   it("fails closed when the existing CLI leaves Claude managed", async () => {
     await withFixture("noop", async (fixture) => {
-      await writeJson(path.join(fixture.home, ".fireconnect/config.json"), {
+      await writeJson(path.join(fixture.home, ".nexus/config.json"), {
         harnesses: { claude: { enabled: true } },
       });
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_FAKE_MODE: "noop",
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_FAKE_MODE: "noop",
       });
 
       assert.notEqual(result.status, 0);
@@ -364,13 +393,13 @@ describe("install.sh Claude upgrade preflight", () => {
 
   it("fails closed when the existing CLI cannot disable Claude", async () => {
     await withFixture("failure", async (fixture) => {
-      await writeJson(path.join(fixture.home, ".fireconnect/config.json"), {
+      await writeJson(path.join(fixture.home, ".nexus/config.json"), {
         harnesses: { claude: { enabled: true } },
       });
 
       const result = runPreflight(fixture, {
-        FIRECONNECT_AUTO_OFF_CLAUDE: "1",
-        FIRECONNECT_FAKE_MODE: "fail",
+        NEXUS_AUTO_OFF_CLAUDE: "1",
+        NEXUS_FAKE_MODE: "fail",
       });
 
       assert.notEqual(result.status, 0);
@@ -393,7 +422,7 @@ describe("install.sh Claude upgrade preflight", () => {
     const installSource = await readFile(INSTALL_PATH, "utf8");
     assert.match(
       installSource,
-      /ensure_node_runtime\n  preflight_existing_install\n  ensure_durable_source/,
+      /ensure_node_runtime\n  check_names_are_ours\n  migrate_legacy_data_dir\n  preflight_existing_install\n  ensure_durable_source/,
     );
   });
 });
@@ -443,6 +472,141 @@ echo notes-ok
       );
       assert.match(result.stdout, /notes-ok/);
       assert.doesNotMatch(result.stdout, /^Note:/m);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("install.sh download", () => {
+  async function runDownload(root, home, source) {
+    const installSource = await readFile(INSTALL_PATH, "utf8");
+    const runner = path.join(root, "download-runner.sh");
+    await writeFile(
+      runner,
+      installSource.replace(/\nmain "\$@"\s*$/, '\nCLI=""\nSOURCE="$NEXUS_TEST_SOURCE"\nensure_durable_source\necho "cli=${CLI}"\n'),
+    );
+    return spawnSync("bash", [runner], {
+      encoding: "utf8",
+      env: { ...process.env, HOME: home, NEXUS_TEST_SOURCE: source },
+    });
+  }
+
+  async function withInstalledCli(callback) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "nexus-install-download-"));
+    const home = path.join(root, "home");
+    const installed = path.join(home, ".nexus/cli/packages/setup-cli/bin/nexus.mjs");
+    await mkdir(path.dirname(installed), { recursive: true });
+    await writeFile(installed, "// installed\n");
+    try {
+      await callback({ root, home, installed });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("keeps the existing install when the download fails", async () => {
+    await withInstalledCli(async ({ root, home, installed }) => {
+      const result = await runDownload(root, home, path.join(root, "missing.git"));
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /your existing install was left in place/);
+      assert.equal(await readFile(installed, "utf8"), "// installed\n");
+      assert.equal(existsSync(path.join(home, ".nexus/cli.download")), false);
+    });
+  });
+
+  it("swaps in a complete download", async () => {
+    await withInstalledCli(async ({ root, home, installed }) => {
+      const source = path.join(root, "source");
+      await mkdir(path.join(source, "packages/setup-cli/bin"), { recursive: true });
+      await writeFile(path.join(source, "packages/setup-cli/bin/nexus.mjs"), "// downloaded\n");
+      const git = (...args) => spawnSync("git", ["-C", source, ...args], { encoding: "utf8" });
+      git("init", "-q");
+      git("add", ".");
+      git("-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "init");
+
+      const result = await runDownload(root, home, source);
+
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /cli=.*\.nexus\/cli\/packages\/setup-cli\/bin\/nexus\.mjs/);
+      assert.equal(await readFile(installed, "utf8"), "// downloaded\n");
+    });
+  });
+});
+
+describe("install.sh names that belong to another program", () => {
+  async function runCheck(home) {
+    const source = await readFile(INSTALL_PATH, "utf8");
+    const fn = (name) => source.match(new RegExp(`^${name}\\(\\) \\{[\\s\\S]*?^\\}$`, "m"))?.[0];
+    const runner = path.join(home, "..", "check-runner.sh");
+    await writeFile(runner, [fn("foreign_launcher"), fn("foreign_data_dir"), fn("check_names_are_ours"), "check_names_are_ours"].join("\n"));
+    return spawnSync("bash", [runner], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  }
+
+  async function withHome(callback) {
+    const root = await mkdtemp(path.join(os.tmpdir(), "nexus-install-names-"));
+    const home = path.join(root, "home");
+    await mkdir(path.join(home, ".local/bin"), { recursive: true });
+    try {
+      await callback(home);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }
+
+  it("stops before changing anything when another program owns ~/.local/bin/nexus", async () => {
+    await withHome(async (home) => {
+      await writeFile(path.join(home, ".local/bin/nexus"), "#!/bin/sh\nexec other-tool\n");
+      const result = await runCheck(home);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /\.local\/bin\/nexus belongs to another program/);
+      assert.equal(await readFile(path.join(home, ".local/bin/nexus"), "utf8"), "#!/bin/sh\nexec other-tool\n");
+    });
+  });
+
+  it("stops when ~/.nexus holds another program's files", async () => {
+    await withHome(async (home) => {
+      await mkdir(path.join(home, ".nexus"));
+      await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
+      const result = await runCheck(home);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /~\/\.nexus belongs to another program/);
+    });
+  });
+
+  it("goes ahead over our own launchers and data directory", async () => {
+    await withHome(async (home) => {
+      const ours = `#!/usr/bin/env bash\nexec node "${home}/.nexus/cli/packages/setup-cli/bin/nexus.mjs" "$@"\n`;
+      await writeFile(path.join(home, ".local/bin/nexus"), ours);
+      await mkdir(path.join(home, ".nexus"));
+      await writeFile(path.join(home, ".nexus/config.json"), JSON.stringify({ harnesses: {} }));
+      const result = await runCheck(home);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  });
+});
+
+describe("install.sh data directory move", () => {
+  async function runMove(home) {
+    const source = await readFile(INSTALL_PATH, "utf8");
+    const fn = source.match(/^migrate_legacy_data_dir\(\) \{[\s\S]*?^\}$/m)[0];
+    const runner = path.join(home, "..", "move-runner.sh");
+    await writeFile(runner, ['install_note() { echo "NOTE: $*"; }', fn, "migrate_legacy_data_dir"].join("\n"));
+    return spawnSync("bash", [runner], { encoding: "utf8", env: { ...process.env, HOME: home } });
+  }
+
+  it("moves ~/.fireconnect to ~/.nexus and leaves a relative link behind", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "nexus-install-move-"));
+    const home = path.join(root, "home");
+    try {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      const result = await runMove(home);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /NOTE: Moved ~\/\.fireconnect to ~\/\.nexus\.$/m);
+      assert.equal(await readlink(path.join(home, ".fireconnect")), ".nexus");
+      assert.equal(await readFile(path.join(home, ".fireconnect/config.json"), "utf8"), "{}\n");
     } finally {
       await rm(root, { recursive: true, force: true });
     }

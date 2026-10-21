@@ -24,15 +24,15 @@ import {
   writeKeyStorageCache,
 } from "./storage-cache.mjs";
 import {
-  FIRECONNECT_KEY_STORAGE_ENV,
+  KEY_STORAGE_ENV,
   effectiveKeyStorageOverride,
   formatKeyStorageOverrideHint,
   readKeyStorageOverride,
 } from "./storage-env.mjs";
 
 export {
-  FIRECONNECT_KEY_STORAGE_ENV,
-  LEGACY_FIRECONNECT_KEY_STORAGE_ENV as FIRECONNECT_SECRET_BACKEND_ENV,
+  KEY_STORAGE_ENV,
+  LEGACY_KEY_STORAGE_ENV as SECRET_BACKEND_ENV,
 } from "./storage-env.mjs";
 
 import { writeFileAtomic } from "../io/atomic-write.mjs";
@@ -45,9 +45,9 @@ export const SECRET_SERVICE = "FireworksAI";
 export const SECRET_ACCOUNT = "fireworks-api-key";
 
 /**
- * FireConnect-controlled storage override. Maps to cross-keychain's
+ * Nexus-controlled storage override. Maps to cross-keychain's
  * `TS_KEYRING_BACKEND` (or an explicit native id) so the same backend is used
- * in this process and in any spawned `fireconnect key export` child.
+ * in this process and in any spawned `nexus key export` child.
  *   - `file`    → encrypted file backend (sandboxes / CI / no keychain)
  *   - `keychain`→ force the native OS keychain (error if none detected)
  *   - `null`    → explicit no-op backend (testing refusal paths)
@@ -202,7 +202,7 @@ async function readPlaintextSecretIfAvailable(resolvedHome) {
 
 function memoryStorePath(home, account = SECRET_ACCOUNT) {
   const suffix = account === SECRET_ACCOUNT ? "" : `-${account}`;
-  return path.join(resolveHome(home), ".fireconnect", `.secret-memory${suffix}`);
+  return path.join(resolveHome(home), ".nexus", `.secret-memory${suffix}`);
 }
 
 async function loadMemoryStoreFromDisk(home, account = SECRET_ACCOUNT) {
@@ -287,7 +287,7 @@ export function resetSecretStoreForTests() {
     originalCrossKeychainBackendEnv = undefined;
   }
   // Reset cross-keychain's module-level cache (always exported) so a changed
-  // XDG_DATA_HOME / FIRECONNECT_KEY_STORAGE is honored on the next op.
+  // XDG_DATA_HOME / NEXUS_KEY_STORAGE is honored on the next op.
   try {
     if (keychainModule?.__resetKeyringStateForTests) {
       keychainModule.__resetKeyringStateForTests();
@@ -381,6 +381,10 @@ async function secureBackendKind(home) {
   if (forced === "keychain") {
     return "keychain";
   }
+  // Same rule ensureBackendEnv applies: SSH/WSL writes go to the file backend.
+  if (!forced && shouldPreferFileBackendOnLinux()) {
+    return "file";
+  }
   let backends = [];
   try {
     backends = await keychain.listBackends();
@@ -407,7 +411,7 @@ async function storeSecretInSecureBackend(value, home, account = SECRET_ACCOUNT)
         return;
       }
       throw new Error(
-        "FireConnect's secret-storage module (cross-keychain) could not be loaded "
+        "Nexus's secret-storage module (cross-keychain) could not be loaded "
           + "and the encrypted-file fallback is unavailable (set HOME or XDG_DATA_HOME).",
       );
     }
@@ -454,6 +458,17 @@ async function storeSecretInSecureBackend(value, home, account = SECRET_ACCOUNT)
 }
 
 /**
+ * True once a store fell back to the encrypted file because the OS keychain
+ * could not hold the key. That keychain is then left alone: asking it again
+ * finds nothing (the key is in the file) until a reprobe moves it back.
+ * @param {string} resolvedHome
+ */
+async function fileFallbackCommitted(resolvedHome) {
+  return builtinFileStoreAvailable()
+    && (await readKeyStorageCacheEntry(resolvedHome))?.storage === FILE_BACKEND_ID;
+}
+
+/**
  * @param {string} [home]
  * @returns {Promise<string | null>}
  */
@@ -468,9 +483,9 @@ async function readSecretFromSecureBackend(home, account = SECRET_ACCOUNT) {
     return secureReadCache.get(cacheKey);
   }
   return withHomeScopedEnv(resolvedHome, async () => {
-    const keychain = await loadKeychainModule();
+    const keychain = await fileFallbackCommitted(resolvedHome) ? null : await loadKeychainModule();
     if (!keychain) {
-      if (useBuiltinFileFallback()) {
+      if (builtinFileStoreAvailable()) {
         lastReadError = null;
         const value = await builtinGetPassword(SECRET_SERVICE, account);
         secureReadCache.set(cacheKey, value ?? null);
@@ -512,9 +527,9 @@ async function deleteSecretFromSecureBackend(home, account = SECRET_ACCOUNT) {
   const resolvedHome = resolveHome(home);
   secureReadCache.delete(secureCacheKey(resolvedHome, account));
   await withHomeScopedEnv(resolvedHome, async () => {
-    const keychain = await loadKeychainModule();
+    const keychain = await fileFallbackCommitted(resolvedHome) ? null : await loadKeychainModule();
     if (!keychain) {
-      if (useBuiltinFileFallback()) {
+      if (builtinFileStoreAvailable()) {
         try {
           await builtinDeletePassword(SECRET_SERVICE, account);
         } catch {
@@ -609,14 +624,14 @@ function getFallbackHandlers() {
 }
 
 function isTestSecretStoreContext() {
-  return process.env.FIRECONNECT_TEST === "1";
+  return process.env.NEXUS_TEST === "1";
 }
 
 function useMemoryStore() {
   if (memoryBackend !== null) {
     return true;
   }
-  return process.env.FIRECONNECT_SECRET_STORE === "memory" && isTestSecretStoreContext();
+  return process.env.NEXUS_SECRET_STORE === "memory" && isTestSecretStoreContext();
 }
 
 /**
@@ -677,10 +692,10 @@ function pickNativeBackendId(backends) {
 }
 
 /**
- * Apply FireConnect's backend override to cross-keychain by setting the
+ * Apply Nexus's backend override to cross-keychain by setting the
  * upstream `TS_KEYCHAIN_BACKEND` env before cross-keychain initializes its
- * active backend. The FireConnect override ALWAYS wins over a pre-existing
- * `TS_KEYRING_BACKEND` (the user set FIRECONNECT_KEY_STORAGE explicitly).
+ * active backend. The Nexus override ALWAYS wins over a pre-existing
+ * `TS_KEYRING_BACKEND` (the user set NEXUS_KEY_STORAGE explicitly).
  * Throws (friendly) for `keychain`
  * when no native backend is detected.
  * @param {typeof import("cross-keychain")} keychain
@@ -724,7 +739,7 @@ async function ensureBackendEnv(keychain) {
 
 /**
  * Set cross-keychain's backend-selection env, capturing the original value once
- * so {@link resetSecretStoreForTests} can restore it. The FireConnect override
+ * so {@link resetSecretStoreForTests} can restore it. The Nexus override
  * always wins over a pre-existing `TS_KEYRING_BACKEND`.
  * @param {string} id
  */
@@ -750,7 +765,7 @@ function friendlySecretError(error, home) {
 
   if (name === "KeyringLockedError") {
     return new Error(
-      "The OS keychain is locked. Unlock it (e.g. sign in to your desktop session / unlock the keyring) and re-run `fireconnect configure`.",
+      "The OS keychain is locked. Unlock it (e.g. sign in to your desktop session / unlock the keyring) and re-run `nexus configure`.",
     );
   }
   if (name === "NoKeyringError" || name === "InitError") {
@@ -762,7 +777,7 @@ function friendlySecretError(error, home) {
   if (name === "PasswordSetError") {
     return new Error(
       "Could not write the API key to the secret store (the keychain rejected the write). "
-        + "Check keychain permissions and re-run `fireconnect configure`.",
+        + "Check keychain permissions and re-run `nexus configure`.",
     );
   }
   if (code === "EACCES" || code === "EROFS") {
@@ -778,7 +793,7 @@ function friendlySecretError(error, home) {
   if (code === "ENOENT" || code === "ENAMETOOLONG") {
     return new Error(
       `Could not initialize the secret store (${code}). HOME=${home || "(unset)"}. `
-        + "Set HOME to a writable directory and re-run `fireconnect configure`.",
+        + "Set HOME to a writable directory and re-run `nexus configure`.",
     );
   }
   if (err instanceof KeyringTimeoutError || name === "KeyringTimeoutError") {
@@ -793,7 +808,7 @@ function friendlySecretError(error, home) {
 
 /**
  * Detect the active secret backend for reporting (no writes, no key material).
- * Mirrors cross-keychain's selection: FireConnect override → native keychain →
+ * Mirrors cross-keychain's selection: Nexus override → native keychain →
  * encrypted file → unavailable.
  *
  * `home` is only used for the in-memory test store's path; the file/keychain
@@ -827,7 +842,7 @@ export async function detectSecretBackend(home = process.env.HOME ?? "") {
       backend: "plaintext",
       label: "Plaintext file (0600, last-resort fallback)",
       location: plaintextSecretPath(home) ?? undefined,
-      error: "Secure storage failed earlier; using ~/.fireconnect/.api-key. Run `fireconnect upgrade` to move the key to the OS keychain.",
+      error: "Secure storage failed earlier; using ~/.nexus/.api-key. Run `nexus update` to move the key to the OS keychain.",
     };
   }
 
@@ -835,18 +850,23 @@ export async function detectSecretBackend(home = process.env.HOME ?? "") {
   if (!keychain) {
     if (builtinFileStoreAvailable()) {
       return fileBackendDetectionResult(secretsFilePath(), {
-        error: "The cross-keychain secret module could not be loaded; using the built-in encrypted-file fallback. Reinstall FireConnect (`fireconnect upgrade`) to restore full keychain support.",
+        error: "The cross-keychain secret module could not be loaded; using the built-in encrypted-file fallback. Reinstall Nexus (`nexus update`) to restore full keychain support.",
       });
     }
     return {
       backend: "unavailable",
       label: "Unavailable",
-      error: "The cross-keychain secret module could not be loaded. Reinstall FireConnect (`fireconnect upgrade`).",
+      error: "The cross-keychain secret module could not be loaded. Reinstall Nexus (`nexus update`).",
     };
   }
 
   const forced = effectiveKeyStorageOverride();
   const explicit = readKeyStorageOverride();
+  if (!forced && cached === FILE_BACKEND_ID && builtinFileStoreAvailable()) {
+    return fileBackendDetectionResult(secretsFilePath(), {
+      error: "The OS keychain could not store the key, so Nexus uses the encrypted file. Run `nexus update` once the keychain works to move the key there.",
+    });
+  }
   // Prefer cross-keychain's own data root so the reported location matches
   // where its file backend actually writes (it uses os.homedir()/XDG, which can
   // differ from the process.env.HOME fallback in keychainFileDataRoot).
@@ -919,7 +939,7 @@ export async function detectSecretBackend(home = process.env.HOME ?? "") {
       backend: "plaintext",
       label: "Plaintext file (0600, last-resort fallback)",
       location: plaintextSecretPath(home) ?? undefined,
-      error: "Secure storage is unavailable; reading from ~/.fireconnect/.api-key.",
+      error: "Secure storage is unavailable; reading from ~/.nexus/.api-key.",
     };
   }
   return {
@@ -1087,12 +1107,34 @@ export async function deleteSecret(home) {
 }
 
 /**
+ * Delete the encrypted-file copy of a key that reprobe just stored in the
+ * keychain, but only once the key reads back without it. If it doesn't (the
+ * write landed in that same file, or the keychain dropped it), restore the
+ * copy and record the file again: the key is never left without a copy.
+ * @param {string} resolvedHome
+ * @param {string} key
+ * @returns {Promise<boolean>} true when the copy was removed
+ */
+async function retireFileFallbackCopy(resolvedHome, key) {
+  await withHomeScopedEnv(resolvedHome, () => builtinDeletePassword(SECRET_SERVICE, SECRET_ACCOUNT)).catch(() => {});
+  secureReadCache.clear();
+  if ((await readSecretFromSecureBackend(resolvedHome))?.trim() === key) {
+    return true;
+  }
+  await withHomeScopedEnv(resolvedHome, () => storeBuiltinFileSecretVerified(SECRET_SERVICE, SECRET_ACCOUNT, key));
+  await persistKeyStorageCache(resolvedHome, FILE_BACKEND_ID, "The OS keychain did not keep the key.", { required: true });
+  secureReadCache.clear();
+  return false;
+}
+
+/**
  * Clear the cached storage choice and try secure storage again. Used by
- * `fireconnect upgrade` and `FIRECONNECT_REPROBE_KEY_STORAGE=1`. When a
- * plaintext fallback key exists, attempts to move it back to keychain/file.
+ * `nexus update` and `NEXUS_REPROBE_KEY_STORAGE=1`. When a key sits in the
+ * plaintext or encrypted-file fallback, attempts to move it back to the
+ * keychain (or, from plaintext, to the encrypted file).
  *
  * @param {string} [home]
- * @returns {Promise<{ migrated: boolean, backend: Awaited<ReturnType<typeof detectSecretBackend>> }>}
+ * @returns {Promise<{ migrated: boolean, movedFrom?: "plaintext" | "file" | null, backend: Awaited<ReturnType<typeof detectSecretBackend>> }>}
  */
 export async function reprobeKeyStorage(home = process.env.HOME ?? "") {
   const resolvedHome = resolveHome(home);
@@ -1108,6 +1150,9 @@ export async function reprobeKeyStorage(home = process.env.HOME ?? "") {
   }
 
   const plaintextKey = (await readPlaintextSecret(resolvedHome))?.trim() ?? "";
+  const fileFallbackKey = await fileFallbackCommitted(resolvedHome)
+    ? (await readSecretFromSecureBackend(resolvedHome))?.trim() ?? ""
+    : "";
   await clearKeyStorageCache(resolvedHome);
   // Reprobe re-selects the backend and may migrate the key; drop cached reads so
   // the fresh backend choice isn't shadowed by a stale in-process value.
@@ -1115,17 +1160,25 @@ export async function reprobeKeyStorage(home = process.env.HOME ?? "") {
   keychainModule = null;
   keychainModulePromise = null;
 
-  if (plaintextKey) {
+  const carriedKey = plaintextKey || fileFallbackKey;
+  if (carriedKey) {
     const outcome = await getFallbackHandlers().storeSecretWithFallbacks(
-      plaintextKey,
+      carriedKey,
       resolvedHome,
       storeSecretInSecureBackend,
+      { quiet: !plaintextKey },
     );
+    let movedFrom = plaintextKey && outcome !== "plaintext" ? "plaintext" : null;
     if (outcome === "secure") {
       await finalizeSecureSecretWrite(resolvedHome, resolvedHome);
+      if (fileFallbackKey && (await readKeyStorageCache(resolvedHome)) !== FILE_BACKEND_ID
+          && await retireFileFallbackCopy(resolvedHome, fileFallbackKey)) {
+        movedFrom ??= "file";
+      }
     }
     return {
-      migrated: outcome !== "plaintext",
+      migrated: Boolean(movedFrom),
+      movedFrom,
       backend: await detectSecretBackend(resolvedHome),
     };
   }

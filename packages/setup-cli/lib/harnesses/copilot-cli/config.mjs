@@ -29,8 +29,8 @@ import { readJsonIfExists } from "../../io/json.mjs";
 /** Provider name; also the qualifier in every selection id. */
 export const COPILOT_CLI_PROVIDER_NAME = "fireworks";
 
-/** The CLI harness's FireConnect data dir — separate from copilot-app's so the two backups can't collide. */
-export const COPILOT_CLI_DATA_RELATIVE_DIR = ".fireconnect/copilot-cli";
+/** The CLI harness's Nexus data dir — separate from copilot-app's so the two backups can't collide. */
+export const COPILOT_CLI_DATA_RELATIVE_DIR = ".nexus/copilot-cli";
 
 /**
  * @param {string} home
@@ -130,6 +130,28 @@ async function readRawIfExists(filePath) {
   }
 }
 
+function parseJsonOrNull(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Whether providers.json already carries Nexus's provider or models. */
+function hasManagedProviders(raw) {
+  const config = raw.trim() ? parseJsonOrNull(raw) : null;
+  return Boolean(config)
+    && ((Array.isArray(config.providers) && config.providers.some((p) => p?.name === COPILOT_CLI_PROVIDER_NAME))
+      || (Array.isArray(config.models) && config.models.some((m) => m?.provider === COPILOT_CLI_PROVIDER_NAME)));
+}
+
+/** Whether settings.json already selects one of Nexus's models. */
+function hasManagedSelection(raw) {
+  const settings = raw.trim() ? parseJsonOrNull(raw) : null;
+  return typeof settings?.model === "string" && settings.model.startsWith(`${COPILOT_CLI_PROVIDER_NAME}/`);
+}
+
 /**
  * Build the `models[]` entries for the CLI.
  * @param {Array<{ id: string, displayName: string, maxPromptTokens?: number|null, maxOutputTokens?: number|null, vision?: boolean }>} models
@@ -174,7 +196,9 @@ export function buildCliModels(models) {
  * providers/models the user configured themselves.
  *
  * A snapshot is taken only on the first `on` (never overwriting an existing
- * backup), so `off` can restore the original byte-for-byte.
+ * backup), so `off` can restore the original byte-for-byte. A file that
+ * already carries Nexus's provider isn't the user's original (the backup was
+ * lost); it isn't snapshotted, and `off` strips Nexus's entries instead.
  *
  * @param {{ providersPath: string, dataDir: string, apiKey: string, models: object[], extraHeaders?: Record<string,string> }} opts
  * @returns {Promise<{ providersPath: string, modelsAdded: string[] }>}
@@ -190,7 +214,7 @@ export async function enableCopilotCli({
 
   const backupPath = copilotProvidersBackupPath(dataDir, providersPath);
   const hasBackup = Object.keys(await readJsonIfExists(backupPath)).length > 0;
-  if (!hasBackup) {
+  if (!hasBackup && !hasManagedProviders(raw)) {
     await mkdir(path.dirname(backupPath), { recursive: true, mode: 0o700 });
     await writeFileAtomic(backupPath, `${JSON.stringify({ providersPath: path.resolve(providersPath), snapshot: { existed, raw } }, null, 2)}\n`);
     await chmod(backupPath, 0o600);
@@ -238,7 +262,7 @@ export async function enableCopilotCli({
 
 /**
  * Back out the CLI config: restore the pre-`on` file byte-for-byte when a
- * snapshot exists, otherwise strip only the entries FireConnect owns.
+ * snapshot exists, otherwise strip only the entries Nexus owns.
  *
  * @param {{ providersPath: string, dataDir: string }} opts
  * @returns {Promise<"restored" | "stripped" | "none">}
@@ -312,7 +336,8 @@ export async function selectCopilotCliModel({ settingsPath, dataDir, selectionId
 
   const backupPath = copilotSettingsBackupPath(dataDir, settingsPath);
   const hasBackup = Object.keys(await readJsonIfExists(backupPath)).length > 0;
-  if (!hasBackup) {
+  // Same rule as providers.json: never snapshot Nexus's own selection.
+  if (!hasBackup && !hasManagedSelection(raw)) {
     await mkdir(path.dirname(backupPath), { recursive: true, mode: 0o700 });
     await writeFileAtomic(backupPath, `${JSON.stringify({ settingsPath: path.resolve(settingsPath), snapshot: { existed, raw } }, null, 2)}\n`);
     await chmod(backupPath, 0o600).catch(() => {});

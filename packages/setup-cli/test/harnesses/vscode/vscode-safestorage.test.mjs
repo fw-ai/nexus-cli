@@ -242,22 +242,22 @@ describe("vscode-safestorage Windows Local State key loading", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* Plaintext test seam (FIRECONNECT_VSCODE_SECRET_PLAINTEXT) used by the        */
+/* Plaintext test seam (NEXUS_VSCODE_SECRET_PLAINTEXT) used by the        */
 /* harness integration tests.                                                  */
 /* -------------------------------------------------------------------------- */
 
 describe("vscode-safestorage plaintext seam", () => {
   it("encrypt/decrypt are the identity when the seam is set", () => {
-    const prev = process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
-    process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = "1";
+    const prev = process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
+    process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = "1";
     try {
       assert.equal(encryptSecret("fw_abc"), "fw_abc");
       assert.equal(decryptSecret("fw_abc"), "fw_abc");
     } finally {
       if (prev === undefined) {
-        delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+        delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
       } else {
-        process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = prev;
+        process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = prev;
       }
     }
   });
@@ -309,7 +309,7 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
   });
 
   it("linuxSafeStorageObfuscatedKeyNote mentions secret-tool when a v2 key is decrypt-only reachable", () => {
-    if (process.platform !== "linux" || process.env.FIRECONNECT_LIBSECRET_INTEGRATION !== "1") {
+    if (process.platform !== "linux" || process.env.NEXUS_LIBSECRET_INTEGRATION !== "1") {
       return;
     }
     resetLinuxSafeStorageDetectionForTests();
@@ -322,7 +322,7 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
   });
 
   it("linuxSafeStorageObfuscatedKeyNote mentions launch and secret-tool when dbus is up without secret-tool", () => {
-    if (process.platform !== "linux" || process.env.FIRECONNECT_LIBSECRET_INTEGRATION === "1") {
+    if (process.platform !== "linux" || process.env.NEXUS_LIBSECRET_INTEGRATION === "1") {
       return;
     }
     resetLinuxSafeStorageDetectionForTests();
@@ -364,8 +364,8 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
   });
 
   it("storedSecretHasCiphertext separates real ciphertext from absent/cleared/garbage rows", () => {
-    const prev = process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
-    delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+    const prev = process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
+    delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
     try {
       assert.equal(storedSecretHasCiphertext(JSON.stringify(aesEncrypt("x", "pw", "v11", 1))), true);
       assert.equal(storedSecretHasCiphertext(JSON.stringify({ type: "Buffer", data: [] })), false);
@@ -374,9 +374,9 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
       assert.equal(storedSecretHasCiphertext("not json"), false);
     } finally {
       if (prev === undefined) {
-        delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+        delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
       } else {
-        process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = prev;
+        process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = prev;
       }
     }
   });
@@ -385,8 +385,8 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
     if (process.platform !== "linux") {
       return;
     }
-    const prev = process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
-    delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+    const prev = process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
+    delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
     try {
       const enc = encryptSecret("probe-key", { variant: "cursor" });
       const blob = Buffer.from(JSON.parse(enc).data);
@@ -400,19 +400,19 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
       assert.equal(linuxEncryptUsesBasicTextBackend(enc), true);
     } finally {
       if (prev === undefined) {
-        delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+        delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
       } else {
-        process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = prev;
+        process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = prev;
       }
     }
   });
 
   it("encryptSecret on Linux uses v11 when application-scoped key exists (integration)", () => {
-    if (process.platform !== "linux" || process.env.FIRECONNECT_LIBSECRET_INTEGRATION !== "1") {
+    if (process.platform !== "linux" || process.env.NEXUS_LIBSECRET_INTEGRATION !== "1") {
       return;
     }
-    const prev = process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
-    delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+    const prev = process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
+    delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
     try {
       const enc = encryptSecret("integration-probe", { variant: "cursor" });
       const blob = Buffer.from(JSON.parse(enc).data);
@@ -421,9 +421,9 @@ describe("vscode-safestorage Linux Secret Service detection", () => {
       assert.equal(linuxEncryptUsesBasicTextBackend(enc), false);
     } finally {
       if (prev === undefined) {
-        delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+        delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
       } else {
-        process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = prev;
+        process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = prev;
       }
     }
   });

@@ -39,7 +39,7 @@ async function exportOpenaiApiKey(home, { storedOnly = false } = {}) {
 }
 
 /**
- * Key resolver. `fireconnect key export` is the entrypoint the Claude
+ * Key resolver. `nexus key export` is the entrypoint the Claude
  * apiKeyHelper and the legacy env-ref shell hook invoke at runtime to print the
  * resolved Fireworks key; `--openai` / `--anthropic` print a provider key, as
  * in the README's `key export --openai | codex login --with-api-key`. Key

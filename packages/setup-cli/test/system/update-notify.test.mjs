@@ -82,7 +82,7 @@ describe("shouldSpawnChecker", () => {
 describe("tryAcquireUpdateLock", () => {
   it("prevents concurrent workers without touching the version cache", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-update-notify-"));
-    const cacheDir = path.join(home, ".fireconnect");
+    const cacheDir = path.join(home, ".nexus");
     await mkdir(cacheDir, { recursive: true });
     const cachePath = path.join(cacheDir, "update-check.json");
 
@@ -102,11 +102,11 @@ describe("tryAcquireUpdateLock", () => {
 
   it("allows a new worker after the lock TTL expires", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-update-notify-"));
-    await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+    await mkdir(path.join(home, ".nexus"), { recursive: true });
 
     assert.equal(tryAcquireUpdateLock(home), true);
 
-    const lockPath = path.join(home, ".fireconnect", "update-check.lock");
+    const lockPath = path.join(home, ".nexus", "update-check.lock");
     const stale = new Date(Date.now() - FIVE_MIN - 1000);
     await utimes(lockPath, stale, stale);
 
@@ -149,13 +149,13 @@ describe("shouldPromptUpgrade / snooze", () => {
     );
   });
 
-  it("honors FIRECONNECT_NO_UPDATE_PROMPT=1", () => {
+  it("honors NEXUS_NO_UPDATE_PROMPT=1", () => {
     assert.equal(
       shouldPromptUpgrade({
         isTTY: true,
         isGitInstall: true,
         latestVersion: "0.9.2",
-        environment: { FIRECONNECT_NO_UPDATE_PROMPT: "1" },
+        environment: { NEXUS_NO_UPDATE_PROMPT: "1" },
         now,
       }),
       false,
@@ -212,7 +212,7 @@ describe("promptAndMaybeUpgrade", () => {
 
   it("snoozes for 24h when the user declines", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-upgrade-prompt-no-"));
-    await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+    await mkdir(path.join(home, ".nexus"), { recursive: true });
     const before = Date.now();
     const result = await promptAndMaybeUpgrade({
       home,
@@ -225,7 +225,7 @@ describe("promptAndMaybeUpgrade", () => {
     });
     assert.deepEqual(result, { upgraded: false, snoozed: true });
     const saved = JSON.parse(
-      await readFile(path.join(home, ".fireconnect/update-check.json"), "utf8"),
+      await readFile(path.join(home, ".nexus/update-check.json"), "utf8"),
     );
     assert.equal(saved.latestVersion, "0.9.2");
     assert.equal(saved.promptSnoozedVersion, "0.9.2");
@@ -236,9 +236,9 @@ describe("promptAndMaybeUpgrade", () => {
 describe("checkForUpdates prompt path", () => {
   it("prompts on TTY git installs and skips the tip while snoozed", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-check-updates-"));
-    await mkdir(path.join(home, ".fireconnect/cli/.git"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli/.git"), { recursive: true });
     await writeFile(
-      path.join(home, ".fireconnect/update-check.json"),
+      path.join(home, ".nexus/update-check.json"),
       JSON.stringify({
         checkedAt: Date.now(),
         // Newer than package.json (0.9.1) so the tip/prompt path triggers.
@@ -289,9 +289,9 @@ describe("checkForUpdates prompt path", () => {
 
   it("does not prompt when stdout is piped even if stderr is a TTY", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-check-updates-pipe-"));
-    await mkdir(path.join(home, ".fireconnect/cli/.git"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli/.git"), { recursive: true });
     await writeFile(
-      path.join(home, ".fireconnect/update-check.json"),
+      path.join(home, ".nexus/update-check.json"),
       JSON.stringify({ checkedAt: Date.now(), latestVersion: "9.9.9" }),
     );
 
@@ -318,14 +318,14 @@ describe("checkForUpdates prompt path", () => {
     }
     assert.equal(prompted, false);
     assert.match(stderrChunks.join(""), /update available/);
-    assert.match(stderrChunks.join(""), /Run: fireconnect upgrade/);
+    assert.match(stderrChunks.join(""), /Run: nexus update/);
   });
 
   it("rethrows upgrade failures after the user accepts", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-check-updates-fail-"));
-    await mkdir(path.join(home, ".fireconnect/cli/.git"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli/.git"), { recursive: true });
     await writeFile(
-      path.join(home, ".fireconnect/update-check.json"),
+      path.join(home, ".nexus/update-check.json"),
       JSON.stringify({ checkedAt: Date.now(), latestVersion: "9.9.9" }),
     );
 
@@ -346,16 +346,16 @@ describe("checkForUpdates prompt path", () => {
 });
 
 describe("checkForUpdates spawn suppression", () => {
-  it("never spawns the detached checker when FIRECONNECT_NO_UPDATE_CHECK=1", async () => {
+  it("never spawns the detached checker when NEXUS_NO_UPDATE_CHECK=1", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-check-suppressed-"));
     // No update-check.json → shouldSpawnChecker would be true and the spawn
     // path would acquire the lock before detaching the worker. If the guard
     // works, no lock file ever appears.
     await checkForUpdates("help", home, {
-      environment: { HOME: home, FIRECONNECT_NO_UPDATE_CHECK: "1" },
+      environment: { HOME: home, NEXUS_NO_UPDATE_CHECK: "1" },
     });
     await assert.rejects(
-      () => readFile(path.join(home, ".fireconnect/update-check.lock")),
+      () => readFile(path.join(home, ".nexus/update-check.lock")),
       (error) => error.code === "ENOENT",
     );
   });
@@ -414,7 +414,7 @@ describe("mergeUpdateCache", () => {
 
   it("keeps a decline snooze when the checker re-reads before writing", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-update-race-"));
-    await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+    await mkdir(path.join(home, ".nexus"), { recursive: true });
     const {
       patchUpdateCache,
       readUpdateCache,

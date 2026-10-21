@@ -1,4 +1,4 @@
-/** Marker so fireconnect can find/remove a legacy SessionStart hook entry. */
+/** Marker so nexus can find/remove a legacy SessionStart hook entry. */
 export const DESKTOP_GUARD_HOOK_MARKER = "fireconnect-desktop-guard.mjs";
 
 function isOwnHookEntry(entry) {

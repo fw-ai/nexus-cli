@@ -17,7 +17,7 @@ import { readJsonIfExists, writeJson } from "../io/json.mjs";
  * caller's user resource by email), CreateApiKey (mint a key named
  * fireconnect-{hostname}, returned in plaintext exactly once).
  */
-export const GATEWAY_GRPC_WEB_URL = process.env.FIRECONNECT_GATEWAY_GRPC_WEB_URL?.trim()
+export const GATEWAY_GRPC_WEB_URL = process.env.NEXUS_GATEWAY_GRPC_WEB_URL?.trim()
   || "https://gateway.fireworks.ai/web/gateway.Gateway";
 
 /**
@@ -26,7 +26,7 @@ export const GATEWAY_GRPC_WEB_URL = process.env.FIRECONNECT_GATEWAY_GRPC_WEB_URL
  * pool). Points at the SSO path that DOES work for them.
  */
 export const BROWSER_SSO_UNSUPPORTED_HINT =
-  "(Teams that sign in with custom SSO: run fireconnect login --account <account-id> instead — option 3 in the login menu.)";
+  "(Teams that sign in with custom SSO: run nexus login --account <account-id> instead — option 3 in the login menu.)";
 
 export const BROWSER_SIGNIN_NO_ACCOUNT_FAILURE =
   `Your sign-in worked, but no Fireworks account is associated with it. ${BROWSER_SSO_UNSUPPORTED_HINT}`;
@@ -34,7 +34,7 @@ export const BROWSER_SIGNIN_NO_ACCOUNT_FAILURE =
 /** display_name for keys this CLI mints; the hostname says which machine to revoke. */
 export function mintedKeyName(hostname = os.hostname()) {
   const host = hostname.split(".")[0].toLowerCase().replace(/[^a-z0-9-]/g, "-") || "cli";
-  return `fireconnect-${host}`;
+  return `nexus-${host}`;
 }
 
 /**
@@ -109,7 +109,7 @@ export async function mintApiKeyForAccount(idToken, accountName, {
     // Picking the first would mint a key under whoever the server lists
     // first — possibly not the caller — so refuse instead.
     return failed(
-      `Your sign-in didn't say which of ${accountName}'s users you are, so no key was created — use fireconnect login --paste instead.`,
+      `Your sign-in didn't say which of ${accountName}'s users you are, so no key was created — use nexus login --paste instead.`,
     );
   }
   const userName = userNames[0];
@@ -165,7 +165,7 @@ export async function mintApiKeyFromIdToken(idToken, options = {}) {
  * @param {string} home
  */
 export function mintedKeyStatePath(home) {
-  return path.join(home, ".fireconnect", "minted-key.json");
+  return path.join(home, ".nexus", "minted-key.json");
 }
 
 /**
@@ -245,7 +245,7 @@ function allResourceNames(message) {
  */
 function rpcFailureLine(doing, result) {
   if (result.status === 16) {
-    return `Your browser sign-in wasn't accepted while ${doing} — try again, or use fireconnect login --paste. `
+    return `Your browser sign-in wasn't accepted while ${doing} — try again, or use nexus login --paste. `
       + BROWSER_SSO_UNSUPPORTED_HINT;
   }
   return `Something went wrong ${doing}${result.detail ? ` (${result.detail})` : ` (status ${result.status})`}.`;

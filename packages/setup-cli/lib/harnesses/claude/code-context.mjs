@@ -7,7 +7,7 @@ import {
   isFirerouterModelPattern,
 } from "../../fireworks/model-id.mjs";
 import { lookupModelSpec, resolveFireworksCatalog } from "../../fireworks/model-specs.mjs";
-import { FIREPASS_FALLBACK_ROUTERS, loadServerlessCatalog } from "../../fireworks/models.mjs";
+import { loadServerlessCatalog } from "../../fireworks/models.mjs";
 
 export const CLAUDE_CODE_1M_CONTEXT_THRESHOLD = 1_000_000;
 
@@ -76,18 +76,23 @@ export function modelQualifiesForClaudeCode1mContext(modelId) {
   // The [1m] tag claims a 1M window: only models with a KNOWN window qualify.
   // Unknown models resolve to the shared 1M default for sizing, but tagging
   // them would advertise context they may not have. Offline aliases resolve
-  // through their fallback base model (Fire Pass keys cannot warm the catalog).
+  // through their base model so a cold catalog still tags them.
   const knownWindow = lookupModelSpec(modelId)?.capabilities?.contextWindow
     ?? resolveFireworksCatalog(modelId).cache.contextLength
-    ?? fallbackAliasBaseWindow(slug, modelId);
+    ?? fallbackAliasBaseWindow(slug);
   return (knownWindow ?? 0) >= CLAUDE_CODE_1M_CONTEXT_THRESHOLD;
 }
 
-/** Base-model window for a fallback alias when the live catalog is cold. */
-function fallbackAliasBaseWindow(slug, modelId) {
-  const base = FIREPASS_FALLBACK_ROUTERS.find(
-    (row) => row.shortId === slug || row.id === modelId,
-  )?.baseModelId;
+const OFFLINE_ALIAS_BASE_MODELS = {
+  "glm-latest": "accounts/fireworks/models/glm-5p2",
+  "glm-fast-latest": "accounts/fireworks/models/glm-5p2",
+  "glm-5p2-fast": "accounts/fireworks/models/glm-5p2",
+  "kimi-fast-latest": "accounts/fireworks/models/kimi-k3",
+};
+
+/** Base-model window for a router alias when the live catalog is cold. */
+function fallbackAliasBaseWindow(slug) {
+  const base = OFFLINE_ALIAS_BASE_MODELS[slug];
   return base ? lookupModelSpec(base)?.capabilities?.contextWindow ?? null : null;
 }
 
@@ -120,15 +125,15 @@ export function applyClaudeCodeContextPolicy(env, mapping) {
  * Hydrate the serverless catalog cache before rewriting Claude Code settings so
  * 1M-context detection uses live context lengths (including router bases).
  * Best-effort: static spec fallbacks still apply when the network is down.
- * @param {{ apiKey?: string, keyType?: string }} opts
+ * @param {{ apiKey?: string }} opts
  */
-export async function ensureCatalogForClaudeCodeContext({ apiKey = "", keyType = "" } = {}) {
+export async function ensureCatalogForClaudeCodeContext({ apiKey = "" } = {}) {
   const trimmed = apiKey?.trim();
-  if (!trimmed || keyType === "firepass") {
+  if (!trimmed) {
     return;
   }
   try {
-    await loadServerlessCatalog({ apiKey: trimmed, keyType });
+    await loadServerlessCatalog({ apiKey: trimmed });
   } catch {
     /* lookupFireworksModelLimits falls back to cache + static specs */
   }

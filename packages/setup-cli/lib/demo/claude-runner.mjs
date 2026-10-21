@@ -1,8 +1,8 @@
 /**
- * Real-tool driver for `fireconnect claude demo`'s race.
+ * Real-tool driver for `nexus claude demo`'s race.
  *
  * Spawns a `claude -p` (Claude Code, headless) process using the user's
- * FireConnect-managed profile and parses its `--output-format stream-json` stdout.
+ * Nexus-managed profile and parses its `--output-format stream-json` stdout.
  */
 
 import { spawn } from "node:child_process";
@@ -463,7 +463,7 @@ export async function runClaude({
   let stderrTail = "";
   let timedOut = false;
 
-  // Use the user's FireConnect-managed Claude profile unless a legacy isolated
+  // Use the user's Nexus-managed Claude profile unless a legacy isolated
   // config dir is passed (tests only).
   const childEnv = configDir
     ? buildIsolatedChildEnv(env, configDir)

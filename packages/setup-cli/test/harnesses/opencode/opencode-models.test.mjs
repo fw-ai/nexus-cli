@@ -186,10 +186,4 @@ describe("opencode model entries", () => {
     const entry = buildOpencodeModelEntry("firerouter");
     assert.equal(entry.cost, undefined);
   });
-
-  it("omits cost for Fire Pass subscription keys", () => {
-    const entry = buildOpencodeModelEntry("accounts/fireworks/routers/glm-5p2-fast", { firepass: true });
-    assert.equal(entry.cost, undefined);
-    assert.ok(entry.limit.context >= 1_000_000);
-  });
 });

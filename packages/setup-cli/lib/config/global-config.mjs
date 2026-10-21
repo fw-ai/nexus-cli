@@ -9,8 +9,9 @@ import {
 import { readJsonIfExists, writeJson } from "../io/json.mjs";
 import { isFireworksShapedKey } from "../keys/key-type.mjs";
 import { HARNESS, HARNESSES } from "../harness/id.mjs";
+import { normalizeAutoSettings } from "./auto-providers.mjs";
 
-export const GLOBAL_CONFIG_RELATIVE_PATH = ".fireconnect/config.json";
+export const GLOBAL_CONFIG_RELATIVE_PATH = ".nexus/config.json";
 export const FIREWORKS_API_KEY_ENV_REF = "{env:FIREWORKS_API_KEY}";
 export const ANTHROPIC_API_KEY_ENV_REF = "{env:ANTHROPIC_API_KEY}";
 export const OPENAI_API_KEY_ENV_REF = "{env:OPENAI_API_KEY}";
@@ -211,6 +212,7 @@ export async function readGlobalConfig(home) {
     ssoAccountId: typeof existing.ssoAccountId === "string" ? existing.ssoAccountId : "",
     provider: normalizeProvider(existing.provider),
     azure: normalizeAzureSettings(existing.azure),
+    auto: normalizeAutoSettings(existing.auto),
     harnesses: normalizeHarnessMap(existing.harnesses),
     _exists: Object.keys(existing).length > 0,
   };
@@ -269,6 +271,7 @@ export async function persistGlobalOpenaiApiKey(home, openaiApiKey) {
  *   ssoAccountId?: string,
  *   provider?: "azure" | "fireworks",
  *   azure?: { baseUrl?: string, apiKey?: string },
+ *   auto?: { providers?: string[] | null },
  *   harnesses?: HarnessConfigMap,
  * }} config
  */
@@ -300,6 +303,9 @@ export async function writeGlobalConfig(home, config) {
   const harnesses = config.harnesses !== undefined
     ? config.harnesses
     : normalizeHarnessMap(existing.harnesses);
+  const auto = config.auto !== undefined
+    ? normalizeAutoSettings(config.auto)
+    : normalizeAutoSettings(existing.auto);
   const payload = {
     apiKey,
     anthropicApiKey,
@@ -307,6 +313,7 @@ export async function writeGlobalConfig(home, config) {
     ssoAccountId,
     provider,
     azure,
+    auto,
     harnesses,
   };
   const hasLiteralKey = (payload.apiKey && payload.apiKey !== FIREWORKS_API_KEY_ENV_REF && payload.apiKey !== FIREWORKS_API_KEY_KEYCHAIN_REF)

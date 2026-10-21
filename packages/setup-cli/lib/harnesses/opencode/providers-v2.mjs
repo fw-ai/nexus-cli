@@ -1,7 +1,7 @@
 /**
  * OpenCode v2 reads providers from `providers` and migrates the v1 `provider`
  * key, but a native `providers[id]` in the same file replaces the migrated
- * `provider[id]` wholesale. While FireConnect manages `provider[id]` it
+ * `provider[id]` wholesale. While Nexus manages `provider[id]` it
  * therefore owns `providers[id]` too, and rebuilds it from `provider[id]`
  * exactly as OpenCode's own v1 migration would (`packages/core/src/v1/config/
  * migrate.ts` in OpenCode), so both keys describe the same provider.
@@ -127,7 +127,7 @@ export function opencodeV2ProviderEntry(provider) {
 }
 
 /**
- * Rebuild `providers[id]` from `provider[id]` for each owned id FireConnect
+ * Rebuild `providers[id]` from `provider[id]` for each owned id Nexus
  * manages. Configs without a `providers` map are returned unchanged: v1-only
  * setups never gain a key their OpenCode doesn't read.
  * @param {Record<string, any>} config

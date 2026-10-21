@@ -9,11 +9,11 @@ import { writeFileAtomic } from "../io/atomic-write.mjs";
 import { compareVersions } from "./release-notes.mjs";
 
 export function updateCachePath(home) {
-  return path.join(home, ".fireconnect", "update-check.json");
+  return path.join(home, ".nexus", "update-check.json");
 }
 
 export function updateLockPath(home) {
-  return path.join(home, ".fireconnect", "update-check.lock");
+  return path.join(home, ".nexus", "update-check.lock");
 }
 
 export function readUpdateCache(home) {
@@ -93,7 +93,7 @@ export function isUpgradePromptSnoozed(cache, latestVersion, now = Date.now()) {
 }
 
 export function isGitInstall(home) {
-  return existsSync(path.join(home, ".fireconnect", "cli", ".git"));
+  return existsSync(path.join(home, ".nexus", "cli", ".git"));
 }
 
 export function releaseUpdateLock(home) {

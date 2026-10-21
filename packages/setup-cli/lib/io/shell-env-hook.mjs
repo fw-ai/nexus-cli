@@ -1,13 +1,19 @@
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
-import { fireconnectKeyExportCommand } from "../cli/path.mjs";
+import { keyExportCommand } from "../cli/path.mjs";
 import { readGlobalConfig } from "../config/global-config.mjs";
 import { shouldInstallShellEnvHook } from "../keys/api-key.mjs";
 import { needsFireworksShellExport } from "./shell-fireworks-consumers.mjs";
 
-export const SHELL_HOOK_BEGIN = "# >>> fireconnect >>>";
-export const SHELL_HOOK_END = "# <<< fireconnect <<<";
+export const SHELL_HOOK_BEGIN = "# >>> nexus >>>";
+export const SHELL_HOOK_END = "# <<< nexus <<<";
+const LEGACY_SHELL_HOOK_BEGIN = "# >>> fireconnect >>>";
+const LEGACY_SHELL_HOOK_END = "# <<< fireconnect <<<";
+const SHELL_HOOK_MARKERS = [
+  [SHELL_HOOK_BEGIN, SHELL_HOOK_END],
+  [LEGACY_SHELL_HOOK_BEGIN, LEGACY_SHELL_HOOK_END],
+];
 
 /**
  * @param {string} [home]
@@ -32,8 +38,8 @@ export function resolveShellConfigPath(home = process.env.HOME ?? "") {
  * @param {string} home
  */
 export function shellHookBlock(home) {
-  const exportCmd = fireconnectKeyExportCommand(home);
-  // Capture the key from `fireconnect key export`. If the command fails or
+  const exportCmd = keyExportCommand(home);
+  // Capture the key from `nexus key export`. If the command fails or
   // returns nothing (e.g. node not on PATH in a non-interactive sandbox, or no
   // key stored), print a one-time hint to stderr — but only in interactive
   // shells (`[ -t 2 ]`) so CI and other non-interactive contexts stay quiet.
@@ -42,7 +48,7 @@ export function shellHookBlock(home) {
     SHELL_HOOK_BEGIN,
     `export FIREWORKS_API_KEY="$(${exportCmd} 2>/dev/null)"`,
     `if [ -z "\${FIREWORKS_API_KEY:-}" ] && [ -t 2 ]; then`,
-    `  echo 'fireconnect: FIREWORKS_API_KEY is empty — run \`fireconnect status\` to check your key storage.' >&2`,
+    `  echo 'nexus: FIREWORKS_API_KEY is empty — run \`nexus status\` to check your key storage.' >&2`,
     "fi",
     SHELL_HOOK_END,
     "",
@@ -53,18 +59,78 @@ export function shellHookBlock(home) {
  * @param {string} raw
  */
 export function stripShellHookBlock(raw) {
-  const begin = raw.indexOf(SHELL_HOOK_BEGIN);
-  if (begin === -1) {
+  return SHELL_HOOK_MARKERS.reduce((next, [begin, end]) => stripMarkedBlock(next, begin, end), raw);
+}
+
+/**
+ * @param {string} raw
+ * @param {string} beginMarker
+ * @param {string} endMarker
+ */
+function stripMarkedBlock(raw, beginMarker, endMarker) {
+  const lines = raw.split("\n");
+  const isMarker = (line, marker) => line.replace(/\r$/, "").trim() === marker;
+  const kept = [];
+  let removed = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (!isMarker(lines[i], beginMarker)) {
+      kept.push(lines[i]);
+      continue;
+    }
+    let end = -1;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      if (isMarker(lines[j], beginMarker)) {
+        break;
+      }
+      if (isMarker(lines[j], endMarker)) {
+        end = j;
+        break;
+      }
+    }
+    if (end === -1) {
+      // Unpaired marker: keep it and everything after it rather than guess.
+      kept.push(lines[i]);
+      continue;
+    }
+    // Drop the blank line the block was separated by, so removal doesn't leave a gap.
+    const after = lines[end + 1];
+    if (kept.length > 0 && kept[kept.length - 1].replace(/\r$/, "") === "" && (after === undefined || after.replace(/\r$/, "") === "")) {
+      kept.pop();
+    }
+    removed = true;
+    i = end;
+  }
+  if (!removed) {
     return raw;
   }
-  const end = raw.indexOf(SHELL_HOOK_END, begin);
-  if (end === -1) {
-    return raw;
+  const next = kept.join("\n");
+  return raw.endsWith("\n") && !next.endsWith("\n") ? `${next}\n` : next;
+}
+
+/**
+ * Strip pre-rename hook blocks from every shell config, not just the current
+ * shell's: they call the removed `fireconnect` launcher. Reconcile then writes
+ * a `nexus` block where one is still needed.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when any file changed
+ */
+export async function removeLegacyShellHooks(home) {
+  let changed = false;
+  for (const name of [".zshrc", ".bashrc", ".bash_profile"]) {
+    const filePath = path.join(home, name);
+    let raw;
+    try {
+      raw = await readFile(filePath, "utf8");
+    } catch {
+      continue;
+    }
+    const next = stripMarkedBlock(raw, LEGACY_SHELL_HOOK_BEGIN, LEGACY_SHELL_HOOK_END);
+    if (next !== raw) {
+      await writeFile(filePath, next, "utf8");
+      changed = true;
+    }
   }
-  const after = end + SHELL_HOOK_END.length;
-  let next = raw.slice(0, begin) + raw.slice(after);
-  next = next.replace(/\n{3,}/g, "\n\n");
-  return next.replace(/\n+$/, "\n");
+  return changed;
 }
 
 /**
@@ -100,7 +166,7 @@ export async function installShellEnvHook(home) {
  */
 export async function removeShellEnvHook(home) {
   const { filePath, raw } = await readShellConfig(home);
-  if (!raw.includes(SHELL_HOOK_BEGIN)) {
+  if (!SHELL_HOOK_MARKERS.some(([begin]) => raw.includes(begin))) {
     return false;
   }
   const next = stripShellHookBlock(raw);

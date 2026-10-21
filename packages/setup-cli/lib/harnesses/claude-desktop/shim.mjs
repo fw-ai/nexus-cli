@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * FireConnect Desktop profile-lane shim (long-running; launched by launchd).
+ * Nexus Desktop profile-lane shim (long-running; launched by launchd).
  *
  * Claude Desktop's third-party ("gateway") provider requires Anthropic-shaped
  * model names and answers to a couple of endpoints Fireworks does not serve.
@@ -16,6 +16,7 @@
  * every failure degrades to a cached/local answer, and nothing throws past
  * the request boundary. Message content is never logged.
  */
+import "../../system/legacy-env.mjs";
 import http from "node:http";
 import { Readable } from "node:stream";
 import path from "node:path";
@@ -24,6 +25,13 @@ import { writeFileAtomic } from "../../io/atomic-write.mjs";
 // Only the pure leaf: the shim must not pull the CLI's full module graph.
 import { serverlessLineup, thirdPartyDir } from "./lineup.mjs";
 import { autoCatalogEntry, autoCatalogEntryId } from "../../fireworks/models.mjs";
+import {
+  NEXUS_PROVIDERS_HEADER,
+  formatAutoProviders,
+  normalizeAutoProviders,
+} from "../../config/auto-providers.mjs";
+import { HARNESS } from "../../harness/id.mjs";
+import { buildFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
 
 const UPSTREAM = "https://api.fireworks.ai/inference";
 const UPSTREAM_TIMEOUT_MS = 300_000; // long prefills (800k+ tokens) legitimately take minutes
@@ -130,7 +138,7 @@ const HOP_HEADERS = new Set([
  * Live lineup from the caches: the picker discovers models via /v1/models
  * (the profile carries no inferenceModels), and name mapping uses the same
  * pairing, so a refreshed serverless cache shows up on the next request —
- * no `fireconnect claude-desktop on` re-run, no Desktop restart beyond the
+ * no `nexus claude-desktop on` re-run, no Desktop restart beyond the
  * app's own /v1/models poll. Cold caches fall back to the curated 3-model
  * map written at `on` time (shim-state.json).
  */
@@ -171,6 +179,31 @@ export function createLineupLoader({ modelsCachePath, catalogDir, fallback }) {
   };
 }
 
+/**
+ * Live `nexus auto` scope from the global config: the formatted providers
+ * value to send for auto-routed turns, or "" when no scope is saved.
+ * Memoized on the config file's mtime (like the lineup loader), so a
+ * `nexus auto` change takes effect on the next request — no re-`on`, no
+ * Desktop restart. A missing/unreadable config reads as no scope, and
+ * forwarding never waits on or fails over it.
+ * @param {{ configPath: string }} opts
+ */
+export function createAutoProvidersLoader({ configPath }) {
+  let memo = null;
+  return async function currentAutoProviders() {
+    try {
+      const mtime = await stat(configPath).then((s) => s.mtimeMs).catch(() => 0);
+      if (memo?.mtime === mtime) return memo.value;
+      const config = mtime ? await readJson(configPath) : null;
+      const value = formatAutoProviders(normalizeAutoProviders(config?.auto?.providers));
+      memo = { mtime, value };
+      return value;
+    } catch {
+      return "";
+    }
+  };
+}
+
 /** Copy upstream response headers, dropping the hop-by-hop ones. */
 function copyUpstreamHeaders(headers) {
   const out = {};
@@ -196,8 +229,14 @@ export function createShimServer({
   // this live loader (serverless cache + signed catalog) instead of the
   // static modelMap.
   lineupLoader = null,
+  // When provided, resolves the current `nexus auto` providers value
+  // ("" = no scope). Sent only for turns routed to an auto model.
+  autoProvidersLoader = null,
 }) {
   const currentModelMap = async () => (lineupLoader ? (await lineupLoader()).modelMap : modelMap) ?? modelMap;
+  // The Nexus attribution every other harness puts on its gateway traffic.
+  // Desktop's own `on` is bespoke, so the shim is where these are added.
+  const telemetryHeaders = buildFireconnectTelemetryHeaders(HARNESS.CLAUDE_DESKTOP);
   return http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://localhost");
@@ -217,22 +256,24 @@ export function createShimServer({
       let outBody = body;
       let toolSummary = "";
       let debugTools = null;
+      let routedModel = null;
       if (body.length && (req.headers["content-type"] || "").includes("application/json")) {
         try {
           const parsed = JSON.parse(body.toString("utf8"));
           if (parsed.model) {
             const liveMap = await currentModelMap();
             const mapped = mapModel(parsed.model, liveMap);
+            routedModel = mapped;
             if (mapped !== parsed.model) parsed.model = mapped;
           }
           const effortRewrite = normalizeThinking(parsed);
-          if (effortRewrite) log(`[fireconnect-shim] effort rewritten: ${effortRewrite}`);
+          if (effortRewrite) log(`[nexus-shim] effort rewritten: ${effortRewrite}`);
           if (Array.isArray(parsed.tools)) {
             for (const tool of parsed.tools) {
               if (tool?.input_schema) relaxSchemaBounds(tool.input_schema);
             }
             toolSummary = `tools=${parsed.tools.length} kinds=${[...new Set(parsed.tools.map((t) => t?.type ?? "custom"))].join(",")}`;
-            if (process.env.FIRECONNECT_SHIM_DEBUG === "1") debugTools = parsed.tools;
+            if (process.env.NEXUS_SHIM_DEBUG === "1") debugTools = parsed.tools;
           }
           outBody = Buffer.from(JSON.stringify(parsed));
         } catch { /* pass through verbatim */ }
@@ -249,6 +290,20 @@ export function createShimServer({
         headers.authorization = `Bearer ${headers["x-api-key"]}`;
         delete headers["x-api-key"];
       }
+      // Nexus attribution, owned by Nexus like the scope below: replace
+      // any inbound copies (Node lowercases inbound header names).
+      delete headers["x-title"];
+      delete headers["http-referer"];
+      Object.assign(headers, telemetryHeaders);
+      // The `nexus auto` scope belongs to Nexus, not the client: drop any
+      // inbound copy, then set the current one for auto-routed turns only.
+      delete headers[NEXUS_PROVIDERS_HEADER];
+      if (autoProvidersLoader
+        && typeof routedModel === "string"
+        && (routedModel === "auto" || routedModel.startsWith("auto-"))) {
+        const providers = await autoProvidersLoader().catch(() => "");
+        if (providers) headers[NEXUS_PROVIDERS_HEADER] = providers;
+      }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -263,20 +318,20 @@ export function createShimServer({
       } catch (error) {
         clearTimeout(timer);
         if (error.name === "AbortError") {
-          log(`[fireconnect-shim] upstream timeout for ${req.method} ${url.pathname}`);
+          log(`[nexus-shim] upstream timeout for ${req.method} ${url.pathname}`);
           return reply(res, 504, { error: { type: "timeout_error", message: "Upstream timed out." } });
         }
         // Surface the code: a TLS-inspecting proxy shows up as a cert error here.
         const cause = error.cause?.code ?? error.cause?.message ?? error.message;
-        log(`[fireconnect-shim] upstream error for ${req.method} ${url.pathname}: ${cause}`);
+        log(`[nexus-shim] upstream error for ${req.method} ${url.pathname}: ${cause}`);
         return reply(res, 502, { error: { type: "api_error", message: `Could not reach Fireworks: ${cause}` } });
       }
       clearTimeout(timer);
-      log(`[fireconnect-shim] upstream ${upstream.status} for ${req.method} ${url.pathname}${toolSummary ? ` ${toolSummary}` : ""}`);
+      log(`[nexus-shim] upstream ${upstream.status} for ${req.method} ${url.pathname}${toolSummary ? ` ${toolSummary}` : ""}`);
       if (upstream.status === 400 && debugTools) {
         // Diagnostics only (opt-in): tool names and sizes, never message content.
         const sizes = debugTools.map((t) => [t?.name ?? t?.type, JSON.stringify(t).length]).sort((a, b) => b[1] - a[1]).slice(0, 15);
-        log(`[fireconnect-shim] 400 largest tools: ${sizes.map(([n, z]) => `${n}:${z}`).join(" ")}`);
+        log(`[nexus-shim] 400 largest tools: ${sizes.map(([n, z]) => `${n}:${z}`).join(" ")}`);
       }
 
       res.writeHead(upstream.status, copyUpstreamHeaders(upstream.headers));
@@ -299,7 +354,7 @@ export function createShimServer({
                 try {
                   const u = JSON.parse(m[1]);
                   const total = (u.input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0);
-                  if (total > 0) log(`[fireconnect-shim] usage ${total} in (${u.cache_read_input_tokens ?? 0} cached)`);
+                  if (total > 0) log(`[nexus-shim] usage ${total} in (${u.cache_read_input_tokens ?? 0} cached)`);
                 } catch {}
               }
             }
@@ -321,12 +376,12 @@ export function createShimServer({
 
 async function main() {
   const home = argValue("--home") ?? process.env.HOME ?? "";
-  const dataDir = path.join(home, ".fireconnect", "claude-desktop");
+  const dataDir = path.join(home, ".nexus", "claude-desktop");
   const state = (await readJson(path.join(dataDir, "shim-state.json"))) ?? {};
   const port = Number(state.port) > 0 ? Number(state.port) : 8799;
   const catalogDir = path.join(dataDir, "catalog");
   const lineupLoader = createLineupLoader({
-    modelsCachePath: path.join(home, ".fireconnect", "catalog-cache.json"),
+    modelsCachePath: path.join(home, ".nexus", "catalog-cache.json"),
     catalogDir,
     fallback: () => ({ modelMap: state.modelMap ?? {}, models: [] }),
   });
@@ -334,12 +389,19 @@ async function main() {
     modelMap: state.modelMap,
     catalogDir,
     lineupLoader,
+    autoProvidersLoader: createAutoProvidersLoader({
+      configPath: path.join(home, ".nexus", "config.json"),
+    }),
+    // The harness matrix's CI loopback; never honored outside tests, so a
+    // stray variable can't send a real key elsewhere.
+    ...(process.env.NEXUS_TEST === "1" && process.env.NEXUS_SHIM_UPSTREAM
+      ? { upstreamOrigin: process.env.NEXUS_SHIM_UPSTREAM } : {}),
   });
   await new Promise((resolve, reject) => {
     server.once("error", reject);
     server.listen(port, "127.0.0.1", resolve);
   });
-  console.log(`[fireconnect-shim] listening on 127.0.0.1:${port}`);
+  console.log(`[nexus-shim] listening on 127.0.0.1:${port}`);
 
   // Keep the applied profile's model list in sync with the live lineup: the
   // profile is static (Desktop reads it at launch), so when the serverless
@@ -372,9 +434,9 @@ async function main() {
       if (current === names) return;
       profile.inferenceModels = lineup.models.map(({ route: _route, ...entry }) => entry);
       await writeFileAtomic(profilePath, JSON.stringify(profile, null, 2), { mode: 0o600 });
-      console.log(`[fireconnect-shim] model list refreshed in the profile (${lineup.models.length} entries; restart Desktop to see them)`);
+      console.log(`[nexus-shim] model list refreshed in the profile (${lineup.models.length} entries; restart Desktop to see them)`);
     } catch (error) {
-      console.log(`[fireconnect-shim] model-list refresh skipped: ${error?.message ?? error}`);
+      console.log(`[nexus-shim] model-list refresh skipped: ${error?.message ?? error}`);
     }
   }, 30_000).unref();
 }

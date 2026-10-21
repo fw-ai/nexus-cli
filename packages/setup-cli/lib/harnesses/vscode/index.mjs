@@ -7,10 +7,7 @@ import {
   printStructuredHarnessStatus,
 } from "../../harness/status-display.mjs";
 import process from "node:process";
-import {
-  detectApiKeyType,
-  MISSING_FIREWORKS_API_KEY_MESSAGE,
-} from "../../keys/key-type.mjs";
+import { MISSING_FIREWORKS_API_KEY_MESSAGE } from "../../keys/key-type.mjs";
 import {
   loadRegisterableModels,
 } from "../../fireworks/models.mjs";
@@ -54,7 +51,7 @@ import {
 /**
  * Harness-local Fireworks key for VS Code: the key stored (encrypted) in VS
  * Code's secret storage (state.vscdb) under the `chat.lm.secret.fw-*` id
- * referenced by the fireconnect provider. Returns "" when none is present.
+ * referenced by the nexus provider. Returns "" when none is present.
  * @param {import("../../harness/types.mjs").HarnessContext} ctx
  */
 async function vscodeResolveKey(ctx) {
@@ -122,7 +119,6 @@ export default defineHarnessProfile({
     ctx,
     paths,
     effectiveKey,
-    keyType,
     modelId,
     byokHeaders,
     telemetryHeaders,
@@ -142,7 +138,6 @@ export default defineHarnessProfile({
       dataDir: paths.dataDir,
       apiKey: effectiveKey,
       modelId,
-      keyType,
       stateDbPath: paths.stateDbPath,
       byokHeaders,
       telemetryHeaders,
@@ -156,7 +151,7 @@ export default defineHarnessProfile({
       printNote(
         "Warning: VS Code will obfuscate (not encrypt) the key because Secret Service / libsecret is unavailable for VS Code's Electron safeStorage. "
           + "Install gnome-keyring + secret-service for real encryption. "
-          + "(FireConnect's own API key storage shown in `fireconnect status` is separate.)",
+          + "(Nexus's own API key storage shown in `nexus status` is separate.)",
       );
     } else if (result.obfuscatedKey) {
       printNote(linuxSafeStorageObfuscatedKeyNote(result.variant ?? "stable"));
@@ -232,7 +227,7 @@ export default defineHarnessProfile({
     const provider = fireworksProviderStatus(arr);
     const registered = fireconnectRegisteredModels(arr);
     const storedKey = await readVscodeStoredKey(vscodePath, stateDbPath, arr);
-    const keyType = provider === "none" ? "none" : detectApiKeyType(storedKey);
+    const keyType = provider === "none" ? "none" : "fireworks";
 
     const payload = {
       harness: HARNESS.VSCODE,

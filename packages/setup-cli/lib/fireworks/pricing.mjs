@@ -111,5 +111,5 @@ export function attachPricing(modelRef) {
 
 export const CLAUDE_CODE_PRICING_DISCLAIMER = (
   "Claude Code /model cost estimates use Anthropic list prices, not Fireworks. "
-  + "Use fireconnect claude status or fireconnect model list for Fireworks rates."
+  + "Use nexus claude status or nexus model list for Fireworks rates."
 );

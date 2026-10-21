@@ -47,12 +47,12 @@ describe("grpc-web codec", () => {
   it("round-trips strings and nested messages", () => {
     const message = Buffer.concat([
       pbString(1, "accounts/test"),
-      pbField(2, pbString(2, "fireconnect-host")),
+      pbField(2, pbString(2, "nexus-host")),
     ]);
     const fields = pbDecode(message);
     assert.equal(pbStringAt(fields, 1), "accounts/test");
     const nested = pbDecode(fields.get(2)[0]);
-    assert.equal(pbStringAt(nested, 2), "fireconnect-host");
+    assert.equal(pbStringAt(nested, 2), "nexus-host");
   });
 
   it("decodes varint fields and skips them cleanly", () => {
@@ -362,7 +362,7 @@ describe("mint-api-key", () => {
         const parent = pbStringAt(fields, 1);
         assert.match(parent, /^accounts\/.+\/users\/dev$/);
         const apiKey = pbDecode(fields.get(2)[0]);
-        assert.match(pbStringAt(apiKey, 2), /^fireconnect-/);
+        assert.match(pbStringAt(apiKey, 2), /^nexus-/);
         res.end(grpcWebFrames(Buffer.concat([
           pbString(1, "key_test123"),
           pbString(2, pbStringAt(apiKey, 2)),
@@ -448,10 +448,10 @@ describe("mint-api-key", () => {
     assert.match(result.failure, /Couldn't reach/);
   });
 
-  it("names keys fireconnect-{hostname}, sanitized", () => {
-    assert.equal(mintedKeyName("Roberts-MacBook-Pro.local"), "fireconnect-roberts-macbook-pro");
-    assert.equal(mintedKeyName("host_with.dots"), "fireconnect-host-with");
-    assert.equal(mintedKeyName(""), "fireconnect-cli");
+  it("names keys nexus-{hostname}, sanitized", () => {
+    assert.equal(mintedKeyName("Roberts-MacBook-Pro.local"), "nexus-roberts-macbook-pro");
+    assert.equal(mintedKeyName("host_with.dots"), "nexus-host-with");
+    assert.equal(mintedKeyName(""), "nexus-cli");
   });
 
   it("jwtClaims decodes without verifying and tolerates garbage", () => {

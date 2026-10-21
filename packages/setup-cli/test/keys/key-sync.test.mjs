@@ -183,10 +183,10 @@ describe("syncBakedKeysAfterStore", () => {
 
   itIfSqlite("re-keys VS Code's secret storage and leaves an Azure provider alone", { skip: isVscodeRunning() && "VS Code is running" }, async () => {
     const saved = {
-      plaintext: process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT,
+      plaintext: process.env.NEXUS_VSCODE_SECRET_PLAINTEXT,
       xdg: process.env.XDG_CONFIG_HOME,
     };
-    process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = "1";
+    process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = "1";
     delete process.env.XDG_CONFIG_HOME;
     try {
       await withTempHome("key-sync-vscode-", async (home) => {
@@ -214,7 +214,7 @@ describe("syncBakedKeysAfterStore", () => {
         assert.equal(await readItemTableValue(stateDbPath, `secret://${secretId}`), "azure-key");
       });
     } finally {
-      for (const [name, value] of [["FIRECONNECT_VSCODE_SECRET_PLAINTEXT", saved.plaintext], ["XDG_CONFIG_HOME", saved.xdg]]) {
+      for (const [name, value] of [["NEXUS_VSCODE_SECRET_PLAINTEXT", saved.plaintext], ["XDG_CONFIG_HOME", saved.xdg]]) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
@@ -227,10 +227,10 @@ describe("syncBakedKeysAfterStore", () => {
       || (isVscodeRunning() && "VS Code is running"),
   }, async () => {
     const saved = {
-      plaintext: process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT,
+      plaintext: process.env.NEXUS_VSCODE_SECRET_PLAINTEXT,
       xdg: process.env.XDG_CONFIG_HOME,
     };
-    delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+    delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
     delete process.env.XDG_CONFIG_HOME;
     try {
       await withTempHome("key-sync-vscode-keyring-", async (home) => {
@@ -256,7 +256,7 @@ describe("syncBakedKeysAfterStore", () => {
         assert.equal(await readItemTableValue(stateDbPath, `secret://${secretId}`), keyringBlob);
       });
     } finally {
-      for (const [name, value] of [["FIRECONNECT_VSCODE_SECRET_PLAINTEXT", saved.plaintext], ["XDG_CONFIG_HOME", saved.xdg]]) {
+      for (const [name, value] of [["NEXUS_VSCODE_SECRET_PLAINTEXT", saved.plaintext], ["XDG_CONFIG_HOME", saved.xdg]]) {
         if (value === undefined) delete process.env[name];
         else process.env[name] = value;
       }
@@ -267,7 +267,7 @@ describe("syncBakedKeysAfterStore", () => {
     const { server, url } = await startMockGatewayForKey(NEW_KEY);
     try {
       await withTempHome("key-sync-login-", async (home) => {
-        await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+        await mkdir(path.join(home, ".nexus"), { recursive: true });
         await enableHarnessesForSync(home, ["pi"]);
         await writeJsonFile(piAuthPath(home), {
           fireworks: { type: "api_key", key: "fw_stale_gateway_00000000000000000", managedBy: "fireconnect" },
@@ -275,7 +275,7 @@ describe("syncBakedKeysAfterStore", () => {
 
         const result = await runCli(["login", "--api-key", NEW_KEY], {
           home,
-          env: { FIRECONNECT_GATEWAY_URL: url },
+          env: { NEXUS_GATEWAY_URL: url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Updated Pi's Fireworks settings/);

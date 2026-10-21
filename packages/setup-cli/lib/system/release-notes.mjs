@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import { readJsonIfExists, writeJson } from "../io/json.mjs";
 
-export const RELEASE_NOTES_STATE_RELATIVE_PATH = ".fireconnect/release-notes.json";
+export const RELEASE_NOTES_STATE_RELATIVE_PATH = ".nexus/release-notes.json";
 
 const LOCAL_RELEASE_NOTES_PATH = fileURLToPath(
   new URL("./release-notes.json", import.meta.url),
@@ -62,7 +62,7 @@ export function releaseNotesForRange(releases, fromVersion, toVersion) {
 
 export function formatReleaseNotes(release) {
   const lines = [
-    `What's new in FireConnect v${release.version}`,
+    `What's new in Nexus v${release.version}`,
     "",
     ...release.highlights.map((item) => `• ${item}`),
   ];

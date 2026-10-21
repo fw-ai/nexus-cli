@@ -148,7 +148,7 @@ describe("Claude upgrade preflight", () => {
         },
       },
       input: { isTTY: false },
-      environment: { FIRECONNECT_AUTO_OFF_CLAUDE: "1" },
+      environment: { NEXUS_AUTO_OFF_CLAUDE: "1" },
       prompt: async () => {
         throw new Error("automatic restoration must not prompt");
       },
@@ -221,7 +221,7 @@ describe("Claude upgrade preflight", () => {
         home: "/tmp/home",
         adapter: { off: async () => {} },
         input: { isTTY: false },
-        environment: { FIRECONNECT_AUTO_OFF_CLAUDE: "1" },
+        environment: { NEXUS_AUTO_OFF_CLAUDE: "1" },
         prompt: async () => {
           throw new Error("automatic restoration must not prompt");
         },
@@ -310,8 +310,8 @@ describe("upgrade fetch, compare, and reset ordering", () => {
       "diff --quiet old new -- packages/setup-cli/package-lock.json",
     ]);
     assert.deepEqual(output, [
-      "Upgrade complete. Your original Claude Code settings were restored.",
-      "To reconnect with FireConnect v1.0.0:\n  fireconnect claude",
+      "Update complete. Your original Claude Code settings were restored.",
+      "To reconnect with Nexus v1.0.0:\n  nexus claude",
     ]);
   });
 
@@ -393,7 +393,7 @@ describe("upgrade finalize process", () => {
   it("runs finalize-install from the updated checkout in a fresh Node process", async () => {
     const calls = [];
     const home = "/tmp/fireconnect-upgrade-home";
-    const installDir = `${home}/.fireconnect/cli`;
+    const installDir = `${home}/.nexus/cli`;
 
     await runUpgradeFinalize(home, installDir, {
       exists: () => true,
@@ -403,7 +403,7 @@ describe("upgrade finalize process", () => {
     assert.equal(calls.length, 1);
     assert.equal(calls[0].file, process.execPath);
     assert.deepEqual(calls[0].args, [
-      `${installDir}/packages/setup-cli/bin/fireconnect.mjs`,
+      `${installDir}/packages/setup-cli/bin/nexus.mjs`,
       "finalize-install",
     ]);
     assert.equal(calls[0].options.env.HOME, home);
@@ -412,7 +412,7 @@ describe("upgrade finalize process", () => {
 
   it("falls back to in-process finalize when the installed CLI is missing", async () => {
     const calls = [];
-    await runUpgradeFinalize("/tmp/home", "/tmp/home/.fireconnect/cli", {
+    await runUpgradeFinalize("/tmp/home", "/tmp/home/.nexus/cli", {
       exists: () => false,
       execFile: () => {
         throw new Error("must not spawn");
@@ -424,7 +424,7 @@ describe("upgrade finalize process", () => {
 
     assert.deepEqual(calls, [{
       home: "/tmp/home",
-      installDir: "/tmp/home/.fireconnect/cli",
+      installDir: "/tmp/home/.nexus/cli",
     }]);
   });
 });

@@ -17,8 +17,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { shellQuote } from "../../cli/path.mjs";
-import { routingPreferenceFromCustomHeaders, routingPreferenceLevelLabel } from "../../firerouter/core.mjs";
-import { readJsonIfExists } from "../../io/json.mjs";
+import { preferDataDirPath } from "../../system/data-dir.mjs";
 import {
   appendLatestRouterSuffix,
   lookupModelSpec,
@@ -28,7 +27,15 @@ import {
 } from "../../fireworks/model-specs.mjs";
 import { lookupFireworksPricing } from "../../fireworks/pricing.mjs";
 import { canonicalOpenAiModelId, isOpenAiPricedModelId, providerListPricing } from "../../demo/list-pricing.mjs";
-import { isAnthropicModelId, isAutoModelId, isClaudeNativeModel, isFirerouterModel, isFirerouterModelPattern } from "../../fireworks/model-id.mjs";
+import {
+  firerouterRouteMembers,
+  isAnthropicModelId,
+  isAutoModelId,
+  isClaudeNativeModel,
+  isClosedFirerouterMember,
+  isFirerouterModel,
+  isFirerouterModelPattern,
+} from "../../fireworks/model-id.mjs";
 import { autoDisplayName, firerouterDisplayName, prettyModelName } from "../../fireworks/models.mjs";
 import { stripViaFireworksSuffix } from "../../fireworks/label-suffix.mjs";
 import { UNPRICED_TEXT, addUsage } from "./usage/cost.mjs";
@@ -44,11 +51,11 @@ import {
 } from "./statusline-refresh.mjs";
 
 /** The helper Claude Code spawns on every status line refresh. */
-const STATUSLINE_SCRIPT = fileURLToPath(
-  new URL("../../../bin/claude-statusline.mjs", import.meta.url),
-);
+function statusLineScript() {
+  return preferDataDirPath(fileURLToPath(new URL("../../../bin/claude-statusline.mjs", import.meta.url)));
+}
 
-/** Substring that identifies a FireConnect-managed statusLine command. */
+/** Substring that identifies a Nexus-managed statusLine command. */
 const STATUSLINE_MARKER = "bin/claude-statusline.mjs";
 
 /**
@@ -59,11 +66,11 @@ const STATUSLINE_MARKER = "bin/claude-statusline.mjs";
  * (same reason apiKeyHelper embeds it — see fireconnectExportCommand).
  */
 export function claudeStatusLineCommand() {
-  return `${shellQuote(process.execPath)} ${shellQuote(STATUSLINE_SCRIPT)}`;
+  return `${shellQuote(process.execPath)} ${shellQuote(statusLineScript())}`;
 }
 
 /**
- * The `statusLine` block FireConnect writes into settings.json.
+ * The `statusLine` block Nexus writes into settings.json.
  *
  * No `refreshInterval`: the cost only changes when a call completes, and Claude
  * Code already re-runs the command on every assistant message. A timer would
@@ -74,7 +81,7 @@ export function claudeStatusLineSettings() {
 }
 
 /**
- * True when `statusLine` is one FireConnect wrote (so `on` may replace it and
+ * True when `statusLine` is one Nexus wrote (so `on` may replace it and
  * `off` may remove it). A user's own status line matches nothing here and is
  * left alone.
  * @param {unknown} statusLine
@@ -90,7 +97,7 @@ export function isFireconnectStatusLine(statusLine) {
 /**
  * Add the managed status line, preserving a user's own.
  *
- * A stale FireConnect command (absolute helper path from a previous install
+ * A stale Nexus command (absolute helper path from a previous install
  * location) is refreshed: after an upgrade/reinstall the old path no longer
  * exists, so keeping it would silently break the line.
  * @param {Record<string, unknown>} settings
@@ -149,7 +156,7 @@ function paint(name, text) {
   return COLOR ? `${COLOR[name]}${text}${COLOR.reset}` : String(text);
 }
 
-/** A mark in a series hue — bar segment or legend swatch, never prose. */
+/** A mark in a series hue: bar segment or swatch, never prose. */
 function paintSeries(index, mark) {
   if (!COLOR) {
     return String(mark);
@@ -173,6 +180,8 @@ function joinParts(parts) {
  * which are East-Asian-ambiguous and can render double-wide and misalign.
  */
 const BAR_MARK = "━";
+
+const ROUTED_MODEL_LABEL = "routed model:";
 
 /**
  * Stacked bar by spend share (not call count). Width only — no in-bar labels.
@@ -199,6 +208,14 @@ function renderModelBar(models, width) {
 /** Drop trailing parenthetical qualifiers when they fit the legend width. */
 function compactModelLabel(label) {
   return String(label).replace(/\s*\([^)]*\)\s*$/, "").trim() || String(label);
+}
+
+/** True when `modelId` routes across multiple models per user turn (matches `firerouterTagline`). */
+function isPerTurnRouterSlot(modelId) {
+  if (isAutoModelId(modelId) || isFirerouterModel(modelId)) return true;
+  const members = firerouterRouteMembers(modelId);
+  return members.length > 1
+    || (members.length === 1 && (isAutoModelId(members[0]) || isClosedFirerouterMember(members[0])));
 }
 
 /**
@@ -276,7 +293,7 @@ export async function claudeStatusLineUsage(transcriptPath, { home = process.env
   }
   const { readClaudeUsage } = await import("./usage/report.mjs");
   const report = await readClaudeUsage({ home, session: target });
-  const lastModel = report.rows.at(-1)?.model ?? "";
+  const lastModel = report.currentTurnModel ?? report.rows.at(-1)?.model ?? "";
   const allRows = [
     ...report.rows,
     ...(report.subagents ?? []).flatMap((subagent) => subagent.rows),
@@ -318,6 +335,7 @@ export async function claudeStatusLineUsage(transcriptPath, { home = process.env
         : (b[1].cost ?? 0) - (a[1].cost ?? 0) || b[1].calls - a[1].calls
     ))
     .map(([sid, entry]) => ({
+      id: sid,
       label: claudeStatusLineModelLabel(sid),
       costShare: !hasUnpriced && totalCost > 0
         ? entry.cost / totalCost
@@ -339,37 +357,6 @@ export async function claudeStatusLineUsage(transcriptPath, { home = process.env
 const MODEL_BAR_WIDTH = 16;
 
 /**
- * Applied FireRouter routing level for the session, e.g. `max-intelligence (1)`,
- * read back from the `x-routing-preference` header line `on` writes into
- * `~/.claude/settings.json`. Only the bare `firerouter` slot reports one —
- * `auto` and `firerouter/*` compounds pin their own targets, so the preference
- * doesn't apply there. Returns null otherwise, and the status line then reads
- * exactly as before. Best-effort: any unreadable/malformed settings file
- * simply yields null.
- * @param {string} slotModelId
- * @param {string} home
- * @returns {Promise<string|null>}
- */
-export async function claudeRoutingPreferenceLabel(slotModelId, home = "") {
-  if (!isFirerouterModel(slotModelId)) {
-    return null;
-  }
-  const dir = String(home ?? "").trim();
-  if (!dir) {
-    return null;
-  }
-  try {
-    const settings = await readJsonIfExists(path.join(dir, ".claude", "settings.json"));
-    return routingPreferenceLevelLabel(
-      routingPreferenceFromCustomHeaders(settings.env?.ANTHROPIC_CUSTOM_HEADERS),
-      { defaultLevel: null },
-    );
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Build the two-line status line from Claude Code's stdin payload.
  * @param {{
  *   model?: { id?: string, display_name?: string },
@@ -380,14 +367,9 @@ export async function claudeRoutingPreferenceLabel(slotModelId, home = "") {
  */
 export async function renderClaudeStatusLine(input = {}, { home = process.env.HOME ?? "" } = {}) {
   const slotModelId = input.model?.id ?? "";
-  const baseLabel = isClaudeNativeModel(slotModelId)
+  const slotLabel = isClaudeNativeModel(slotModelId)
     ? (input.model?.display_name || "Claude default")
     : claudeStatusLineModelLabel(slotModelId);
-  // Surface the applied routing level inside Claude Code itself: the /model
-  // picker only shows the firerouter model id, so without this the preference
-  // set via --routing-preference is invisible in-session.
-  const routingLabel = await claudeRoutingPreferenceLabel(slotModelId, home);
-  const slotLabel = routingLabel ? `${baseLabel} · ${routingLabel}` : baseLabel;
 
   let usage = null;
   try {
@@ -429,16 +411,6 @@ export async function renderClaudeStatusLine(input = {}, { home = process.env.HO
   const bar = usage?.models.length
     ? renderModelBar(usage.models, MODEL_BAR_WIDTH)
     : "";
-  const line1 = joinParts([
-    bar || paint("secondary", slotLabel),
-    // The spend bar displaces the slot label after the first billed call, so
-    // re-attach the routing level as its own segment to keep it visible.
-    bar ? routingLabel : null,
-    usage && (usage.cost == null
-      ? paint("secondary", `cost ${UNPRICED_TEXT}`)
-      : `${usage.estimated ? "~" : ""}${COLOR ? COLOR.bold : ""}${paint("primary", formatUsageCost(usage.cost))}`),
-  ]);
-
   const rawLabels = usage?.models.map((m) => m.label) ?? [];
   const compact = rawLabels.map(compactModelLabel);
   const labelCounts = new Map();
@@ -448,6 +420,33 @@ export async function renderClaudeStatusLine(input = {}, { home = process.env.HO
   const labels = compact.map((label, index) => (
     labelCounts.get(label) > 1 ? String(rawLabels[index]) : label
   ));
+
+  const lastModel = usage?.lastModel?.trim() ?? "";
+  const lastId = lastModel && lastModel !== "?"
+    ? (canonicalOpenAiModelId(lastModel) ?? resolveSpecSlug(lastModel))
+    : "";
+  const isRouter = isPerTurnRouterSlot(slotModelId);
+  const currentIndex = lastId && isRouter
+    ? usage.models.findIndex((m) => m.id === lastId)
+    : -1;
+  // An unbilled latest call (zero usage so far) has no legend row yet: name it
+  // from its own id, keeping the qualifier only if the compacted name would
+  // collide with a billed legend row.
+  const ownLabel = lastId ? claudeStatusLineModelLabel(lastId) : "";
+  const routedLabel = currentIndex >= 0
+    ? labels[currentIndex]
+    : ownLabel && labels.includes(compactModelLabel(ownLabel)) ? ownLabel : compactModelLabel(ownLabel);
+  const routedModel = bar && isRouter && routedLabel && (multi || currentIndex === -1)
+    ? `${paint("secondary", ROUTED_MODEL_LABEL)} ${paint("primary", routedLabel)}`
+    : "";
+  const line1 = joinParts([
+    bar || paint("secondary", slotLabel),
+    usage && (usage.cost == null
+      ? paint("secondary", `cost ${UNPRICED_TEXT}`)
+      : `${usage.estimated ? "~" : ""}${COLOR ? COLOR.bold : ""}${paint("primary", formatUsageCost(usage.cost))}`),
+    routedModel,
+  ]);
+
   const legend = usage?.models.map((m, index) => {
     const label = labels[index];
     const cache = m.cachePct && m.cachePct !== "—" ? ` ${m.cachePct} cache` : "";

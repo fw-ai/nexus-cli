@@ -2,32 +2,27 @@ import {
   printAzureConnected,
   printHarnessRestored,
   printHarnessUnchanged,
-  buildFirerouterOnFootnotes,
   printHarnessOnFootnotes,
   printHarnessOnSuccess,
 } from "../cli/messages.mjs";
-import {
-  canonicalRequestedModelId,
-  isFirerouterModel,
-  isFirerouterModelPattern,
-} from "../fireworks/model-id.mjs";
+import { assertNotFirerouterModelId, canonicalRequestedModelId } from "../fireworks/model-id.mjs";
 import { assertRequestedModelServable } from "../fireworks/model-servability.mjs";
-import { detectApiKeyType } from "../keys/key-type.mjs";
 import { resolveAzureBaseUrl, resolveAzureOnApiKey } from "../fireworks/azure-core.mjs";
 import {
   resolveHarnessOnApiKey,
 } from "../keys/harness-api-key.mjs";
 import {
-  firerouterCredentialsApplyOnGateway,
   resolveExplicitFirerouterCredential,
   resolveFirerouterByokHeaders,
   resolveFirerouterPlan,
 } from "../firerouter/flag.mjs";
 import {
   isHarnessEnabled,
+  readGlobalConfig,
   readProviderSettings,
   setHarnessEnabled,
 } from "../config/global-config.mjs";
+import { nexusProvidersHeaders } from "../config/auto-providers.mjs";
 import { reconcileShellEnvHook } from "../io/shell-env-hook.mjs";
 import { ensureHomeForHarness } from "./context.mjs";
 import { defineHarness } from "./types.mjs";
@@ -63,13 +58,12 @@ import { buildFireconnectTelemetryHeaders } from "../telemetry/request-headers.m
  * @property {(ctx: import("./types.mjs").HarnessContext, paths: object) => Promise<string>} [getExistingHarnessKey]
  * @property {(ctx: import("./types.mjs").HarnessContext, paths: object) => Promise<{ apiKeyRef?: string, effectiveKey: string, reusedExistingKey?: boolean }>} [resolveOnKey]
  *   Custom `on` key resolution (default: resolveHarnessOnApiKey with keyEnvRef + getExistingHarnessKey).
- * @property {(args: { ctx: object, keyType: string }) => void} [precheck]  Throw before enabling (e.g. Codex firepass).
  * @property {(modelId: string) => boolean} [servedOutsideCatalog]  `--model` ids this harness
  *   serves that the serverless catalog never lists (Codex's sign-in GPT models); they skip
  *   the catalog check.
- * @property {(args: { ctx: object, paths: object, apiKeyRef: string, effectiveKey: string, keyType: string, modelId: string, byokHeaders: Record<string,string>, telemetryHeaders: Record<string,string>, includeFirerouter: boolean, flags: object }) => Promise<{ model: string, modelsAdded?: string[], keyType: string }>} enable
+ * @property {(args: { ctx: object, paths: object, apiKeyRef: string, effectiveKey: string, modelId: string, byokHeaders: Record<string,string>, telemetryHeaders: Record<string,string>, includeFirerouter: boolean, flags: object }) => Promise<{ model: string, modelsAdded?: string[] }>} enable
  * @property {(ctx: import("./types.mjs").HarnessContext, effectiveKey: string) => Promise<void>} [envHookOn]
- * @property {(args: { ctx: object, paths: object, result: object, reusedExistingKey: boolean, keyType: string }) => void} [printConnected]
+ * @property {(args: { ctx: object, paths: object, result: object, reusedExistingKey: boolean }) => void} [printConnected]
  *   Full success-output override (default: connected + restartHint).
  * @property {(modelId: string) => string} [displayModelId]  How the model list after
  *   `printConnected` names a model (Codex prints its FireRouter route as `firerouter`).
@@ -97,6 +91,10 @@ import { buildFireconnectTelemetryHeaders } from "../telemetry/request-headers.m
 export async function engineOn(profile, ctx) {
   ensureHomeForHarness(ctx, profile.id);
 
+  // FireRouter routes are retired as a selection, on the Azure path too:
+  // reject before any provider config is written.
+  assertNotFirerouterModelId(ctx.main ?? "");
+
   if (profile.azure) {
     const { provider, azure: azureConfig } = await readProviderSettings(ctx.home);
     if (ctx.azure || provider === "azure") {
@@ -107,10 +105,6 @@ export async function engineOn(profile, ctx) {
 
   const paths = profile.paths(ctx);
   const { apiKeyRef = "", effectiveKey, reusedExistingKey = false } = await resolveOnKey(profile, ctx, paths);
-  const keyType = detectApiKeyType(effectiveKey);
-  if (profile.precheck) {
-    profile.precheck({ ctx, keyType });
-  }
 
   // Admit the id before FireRouter credential setup, so a junk path cannot
   // collapse to `firerouter` or prompt for an Anthropic key.
@@ -119,18 +113,17 @@ export async function engineOn(profile, ctx) {
   let isFirerouterRequested = false;
   let preResolvedAnthropicKey;
   if (profile.firerouter) {
-    const plan = resolveFirerouterPlan({ ...ctx, main: modelId }, { keyType });
+    const plan = resolveFirerouterPlan({ ...ctx, main: modelId });
     modelId = plan.mainModel;
     isFirerouterRequested = plan.isFirerouter;
     const settingsEnv = profile.readByokEnv ? await profile.readByokEnv(ctx, paths) : {};
-    // Direct Fireworks gateway `on` only (Azure returns above). Fire Pass cannot
-    // use FireRouter; assertFirerouterKeyType throws on explicit firerouter + fpk_.
+    // Direct Fireworks gateway `on` only (Azure returns above).
     // Harnesses that cannot forward a key (`byok: "none"`) skip credential
     // resolution entirely: they connect without BYOK headers and FireRouter
     // routes the Fireworks mix.
     const needsCredential = profile.firerouter.byok !== "none"
       && plan.requiresAnthropicKey;
-    if (needsCredential && firerouterCredentialsApplyOnGateway(keyType)) {
+    if (needsCredential) {
       ({ anthropicKey: preResolvedAnthropicKey } = await resolveExplicitFirerouterCredential({
         firerouter: profile.firerouter,
         ctx,
@@ -155,19 +148,26 @@ export async function engineOn(profile, ctx) {
   }
 
   if (!profile.servedOutsideCatalog?.(modelId)) {
-    await assertRequestedModelServable(modelId, { apiKey: effectiveKey, keyType });
+    await assertRequestedModelServable(modelId, { apiKey: effectiveKey });
   }
 
+  // The `auto` router's provider scope (`nexus auto`) is a static header
+  // like telemetry: it rides whichever header channel the harness has
+  // (BYOK headers for value harnesses, telemetry headers for the rest).
+  // The gateway honors it only for `auto`, so it is safe on the provider
+  // for in-session model switching. Unset = no header (default scope).
+  const autoHeaders = nexusProvidersHeaders(
+    (await readGlobalConfig(ctx.home)).auto.providers,
+  );
   const result = await profile.enable({
     ctx,
     paths,
     apiKeyRef,
     effectiveKey,
-    keyType,
     modelId,
-    byokHeaders,
+    byokHeaders: { ...byokHeaders, ...autoHeaders },
     telemetryHeaders: profile.telemetryHeaders
-      ? buildFireconnectTelemetryHeaders(profile.id)
+      ? { ...buildFireconnectTelemetryHeaders(profile.id), ...autoHeaders }
       : {},
     includeFirerouter: isFirerouterRequested,
   });
@@ -182,22 +182,10 @@ export async function engineOn(profile, ctx) {
   }
 
   const modelsAdded = result.modelsAdded ?? [result.model];
-  const firerouterIncluded = Boolean(
-    profile.firerouter && isFirerouterModelPattern(result.model),
-  );
-  const footnotes = buildFirerouterOnFootnotes({
-    harnessId: profile.id,
-    firerouter: profile.firerouter,
-    firerouterIncluded,
-    routingPreference: ctx.routingPreference,
-    routingSupported: isFirerouterModel(result.model),
-    firepass: keyType === "firepass",
-    model: result.model,
-  });
   if (profile.printConnected) {
-    await profile.printConnected({ ctx, paths, result, reusedExistingKey, keyType });
+    await profile.printConnected({ ctx, paths, result, reusedExistingKey });
     const displayModelId = profile.displayModelId ?? ((model) => model);
-    printHarnessOnFootnotes(modelsAdded.map(displayModelId), footnotes, profile.restartHint, {
+    printHarnessOnFootnotes(modelsAdded.map(displayModelId), [], profile.restartHint, {
       primaryModel: displayModelId(result.model),
     });
     return;
@@ -206,7 +194,6 @@ export async function engineOn(profile, ctx) {
     label: profile.label,
     model: result.model,
     modelsAdded,
-    footnotes,
     restartHint: profile.restartHint,
   });
 }
@@ -270,9 +257,9 @@ async function resolveOnKey(profile, ctx, paths) {
  * Is this harness currently routed through Fireworks/Azure?
  *
  * The harness's own config is the source of truth: `providerStatus` reads it
- * directly, so it reflects reality even when FireConnect's `enabled` flag has
+ * directly, so it reflects reality even when Nexus's `enabled` flag has
  * drifted (older CLI versions, adapters that didn't maintain it, a lost or
- * reinstalled `~/.fireconnect`). The flag is only a fallback for when that
+ * reinstalled `~/.nexus`). The flag is only a fallback for when that
  * config cannot be read at all.
  *
  * This is the single definition of "on" — `off` uses it to choose

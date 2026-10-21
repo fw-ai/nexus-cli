@@ -59,7 +59,7 @@ export function runtimeDepsInstalled(setupDir = resolveSetupCliDir()) {
  * @returns {string}
  */
 export function cliDependenciesMissingMessage() {
-  return "FireConnect is missing required dependencies. Run `fireconnect upgrade` to install them, or re-run the curl installer.";
+  return "Nexus is missing required dependencies. Run `nexus update` to install them, or re-run the curl installer.";
 }
 
 /**
@@ -85,7 +85,7 @@ export function ensureCliDependencies(setupDir = resolveSetupCliDir()) {
       ["install", "--omit=dev", "--no-fund", "--no-audit"],
       {
         cwd: setupDir,
-        env: { ...process.env, FIRECONNECT_SKIP_POSTINSTALL_FINALIZE: "1" },
+        env: { ...process.env, NEXUS_SKIP_POSTINSTALL_FINALIZE: "1" },
         stdio: "pipe",
         encoding: "utf8",
       },

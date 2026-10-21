@@ -137,7 +137,7 @@ describe("harnessStatusKeySource", () => {
   test("Claude apiKeyHelper auth uses the export hook label", () => {
     assert.equal(
       harnessStatusKeySource("claude", "fireworks", { authMode: "apiKeyHelper" }),
-      "fireconnect key export hook",
+      "nexus key export hook",
     );
   });
 

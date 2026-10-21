@@ -13,31 +13,31 @@ process.env.NO_COLOR = "1";
 
 // Default every test process to the isolated secret store. Individual
 // secret-backend specs explicitly unset these and force file/null storage.
-process.env.FIRECONNECT_TEST ??= "1";
-process.env.FIRECONNECT_SECRET_STORE ??= "memory";
+process.env.NEXUS_TEST ??= "1";
+process.env.NEXUS_SECRET_STORE ??= "memory";
 
 // Point the persisted catalog cache at a throwaway dir for EVERY test process,
 // not just the ones that import test/helpers.mjs. Catalog lookups lazy-load this
 // file, so without it a spec that never touches the cache would read (and price
-// from) the developer's own ~/.fireconnect snapshot.
-process.env.FIRECONNECT_CACHE_DIR ??= mkdtempSync(path.join(os.tmpdir(), "fc-cache-global-"));
+// from) the developer's own ~/.nexus snapshot.
+process.env.NEXUS_CACHE_DIR ??= mkdtempSync(path.join(os.tmpdir(), "fc-cache-global-"));
 
 // Preloaded via `--import` for every test process (see package.json `test`).
 //
 // `<harness> on --api-key` and `login` now strict-verify the key against the
 // gateway's GET /verifyApiKey before storing it. Specs that spawn the real CLI
-// with placeholder fw_/fpk_ keys would otherwise make a live network call, so
+// with placeholder fw_ keys would otherwise make a live network call, so
 // stand up a permissive local double (200 + identity headers for any key) and
-// point the CLI at it via FIRECONNECT_GATEWAY_URL.
+// point the CLI at it via NEXUS_GATEWAY_URL.
 //
 // The double runs in a SEPARATE process (test/mock-gateway.mjs): some specs
 // drive the CLI with `spawnSync`, which blocks this process's event loop, so an
 // in-process server could not answer the child and it would hang.
 //
 // Specs that exercise verification directly (login/status/key) start their own
-// mock and pass FIRECONNECT_GATEWAY_URL per spawn, which overrides this default;
+// mock and pass NEXUS_GATEWAY_URL per spawn, which overrides this default;
 // the `if (!…)` guard also leaves any externally-set value untouched.
-if (!process.env.FIRECONNECT_GATEWAY_URL) {
+if (!process.env.NEXUS_GATEWAY_URL) {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "mock-gateway.mjs");
   const child = spawn(process.execPath, [script], { stdio: ["ignore", "pipe", "ignore"] });
   const url = await new Promise((resolve, reject) => {
@@ -58,8 +58,8 @@ if (!process.env.FIRECONNECT_GATEWAY_URL) {
   // event loop alive (which would hang the test file after its tests finish).
   child.stdout.destroy();
   child.unref();
-  process.env.FIRECONNECT_GATEWAY_URL = url;
-  process.env.FIRECONNECT_GATEWAY_GRPC_WEB_URL = `${url}/web/gateway.Gateway`;
+  process.env.NEXUS_GATEWAY_URL = url;
+  process.env.NEXUS_GATEWAY_GRPC_WEB_URL = `${url}/web/gateway.Gateway`;
   // Don't leave the mock process running after the test process exits.
   process.on("exit", () => {
     try {

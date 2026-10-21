@@ -19,7 +19,7 @@ export const CLAUDE_UPGRADE_PROMPT = "Claude Code is currently connected through
 
 const NONINTERACTIVE_CLAUDE_UPGRADE_MESSAGE = "Claude Code is currently connected through FireConnect. "
   + "Run `fireconnect claude off`, then retry `fireconnect upgrade`, or set "
-  + "`FIRECONNECT_AUTO_OFF_CLAUDE=1` to restore automatically.";
+  + "`NEXUS_AUTO_OFF_CLAUDE=1` to restore automatically.";
 
 /**
  * Pre-v0.9 installs needed a Claude restore before git reset. From 0.9.0 on,
@@ -28,7 +28,7 @@ const NONINTERACTIVE_CLAUDE_UPGRADE_MESSAGE = "Claude Code is currently connecte
 export const CLAUDE_OFF_UPGRADE_BEFORE_VERSION = "0.9.0";
 
 /**
- * @param {string} [installedVersion] FireConnect version currently on disk
+ * @param {string} [installedVersion] Nexus version currently on disk
  * @returns {boolean}
  */
 export function needsClaudeOffBeforeUpgrade(installedVersion = "") {
@@ -130,7 +130,7 @@ export async function runClaudeUpgradePreflight({
     return { proceed: true, restored: false };
   }
 
-  const autoOff = environment.FIRECONNECT_AUTO_OFF_CLAUDE === "1";
+  const autoOff = environment.NEXUS_AUTO_OFF_CLAUDE === "1";
   if (!autoOff) {
     if (!input.isTTY) {
       throw new Error(NONINTERACTIVE_CLAUDE_UPGRADE_MESSAGE);

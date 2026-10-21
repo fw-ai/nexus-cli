@@ -11,10 +11,10 @@ import {
 describe("postinstall finalize bootstrap", () => {
   it("derives HOME only from the durable curl-installer layout", () => {
     assert.deepEqual(
-      durableInstallContext("/home/alice/.fireconnect/cli/packages/setup-cli"),
+      durableInstallContext("/home/alice/.nexus/cli/packages/setup-cli"),
       {
         home: "/home/alice",
-        installDir: "/home/alice/.fireconnect/cli",
+        installDir: "/home/alice/.nexus/cli",
       },
     );
     assert.equal(
@@ -22,14 +22,14 @@ describe("postinstall finalize bootstrap", () => {
       null,
     );
     assert.equal(
-      durableInstallContext("/usr/local/lib/node_modules/@fireconnect/cli"),
+      durableInstallContext("/usr/local/lib/node_modules/@nexus/cli"),
       null,
     );
   });
 
   it("runs the new finalizer in the durable install and passes its package root", async () => {
     const calls = [];
-    const setupDir = path.resolve("/home/alice/.fireconnect/cli/packages/setup-cli");
+    const setupDir = path.resolve("/home/alice/.nexus/cli/packages/setup-cli");
 
     assert.equal(await runPostinstallFinalize({
       setupDir,
@@ -37,7 +37,7 @@ describe("postinstall finalize bootstrap", () => {
     }), true);
     assert.deepEqual(calls, [[
       "/home/alice",
-      "/home/alice/.fireconnect/cli",
+      "/home/alice/.nexus/cli",
     ]]);
   });
 
@@ -53,12 +53,12 @@ describe("postinstall finalize bootstrap", () => {
   });
 
   it("skips when the current installer will finalize explicitly", async () => {
-    const previous = process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE;
-    process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE = "1";
+    const previous = process.env.NEXUS_SKIP_POSTINSTALL_FINALIZE;
+    process.env.NEXUS_SKIP_POSTINSTALL_FINALIZE = "1";
     try {
       let called = false;
       assert.equal(await runPostinstallFinalize({
-        setupDir: "/home/alice/.fireconnect/cli/packages/setup-cli",
+        setupDir: "/home/alice/.nexus/cli/packages/setup-cli",
         finalize: async () => {
           called = true;
         },
@@ -66,9 +66,9 @@ describe("postinstall finalize bootstrap", () => {
       assert.equal(called, false);
     } finally {
       if (previous === undefined) {
-        delete process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE;
+        delete process.env.NEXUS_SKIP_POSTINSTALL_FINALIZE;
       } else {
-        process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE = previous;
+        process.env.NEXUS_SKIP_POSTINSTALL_FINALIZE = previous;
       }
     }
   });
@@ -76,7 +76,7 @@ describe("postinstall finalize bootstrap", () => {
   it("fails npm install when postflight cannot complete", async () => {
     await assert.rejects(
       runPostinstallFinalize({
-        setupDir: "/home/alice/.fireconnect/cli/packages/setup-cli",
+        setupDir: "/home/alice/.nexus/cli/packages/setup-cli",
         finalize: async () => {
           throw new Error("migration failed");
         },

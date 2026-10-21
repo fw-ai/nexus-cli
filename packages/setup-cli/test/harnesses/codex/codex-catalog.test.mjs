@@ -8,6 +8,7 @@ import {
   buildCodexCatalogEntry,
   buildCodexCatalogEntryForRouter,
   buildCodexFirerouterCatalogEntry,
+  buildCodexOpenaiCatalogEntry,
   CODEX_AUTO_COMPACT_FRACTION,
   CODEX_CONSTANT_FIELDS,
   CODEX_MINIMAX_UNSUPPORTED_NOTE,
@@ -19,6 +20,7 @@ import {
   MODEL_OVERRIDES,
   pruneCodexCatalogRows,
   refreshCodexCatalogRows,
+  withCodexConstantFields,
 } from "../../../lib/harnesses/codex/catalog.mjs";
 import {
   MODEL_REASONING,
@@ -29,6 +31,7 @@ import {
   buildServerlessCatalogSnapshot,
   firerouterCatalogEntry,
   inputModalitiesFromModel,
+  prettyModelName,
 } from "../../../lib/fireworks/models.mjs";
 import { setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
 import { mockServerlessModel } from "../../helpers.mjs";
@@ -90,6 +93,38 @@ describe("codex-catalog buildCodexCatalogEntry", () => {
       buildCodexFirerouterCatalogEntry("firerouter/x").auto_review_model_override,
       "firerouter/x",
     );
+  });
+
+  it("turns tool search on for every row, Claude routes included", () => {
+    const base = mockModel();
+    const rows = [
+      buildCodexCatalogEntry(base),
+      buildCodexCatalogEntryForRouter("accounts/fireworks/routers/glm-latest", base, "GLM Latest"),
+      buildCodexFirerouterCatalogEntry(),
+      buildCodexFirerouterCatalogEntry("firerouter/astra"),
+      buildCodexFirerouterCatalogEntry("firerouter/opus"),
+      buildCodexAutoCatalogEntry("auto"),
+      buildCodexAutoCatalogEntry("auto-instant"),
+      buildCodexOpenaiCatalogEntry("gpt-9-sol", {}, null),
+    ];
+    assert.ok(rows.every((row) => row.supports_search_tool === true), rows.map((row) => row.slug).join(","));
+  });
+
+  it("re-stamps tool search onto old rows without reordering keys", () => {
+    const rows = [
+      { slug: "glm-5p2", supports_search_tool: false, priority: 1 },
+      { slug: "firerouter/x", supports_search_tool: false, priority: 1 },
+      { slug: "firerouter/opus", supports_search_tool: true, priority: 1 },
+      { slug: "auto", supports_search_tool: false, priority: 1 },
+      { slug: "gpt-9-sol", supports_search_tool: true, priority: 1 },
+      { slug: "gpt-9-sol", supports_search_tool: true, priority: 1, base_instructions: "stock" },
+    ];
+    const restamped = withCodexConstantFields(rows, null);
+    assert.deepEqual(restamped.map((row) => row.supports_search_tool), [true, true, true, true, true, true]);
+    for (const row of restamped) {
+      assert.deepEqual(Object.keys(row).slice(0, 3), ["slug", "supports_search_tool", "priority"]);
+    }
+    assert.deepEqual(withCodexConstantFields(restamped, null), restamped);
   });
 
   it("compacts at 80% of the window so the compaction RPC fits under the gateway limit", () => {
@@ -316,7 +351,7 @@ describe("codex-catalog buildCodexCatalog", () => {
     assert.equal(catalog.models[0].slug, "firerouter");
     assert.equal(
       catalog.models[0].description,
-      "Routes each user turn between Claude and open models.",
+      "Routes each user turn between open models and the closed models you have access to.",
     );
     assert.equal(catalog.models[0].context_window, 1_048_575);
     assert.equal(catalog.models[0].auto_compact_token_limit, 838860);
@@ -336,7 +371,7 @@ describe("codex-catalog buildCodexCatalog", () => {
     assert.equal(entry.supports_parallel_tool_calls, true);
     assert.equal(
       entry.description,
-      "Routes each user turn across the models in this route.",
+      "Serves this model on every turn.",
     );
     assert.equal(codexCatalogContainsModel({ models }, "firerouter/x"), true);
     assert.equal(
@@ -550,6 +585,20 @@ describe("codex-catalog buildCodexCatalog", () => {
     assert.equal(latest.auto_compact_token_limit, 838860);
     assert.equal(base.supports_parallel_tool_calls, true);
     assert.equal(latest.supports_parallel_tool_calls, true);
+  });
+
+  it("labels a standalone flat row with its display name, not its resource path", () => {
+    const named = mockServerlessModel({
+      id: "accounts/fireworks/models/example-model",
+      display_name: "Example Model",
+    });
+    const unnamed = mockServerlessModel({ id: "accounts/fireworks/models/example-two" });
+    delete unnamed.display_name;
+    const rows = [named, unnamed];
+    const catalog = buildCodexCatalogFromSnapshot(buildServerlessCatalogSnapshot(rows), rows);
+    const label = (slug) => catalog.models.find((entry) => entry.slug === slug)?.display_name;
+    assert.equal(label("example-model"), "Example Model");
+    assert.equal(label("example-two"), prettyModelName("example-two"));
   });
 
   it("marks alias rows vision-capable from the API inputModalities array", () => {
@@ -961,9 +1010,24 @@ describe("codex-catalog refreshCodexCatalogRows", () => {
   });
 
   it("keeps a carried unserved row verbatim, including a written default", () => {
-    // A `--model firerouter/<path>` pick is not in the fresh catalog, so it
-    // is carried over as-is: an already-written default may be the user's own
-    // override, which fireconnect cannot distinguish from its own write.
+    // A synthetic row that is not in the fresh catalog is carried over
+    // as-is: an already-written default may be the user's own override,
+    // which nexus cannot distinguish from its own write.
+    const snapshot = buildServerlessCatalogSnapshot(rows());
+    const fresh = buildCodexCatalogFromSnapshot(snapshot, rows()).models;
+    const carried = {
+      slug: "gpt-6-astra",
+      display_name: "GPT-6 Astra",
+      context_window: 1048575,
+      default_reasoning_level: "medium",
+    };
+    const merged = refreshCodexCatalogRows([...fresh, carried], snapshot, fresh);
+    const row = merged.find((entry) => entry.slug === "gpt-6-astra");
+    assert.deepEqual(row, carried);
+    assert.equal(merged.at(-1).slug, "gpt-6-astra", "position preserved");
+  });
+
+  it("drops a carried FireRouter row on refresh", () => {
     const snapshot = buildServerlessCatalogSnapshot(rows());
     const fresh = buildCodexCatalogFromSnapshot(snapshot, rows()).models;
     const carried = {
@@ -971,8 +1035,6 @@ describe("codex-catalog refreshCodexCatalogRows", () => {
       default_reasoning_level: "medium",
     };
     const merged = refreshCodexCatalogRows([...fresh, carried], snapshot, fresh);
-    const row = merged.find((entry) => entry.slug === "firerouter/x");
-    assert.deepEqual(row, carried);
-    assert.equal(merged.at(-1).slug, "firerouter/x", "position preserved");
+    assert.equal(merged.find((entry) => entry.slug === "firerouter/x"), undefined);
   });
 });

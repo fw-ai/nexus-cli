@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { createServer } from "node:http";
 import { existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -45,7 +46,7 @@ function withTempHome(fn) {
 }
 
 function markerFile(home, sessionId) {
-  return path.join(home, ".fireconnect", "statusline-refresh", `${sessionId}.refreshed`);
+  return path.join(home, ".nexus", "statusline-refresh", `${sessionId}.refreshed`);
 }
 
 function pricedUsage() {
@@ -82,9 +83,9 @@ describe("claimSessionPriceHealing", () => {
   it("claims once per session", () => {
     withTempHome((home) => {
       const opts = { home, transcriptPath: "/t/sess-1.jsonl", usage: unpricedUsage() };
-      // FIRECONNECT_TEST is "1" globally; these pure-marker cases opt out.
-      const prev = process.env.FIRECONNECT_TEST;
-      delete process.env.FIRECONNECT_TEST;
+      // NEXUS_TEST is "1" globally; these pure-marker cases opt out.
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
       try {
         assert.equal(claimSessionPriceHealing(opts), true);
         assert.ok(existsSync(markerFile(home, "sess-1")));
@@ -95,9 +96,9 @@ describe("claimSessionPriceHealing", () => {
         );
       } finally {
         if (prev === undefined) {
-          delete process.env.FIRECONNECT_TEST;
+          delete process.env.NEXUS_TEST;
         } else {
-          process.env.FIRECONNECT_TEST = prev;
+          process.env.NEXUS_TEST = prev;
         }
       }
     });
@@ -108,26 +109,26 @@ describe("claimSessionPriceHealing", () => {
       const usage = unpricedUsage();
       // Test gate holds (set globally): no marker dir created.
       assert.equal(claimSessionPriceHealing({ home, transcriptPath: "/t/s.jsonl", usage }), false);
-      assert.equal(existsSync(path.join(home, ".fireconnect")), false);
+      assert.equal(existsSync(path.join(home, ".nexus")), false);
       assert.equal(claimSessionPriceHealing({ home, transcriptPath: "/t/s.jsonl", usage: pricedUsage() }), false);
       assert.equal(claimSessionPriceHealing({ home: "", transcriptPath: "/t/s.jsonl", usage }), false);
       assert.equal(claimSessionPriceHealing({ home, transcriptPath: "", usage }), false);
       assert.equal(claimSessionPriceHealing({ home, transcriptPath: "/t/s.jsonl", usage: null }), false);
-      process.env.FIRECONNECT_STATUSLINE_REFRESH = "0";
+      process.env.NEXUS_STATUSLINE_REFRESH = "0";
       try {
         assert.equal(claimSessionPriceHealing({ home, transcriptPath: "/t/s.jsonl", usage }), false);
       } finally {
-        delete process.env.FIRECONNECT_STATUSLINE_REFRESH;
+        delete process.env.NEXUS_STATUSLINE_REFRESH;
       }
     });
   });
 
   it("prunes markers older than a week", () => {
     withTempHome((home) => {
-      const prev = process.env.FIRECONNECT_TEST;
-      delete process.env.FIRECONNECT_TEST;
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
       try {
-        const dir = path.join(home, ".fireconnect", "statusline-refresh");
+        const dir = path.join(home, ".nexus", "statusline-refresh");
         mkdirSync(dir, { recursive: true });
         const stale = path.join(dir, "old.refreshed");
         writeFileSync(stale, "1");
@@ -141,9 +142,57 @@ describe("claimSessionPriceHealing", () => {
         assert.ok(existsSync(markerFile(home, "new")));
       } finally {
         if (prev === undefined) {
-          delete process.env.FIRECONNECT_TEST;
+          delete process.env.NEXUS_TEST;
         } else {
-          process.env.FIRECONNECT_TEST = prev;
+          process.env.NEXUS_TEST = prev;
+        }
+      }
+    });
+  });
+
+  it("claims again when a new unpriced model joins the session", () => {
+    withTempHome((home) => {
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
+      try {
+        const transcriptPath = "/t/switch.jsonl";
+        const first = { models: [{ id: "mystery-a", label: "Mystery A", cost: null }] };
+        const second = {
+          models: [
+            { id: "mystery-a", label: "Mystery A", cost: null },
+            { id: "mystery-b", label: "Mystery B", cost: null },
+          ],
+        };
+        assert.equal(claimSessionPriceHealing({ home, transcriptPath, usage: first }), true);
+        assert.equal(claimSessionPriceHealing({ home, transcriptPath, usage: first }), false);
+        assert.equal(claimSessionPriceHealing({ home, transcriptPath, usage: second }), true);
+        assert.equal(claimSessionPriceHealing({ home, transcriptPath, usage: second }), false);
+      } finally {
+        if (prev === undefined) {
+          delete process.env.NEXUS_TEST;
+        } else {
+          process.env.NEXUS_TEST = prev;
+        }
+      }
+    });
+  });
+
+  it("grants a session with a legacy timestamp marker one more attempt", () => {
+    withTempHome((home) => {
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
+      try {
+        const dir = path.join(home, ".nexus", "statusline-refresh");
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(markerFile(home, "legacy"), String(Date.now()));
+        const opts = { home, transcriptPath: "/t/legacy.jsonl", usage: unpricedUsage() };
+        assert.equal(claimSessionPriceHealing(opts), true);
+        assert.equal(claimSessionPriceHealing(opts), false);
+      } finally {
+        if (prev === undefined) {
+          delete process.env.NEXUS_TEST;
+        } else {
+          process.env.NEXUS_TEST = prev;
         }
       }
     });
@@ -169,13 +218,45 @@ describe("refreshPriceCaches", () => {
       }
     });
   });
+
+  it("falls back to the key in Claude Code's gateway header", async () => {
+    await withTempHome(async (home) => {
+      const seen = [];
+      const server = createServer((req, res) => {
+        seen.push(req.headers.authorization ?? "");
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ data: [] }));
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const prevKey = process.env.FIREWORKS_API_KEY;
+      const prevGateway = process.env.NEXUS_GATEWAY_URL;
+      delete process.env.FIREWORKS_API_KEY;
+      process.env.NEXUS_GATEWAY_URL = `http://127.0.0.1:${server.address().port}`;
+      try {
+        await refreshPriceCaches({
+          home,
+          env: { ANTHROPIC_CUSTOM_HEADERS: "X-Fireworks-Api-Key: fw_test_header_key" },
+        });
+        assert.deepEqual(seen, ["Bearer fw_test_header_key"]);
+      } finally {
+        await new Promise((resolve) => server.close(resolve));
+        for (const [name, value] of [["FIREWORKS_API_KEY", prevKey], ["NEXUS_GATEWAY_URL", prevGateway]]) {
+          if (value === undefined) {
+            delete process.env[name];
+          } else {
+            process.env[name] = value;
+          }
+        }
+      }
+    });
+  });
 });
 
 describe("spawnPriceRefresh", () => {
   it("spawns the detached runner once, releasing the marker on failure", () => {
     withTempHome((home) => {
-      const prev = process.env.FIRECONNECT_TEST;
-      delete process.env.FIRECONNECT_TEST;
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
       try {
         const spawns = [];
         const listeners = {};
@@ -208,15 +289,15 @@ describe("spawnPriceRefresh", () => {
         assert.equal(opts.windowsHide, true);
         assert.equal(child.unrefCalled, true);
         // An async spawn death releases the marker so the next turn retries.
-        mkdirSync(path.join(home, ".fireconnect", "statusline-refresh"), { recursive: true });
+        mkdirSync(path.join(home, ".nexus", "statusline-refresh"), { recursive: true });
         writeFileSync(markerFile(home, "sess-1"), "1");
         listeners.error(new Error("ENOENT"));
         assert.equal(existsSync(markerFile(home, "sess-1")), false);
       } finally {
         if (prev === undefined) {
-          delete process.env.FIRECONNECT_TEST;
+          delete process.env.NEXUS_TEST;
         } else {
-          process.env.FIRECONNECT_TEST = prev;
+          process.env.NEXUS_TEST = prev;
         }
       }
     });
@@ -224,10 +305,10 @@ describe("spawnPriceRefresh", () => {
 
   it("returns null without claiming when spawning is impossible", () => {
     withTempHome((home) => {
-      const prev = process.env.FIRECONNECT_TEST;
-      delete process.env.FIRECONNECT_TEST;
+      const prev = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
       try {
-        mkdirSync(path.join(home, ".fireconnect", "statusline-refresh"), { recursive: true });
+        mkdirSync(path.join(home, ".nexus", "statusline-refresh"), { recursive: true });
         writeFileSync(markerFile(home, "sess-9"), "1");
         assert.equal(
           spawnPriceRefresh({
@@ -243,9 +324,9 @@ describe("spawnPriceRefresh", () => {
         assert.equal(spawnPriceRefresh({ home: "", sessionId: "s" }), null);
       } finally {
         if (prev === undefined) {
-          delete process.env.FIRECONNECT_TEST;
+          delete process.env.NEXUS_TEST;
         } else {
-          process.env.FIRECONNECT_TEST = prev;
+          process.env.NEXUS_TEST = prev;
         }
       }
     });

@@ -1,7 +1,9 @@
+import "./legacy-env.mjs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 
+import { DATA_DIRNAME, LEGACY_DATA_DIRNAME } from "./data-dir.mjs";
 import { runUpgradeFinalize } from "./upgrade-finalize.mjs";
 
 const THIS_FILE = fileURLToPath(import.meta.url);
@@ -26,7 +28,7 @@ export function durableInstallContext(setupDir) {
   const fireconnectDir = path.dirname(installDir);
   if (
     path.basename(installDir) !== "cli"
-    || path.basename(fireconnectDir) !== ".fireconnect"
+    || ![DATA_DIRNAME, LEGACY_DATA_DIRNAME].includes(path.basename(fireconnectDir))
   ) {
     return null;
   }
@@ -50,7 +52,8 @@ export async function runPostinstallFinalize({
   setupDir = path.resolve(path.dirname(THIS_FILE), "..", ".."),
   finalize = runUpgradeFinalize,
 } = {}) {
-  if (process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE === "1") {
+  // Released upgraders still pass the pre-rename name while they install deps.
+  if (process.env.NEXUS_SKIP_POSTINSTALL_FINALIZE === "1" || process.env.FIRECONNECT_SKIP_POSTINSTALL_FINALIZE === "1") {
     return false;
   }
   const context = durableInstallContext(setupDir);

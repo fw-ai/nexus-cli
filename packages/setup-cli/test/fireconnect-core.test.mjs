@@ -46,6 +46,16 @@ describe("stripManagedApiKeyHelper", () => {
     assert.equal(next.apiKeyHelper, undefined);
     assert.equal(changed, true);
   });
+
+  it("removes a helper the rename migration repointed at the nexus launcher", () => {
+    const helper = "/home/u/.local/bin/nexus --home /home/u key export --stored-only";
+    const { settings: next, changed } = stripManagedApiKeyHelper(
+      { apiKeyHelper: helper, env: {} },
+      { managedApiKeyHelper: "/home/u/.local/bin/fireconnect --home /home/u key export --stored-only" },
+    );
+    assert.equal(next.apiKeyHelper, undefined);
+    assert.equal(changed, true);
+  });
 });
 
 describe("stripFireworksOwnedEnv", () => {
@@ -92,7 +102,7 @@ describe("claudeFireconnectIntent", () => {
 describe("disableFireworksProvider", () => {
   it("strips top-level model on off without backup when Fireworks base URL is active", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-disable-no-backup-"));
-    const dataDir = path.join(home, ".fireconnect/claude");
+    const dataDir = path.join(home, ".nexus/claude");
     await mkdir(path.dirname(userSettingsPath(home)), { recursive: true });
     await mkdir(dataDir, { recursive: true });
 
@@ -121,7 +131,7 @@ describe("disableFireworksProvider", () => {
 
   it("strips managed picker and status line on off with a legacy values backup", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-disable-legacy-picker-"));
-    const dataDir = path.join(home, ".fireconnect/claude");
+    const dataDir = path.join(home, ".nexus/claude");
     await mkdir(path.dirname(userSettingsPath(home)), { recursive: true });
     await mkdir(dataDir, { recursive: true });
 
@@ -161,7 +171,7 @@ describe("disableFireworksProvider", () => {
 
   it("removes managed apiKeyHelper when backup is env-only", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-disable-helper-"));
-    const dataDir = path.join(home, ".fireconnect/claude");
+    const dataDir = path.join(home, ".nexus/claude");
     await mkdir(path.dirname(userSettingsPath(home)), { recursive: true });
     await mkdir(dataDir, { recursive: true });
 

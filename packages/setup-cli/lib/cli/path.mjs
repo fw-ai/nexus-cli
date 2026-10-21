@@ -4,14 +4,14 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 /**
- * Absolute path to the FireConnect CLI entrypoint for apiKeyHelper / shell hooks.
- * Follows symlinks so an npm-global launcher pointing at `fireconnect.mjs` is
+ * Absolute path to the Nexus CLI entrypoint for apiKeyHelper / shell hooks.
+ * Follows symlinks so an npm-global launcher pointing at `nexus.mjs` is
  * recognized as a Node entrypoint (apiKeyHelper must invoke `node … key export`
  * when `node` is not on the subprocess PATH — e.g. Claude Code's apiKeyHelper).
  * @param {string} [home]
  */
-export function resolveFireconnectCliPath(home = process.env.HOME ?? "") {
-  const launcher = home ? path.join(home, ".local/bin/fireconnect") : "";
+export function resolveCliPath(home = process.env.HOME ?? "") {
+  const launcher = home ? path.join(home, ".local/bin/nexus") : "";
   if (launcher && existsSync(launcher)) {
     return realpath(launcher);
   }
@@ -21,7 +21,7 @@ export function resolveFireconnectCliPath(home = process.env.HOME ?? "") {
     return realpath(path.resolve(argvPath));
   }
 
-  return fileURLToPath(new URL("../../bin/fireconnect.mjs", import.meta.url));
+  return fileURLToPath(new URL("../../bin/nexus.mjs", import.meta.url));
 }
 
 /**
@@ -30,8 +30,8 @@ export function resolveFireconnectCliPath(home = process.env.HOME ?? "") {
  * environment — no HOME and no FIREWORKS_API_KEY — so embed `--home`.
  * @param {string} [home]
  */
-export function fireconnectKeyExportCommand(home = process.env.HOME ?? "") {
-  const cliPath = resolveFireconnectCliPath(home);
+export function keyExportCommand(home = process.env.HOME ?? "") {
+  const cliPath = resolveCliPath(home);
   const homeFlag = home ? ` --home ${shellQuote(home)}` : "";
   if (cliPath.endsWith(".mjs")) {
     return `${process.execPath} ${shellQuote(cliPath)}${homeFlag} key export --stored-only`;

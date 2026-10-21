@@ -1,6 +1,7 @@
 import { defineHarness } from "../../harness/types.mjs";
 import { resolveFireworksKeyWithSource } from "../../keys/api-key.mjs";
-import { printHarnessConnected, printModelsAdded, printCommandHint, printBody } from "../../cli/messages.mjs";
+import { printHarnessConnected, printModelsAdded, printCommandHint, printBody, printNote } from "../../cli/messages.mjs";
+import { WORKSPACE_NOTES } from "./core.mjs";
 
 const LABEL = "Claude Desktop";
 
@@ -17,8 +18,9 @@ const adapter = defineHarness({
     printHarnessConnected("Claude Desktop");
     printBody("Chat, Cowork, and Code now run on Fireworks models.");
     printModelsAdded(result.models ?? []);
-    printCommandHint("Quit and reopen Claude Desktop, then", "fireconnect claude-desktop status");
-    printCommandHint("Undo", "fireconnect claude-desktop off");
+    for (const note of WORKSPACE_NOTES) printNote(note);
+    printCommandHint("Quit and reopen Claude Desktop, then", "nexus claude-desktop status");
+    printCommandHint("Undo", "nexus claude-desktop off");
   },
   async off(ctx) {
     // Honors ctx.quiet (uninstall narrates itself) and returns the outcome.
@@ -29,10 +31,10 @@ const adapter = defineHarness({
     return touched ? "restored" : "none";
   },
   /**
-   * fireconnect claude-desktop mcp [list]
-   * fireconnect claude-desktop mcp add <name> <https-url> [--client-id …] [--client-secret …]
-   * fireconnect claude-desktop mcp remove <name>
-   * fireconnect claude-desktop mcp sync   (re-detect from sessions + the pre-FireConnect deployment + the org registry)
+   * nexus claude-desktop mcp [list]
+   * nexus claude-desktop mcp add <name> <https-url> [--client-id …] [--client-secret …]
+   * nexus claude-desktop mcp remove <name>
+   * nexus claude-desktop mcp sync   (re-detect from sessions + the pre-Nexus deployment + the org registry)
    * The applied 3p profile is the source of truth; restart Desktop after changes.
    */
   async mcp(ctx, args = []) {
@@ -49,14 +51,14 @@ const adapter = defineHarness({
     }
 
     if (sub === "add") {
-      if (!name || !url) throw new Error("Usage: fireconnect claude-desktop mcp add <name> <https-url> [--client-id <id>] [--client-secret <secret>]");
+      if (!name || !url) throw new Error("Usage: nexus claude-desktop mcp add <name> <https-url> [--client-id <id>] [--client-secret <secret>]");
       await addProfileConnector(ctx.home, {
         name, url,
         ...(ctx.clientId ? { oauth: { clientId: ctx.clientId, ...(ctx.clientSecret ? { clientSecret: ctx.clientSecret } : {}) } } : {}),
       });
       console.log(`Added connector "${name}" to the profile.`);
     } else if (sub === "remove") {
-      if (!name) throw new Error("Usage: fireconnect claude-desktop mcp remove <name>");
+      if (!name) throw new Error("Usage: nexus claude-desktop mcp remove <name>");
       if (!(await removeProfileConnector(ctx.home, name))) {
         console.log(`No connector named "${name}" in the profile.`);
         return;
@@ -78,7 +80,7 @@ const adapter = defineHarness({
     const profile = await readProfileStatus(ctx.home);
     if (!profile.state) {
       if (ctx.json === true) console.log(JSON.stringify({ enabled: false, lane: null }, null, 2));
-      else console.log(`${LABEL}: not configured. Run \`fireconnect claude-desktop on\`.`);
+      else console.log(`${LABEL}: not configured. Run \`nexus claude-desktop on\`.`);
       return;
     }
     if (ctx.json === true) {

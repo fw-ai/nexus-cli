@@ -42,7 +42,7 @@ describe("fireconnect status", () => {
 
   before(async () => {
     gateway = await startMockGateway();
-    gatewayEnv = { FIRECONNECT_GATEWAY_URL: gateway.url };
+    gatewayEnv = { NEXUS_GATEWAY_URL: gateway.url };
   });
 
   after(() => {
@@ -54,7 +54,7 @@ describe("fireconnect status", () => {
       const result = await runCli(["status"], { home, env: gatewayEnv });
       assert.equal(result.code, 1);
       assert.match(result.stdout, /Not signed in/);
-      assert.match(result.stdout, /fireconnect login/);
+      assert.match(result.stdout, /nexus login/);
       // The storage report renders regardless of auth state.
       assert.match(result.stdout, /Config ref:/);
       assert.match(result.stdout, /Harnesses:/);
@@ -75,7 +75,7 @@ describe("fireconnect status", () => {
 
   it("reports identity for a valid stored key (exit 0)", async () => {
     await withTempHome("status-stored-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       await seedKeychainConfig(home, VALID_KEY);
       const result = await runCli(["status"], { home, env: gatewayEnv });
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);
@@ -105,7 +105,7 @@ describe("fireconnect status", () => {
       const result = await runCli(["status"], { home, env: gatewayEnv });
       assert.equal(result.code, 1);
       assert.match(result.stdout, /rejected/);
-      assert.match(result.stdout, /fireconnect login/);
+      assert.match(result.stdout, /nexus login/);
       assert.doesNotMatch(result.stdout, /--force/);
     });
   });
@@ -128,7 +128,7 @@ describe("fireconnect status", () => {
       await seedKeychainConfig(home, VALID_KEY);
       const result = await runCli(["status"], {
         home,
-        env: { FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:1" },
+        env: { NEXUS_GATEWAY_URL: "http://127.0.0.1:1" },
       });
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);
       assert.match(result.stdout, /couldn't be reached/i);
@@ -160,7 +160,7 @@ describe("fireconnect status", () => {
 
   it("lists a harness as on from ground truth even when the global enabled flag is stale", async () => {
     // Simulate flag drift: Claude's real settings.json points at Fireworks,
-    // but the global ~/.fireconnect/config.json harnesses.claude.enabled flag
+    // but the global ~/.nexus/config.json harnesses.claude.enabled flag
     // was never flipped to true (the legacy condition this fix addresses).
     // `status` must read the real config and list Claude as on regardless.
     await withTempHome("status-groundtruth-", async (home) => {
@@ -172,7 +172,7 @@ describe("fireconnect status", () => {
       assert.match(result.stdout, /Harnesses:/);
       // The summary lists each harness with a plain on/off state (no key-source
       // detail). Claude is on via ground truth despite the stale flag.
-      assert.match(result.stdout, /\bclaude\b\s+on\b/);
+      assert.match(result.stdout, /^\s+claude\s+Claude Code\s+on$/m);
       assert.doesNotMatch(result.stdout, /X-Fireworks-Api-Key header in settings\.json/);
 
       // The --json path reports the same ground-truth `enabled: true`.

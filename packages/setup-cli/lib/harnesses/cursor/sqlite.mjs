@@ -52,7 +52,7 @@ export function isCursorRunning() {
  * running and stdin is a TTY, prints a "quit Cursor" message and re-prompts
  * (waiting for Enter) until Cursor is no longer running, then returns so the
  * caller's write proceeds. `force` skips the wait (warns instead).
- * Non-interactive throws `CURSOR_RUNNING_MESSAGE`. fireconnect does not close
+ * Non-interactive throws `CURSOR_RUNNING_MESSAGE`. nexus does not close
  * or reopen Cursor — the user does.
  * @param {{ force?: boolean }} [opts]
  */

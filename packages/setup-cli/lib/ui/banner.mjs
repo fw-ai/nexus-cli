@@ -41,6 +41,6 @@ export function printBanner(options = {}) {
 
   if (options.context === "install") {
     blank();
-    success("FireConnect is installed.");
+    success("Nexus is installed.");
   }
 }

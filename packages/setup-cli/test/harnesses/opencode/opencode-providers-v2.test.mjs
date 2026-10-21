@@ -18,7 +18,7 @@ import {
   opencodeV2ProviderEntry,
 } from "../../../lib/harnesses/opencode/providers-v2.mjs";
 
-process.env.FIRECONNECT_TEST ??= "1";
+process.env.NEXUS_TEST ??= "1";
 
 const KEY = "fw_test_key_12345"; // pragma: allowlist secret
 const ROTATED_KEY = "fw_rotated_key_67890"; // pragma: allowlist secret

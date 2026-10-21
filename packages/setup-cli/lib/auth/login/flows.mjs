@@ -7,7 +7,11 @@ import {
   resolveFireworksApiKeyValue,
 } from "../../keys/api-key.mjs";
 import { readSecret } from "../../ui/read-secret.mjs";
-import { isFireworksShapedKey } from "../../keys/key-type.mjs";
+import {
+  FIREPASS_KEY_UNSUPPORTED_MESSAGE,
+  isFirePassKey,
+  isFireworksShapedKey,
+} from "../../keys/key-type.mjs";
 import { createUserJit, getOAuthArgumentsForAccount } from "../sso-account.mjs";
 import {
   BROWSER_SIGNIN_NO_ACCOUNT_FAILURE,
@@ -95,7 +99,7 @@ async function runBrowserFlow(home, { nextHint = true } = {}) {
       break;
     }
     if (result.fatal) {
-      fail(`  ${result.failure} Run ${accent("fireconnect login")} to try again.`);
+      fail(`  ${result.failure} Run ${accent("nexus login")} to try again.`);
       return true;
     }
     say(result.failure);
@@ -160,7 +164,7 @@ async function runSsoBrowserFlow(home, accountId, { nextHint = true } = {}) {
   });
   if (!tokens.ok) {
     if (tokens.fatal) {
-      fail(`  ${tokens.failure} Run ${accent(`fireconnect login --account ${accountId}`)} to try again.`);
+      fail(`  ${tokens.failure} Run ${accent(`nexus login --account ${accountId}`)} to try again.`);
       return true;
     }
     say(tokens.failure);
@@ -216,10 +220,15 @@ async function runPasteFlow(home, { nextHint = true } = {}) {
       continue;
     }
 
+    if (isFirePassKey(key)) {
+      attempts += 1;
+      console.log(`  ${FIREPASS_KEY_UNSUPPORTED_MESSAGE}`);
+      continue;
+    }
     if (!isFireworksShapedKey(key)) {
       attempts += 1;
       console.log(
-        `  That doesn't look like a Fireworks key (expected it to start with fw_ or fpk_). `
+        `  That doesn't look like a Fireworks key (expected it to start with fw_). `
         + `Try again, or get one at ${link(KEYS_URL)}`,
       );
       continue;
@@ -235,7 +244,7 @@ async function runPasteFlow(home, { nextHint = true } = {}) {
     console.log(`  ${verifyFailureLine(result, { interactive: true })}`);
   }
 
-  fail(`Sign-in not completed. Run ${accent("fireconnect login")} to try again.`);
+  fail(`Sign-in not completed. Run ${accent("nexus login")} to try again.`);
 }
 
 /**
@@ -247,7 +256,7 @@ export async function runInteractiveSignIn(home, { nextHint = true, method: chos
   assertNoFireworksEnvForStorage();
   const method = chosen ?? await promptSignInMethod();
   if (!method) {
-    fail(`Sign-in cancelled. Run ${accent("fireconnect login")} when you're ready.`);
+    fail(`Sign-in cancelled. Run ${accent("nexus login")} when you're ready.`);
     return false;
   }
 
@@ -259,7 +268,7 @@ export async function runInteractiveSignIn(home, { nextHint = true, method: chos
     const remembered = (await readGlobalConfig(home)).ssoAccountId;
     const accountId = await promptAccountId(remembered);
     if (!accountId) {
-      fail(`Sign-in cancelled. Run ${accent("fireconnect login")} when you're ready.`);
+      fail(`Sign-in cancelled. Run ${accent("nexus login")} when you're ready.`);
       return false;
     }
     handled = await runSsoBrowserFlow(home, accountId, { nextHint });

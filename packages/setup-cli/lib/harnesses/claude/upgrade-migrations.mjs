@@ -1,9 +1,26 @@
-import { isEnabledFireworksHarness, readGlobalConfig } from "../../config/global-config.mjs";
+import { isEnabledFireworksHarness, readGlobalConfig, setHarnessState } from "../../config/global-config.mjs";
+import {
+  migrateLegacyClaudeModelMapping,
+  savedClaudeModelMapping,
+  withSavedClaudeModelMapping,
+} from "./model-profile.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import { loadRegisterableModels } from "../../fireworks/models.mjs";
-import { shortFireworksModelRef } from "../../fireworks/model-id.mjs";
-import { detectApiKeyType } from "../../keys/key-type.mjs";
+import {
+  AUTO_MODEL_ID,
+  isFirerouterModelPattern,
+  isRetiredModelId,
+  shortFireworksModelRef,
+} from "../../fireworks/model-id.mjs";
+import {
+  ANTHROPIC_BYOK_HEADER,
+  CLAUDE_FIREROUTER_MODEL_ENV_KEYS,
+  OPENAI_BYOK_HEADER,
+  stripCustomHeaderLines,
+} from "../../firerouter/core.mjs";
+import { claudeCodeModelId } from "./code-context.mjs";
+import { fireworksModelDisplayFields } from "./picker-labels.mjs";
 import { resolveFireworksApiKeyValue } from "../../keys/api-key.mjs";
 import { disableWebsearchMcp } from "../../system/websearch-mcp.mjs";
 import {
@@ -11,6 +28,7 @@ import {
   providerBackupPath,
   providerStatusFromEnv,
   resolveDataDir,
+  stripLegacyAttributionHeaderLeftover,
   stripRetiredAutoModeServerPin,
   userSettingsPath,
 } from "./core.mjs";
@@ -19,10 +37,11 @@ import {
   reconcileGatewayServerToolDenials,
 } from "./server-tools-deny.mjs";
 import {
-  buildFireconnectModelPickerOptions,
   isFireconnectModelPicker,
+  withFireconnectModelPicker,
 } from "./settings-model-picker.mjs";
 import { resolveClaudeAuthState } from "./index.mjs";
+import { isFireconnectStatusLine, withClaudeStatusLine } from "./statusline.mjs";
 
 /**
  * Backfill one behavior key into an already-connected Claude Code install.
@@ -110,7 +129,7 @@ export async function migrateClaudeExploreInheritCapOnUpgrade(home) {
 }
 
 /**
- * Retire the FireConnect-managed WebSearch MCP now that the Messages endpoint
+ * Retire the Nexus-managed WebSearch MCP now that the Messages endpoint
  * supports Claude's native WebSearch and WebFetch tools. Existing user MCPs
  * and explicit user deny rules are preserved.
  * @param {string} home
@@ -148,12 +167,12 @@ export async function migrateClaudeNativeWebSearchOnUpgrade(home) {
  * install that only upgrades would otherwise keep last version's descriptions,
  * pricing, and catalog rows forever — this is the upgrade half of the refresh.
  *
- * Only FireConnect-managed pickers are touched; a user-authored `modelPicker`
- * block is left exactly as-is (the whole point of the marker). Rows the live
- * catalog doesn't serve are preserved rather than pruned — a `--model`-added
- * extra is indistinguishable from a delisted catalog row here, and `claude on`
- * remains the authoritative prune path. Best-effort: no key or unreachable
- * catalog leaves the file untouched.
+ * Only Nexus-managed pickers are touched; a user-authored `modelPicker`
+ * block is left exactly as-is (the whole point of the marker). The refresh
+ * follows the same contract as re-`on`: `claude-*` rows are kept verbatim,
+ * every other row is rebuilt from the catalog, and the current default plus
+ * `firerouter/*` rows survive. Best-effort: no key or unreachable catalog
+ * leaves the file untouched.
  *
  * @param {string} home
  * @returns {Promise<boolean>} true when the file was updated
@@ -180,38 +199,191 @@ export async function migrateClaudeModelPickerOnUpgrade(home) {
   if (!token) {
     return false;
   }
-  // Fire Pass serves no picker catalog — `claude on` strips the picker for it,
-  // so an upgrade must not rebuild one. Leave it for the next `on` instead.
-  const keyType = detectApiKeyType(token);
-  if (keyType === "firepass") {
-    return false;
-  }
   const { ids } = await loadRegisterableModels({
     apiKey: token,
-    includeFirerouter: true,
+    includeFirerouter: false,
   });
-  const rebuilt = buildFireconnectModelPickerOptions(
-    ids.map((id) => shortFireworksModelRef(id)).filter(Boolean),
-  );
-  if (!rebuilt.length) {
+  if (!ids.length) {
     return false;
   }
-  // Preserve extras (custom --model rows, firerouter paths) the rebuild drops.
-  const seen = new Set(rebuilt.map((option) => option.model));
-  const options = [...rebuilt];
-  for (const row of modelPicker.options ?? []) {
-    if (typeof row?.model === "string" && !seen.has(row.model)) {
-      options.push(row);
-      seen.add(row.model);
+  // The refresh prunes FireRouter rows like any delisted row; the saved
+  // default is protected so it survives — unless it is itself a FireRouter
+  // selection, which `migrateClaudeFirerouterOnUpgrade` moves to `auto`.
+  const next = withFireconnectModelPicker(settings, ids, {
+    refresh: true,
+    protectedIds: typeof settings.model === "string" && !isFirerouterModelPattern(settings.model)
+      ? [settings.model]
+      : [],
+  });
+  if (next === settings) {
+    return false;
+  }
+  await writeJson(settingsPath, next, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Move a connected Claude Code install off FireRouter on upgrade: the
+ * top-level `/model` default and any tier-slot env pin that names a
+ * FireRouter route become the `auto` mix (with its picker label fields, so
+ * the slot rows don't keep FireRouter names). A legacy `ANTHROPIC_MODEL`
+ * FireRouter override is removed instead: it shadows `settings.model` in
+ * Claude Code, so the migrated default must not live there. Only
+ * Nexus-routed installs are touched; a slot the user pinned to a concrete
+ * model is left alone.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeFirerouterOnUpgrade(home) {
+  if (!home) {
+    return false;
+  }
+  const { harnesses } = await readGlobalConfig(home);
+  if (!isEnabledFireworksHarness(harnesses, HARNESS.CLAUDE)) {
+    return false;
+  }
+  let changed = false;
+  // The saved profile is what a later re-`on` would restore from, so scrub
+  // its FireRouter slots here too (same mapping migration `on` applies).
+  const saved = savedClaudeModelMapping(harnesses[HARNESS.CLAUDE]?.profiles);
+  if (Object.keys(saved).length > 0) {
+    const { mapping, changed: profileChanged } = migrateLegacyClaudeModelMapping(saved);
+    if (profileChanged) {
+      await setHarnessState(home, HARNESS.CLAUDE, {
+        profiles: withSavedClaudeModelMapping(harnesses[HARNESS.CLAUDE]?.profiles, mapping),
+      });
+      changed = true;
     }
   }
-  if (JSON.stringify(options) === JSON.stringify(modelPicker.options ?? [])) {
+  const settingsPath = userSettingsPath(home);
+  const settings = await readJsonIfExists(settingsPath);
+  if (providerStatusFromEnv(settings.env ?? {}) !== "fireworks") {
+    return changed;
+  }
+  const autoTagged = shortFireworksModelRef(claudeCodeModelId(AUTO_MODEL_ID));
+  const next = { ...settings };
+  let settingsChanged = false;
+  if (typeof settings.model === "string" && isRetiredModelId(settings.model)) {
+    next.model = autoTagged;
+    settingsChanged = true;
+  }
+  const env = { ...(settings.env ?? {}) };
+  for (const key of CLAUDE_FIREROUTER_MODEL_ENV_KEYS) {
+    const value = env[key];
+    if (typeof value !== "string" || !isRetiredModelId(value)) {
+      continue;
+    }
+    if (key === "ANTHROPIC_MODEL") {
+      // The legacy main env key is an override Claude Code honors over
+      // settings.model, so rewriting it would shadow the migrated default
+      // forever. Remove it (like `on` does) and let settings.model rule —
+      // but pre-v0.9 installs used it as their *only* main default, so
+      // when no usable top-level model remains, pin `auto` there instead
+      // of falling back to Claude Code's native model.
+      delete env[key];
+      const topLevel = typeof next.model === "string" ? next.model.trim() : "";
+      if (!topLevel || isRetiredModelId(topLevel)) {
+        next.model = autoTagged;
+      }
+      settingsChanged = true;
+      continue;
+    }
+    env[key] = autoTagged;
+    // Tier slots carry picker label fields next to the model key; refresh
+    // them so the row doesn't keep its FireRouter name and blurb.
+    if (key !== "CLAUDE_CODE_SUBAGENT_MODEL") {
+      Object.assign(env, fireworksModelDisplayFields(AUTO_MODEL_ID, key));
+    }
+    settingsChanged = true;
+  }
+  // BYOK header lines only ever served the FireRouter route being dropped;
+  // strip them (keeping the Fireworks key and user lines) with the migration.
+  if (settingsChanged && typeof env.ANTHROPIC_CUSTOM_HEADERS === "string") {
+    const stripped = stripCustomHeaderLines(env.ANTHROPIC_CUSTOM_HEADERS, [
+      ANTHROPIC_BYOK_HEADER,
+      OPENAI_BYOK_HEADER,
+    ]);
+    if (stripped !== env.ANTHROPIC_CUSTOM_HEADERS) {
+      if (stripped) {
+        env.ANTHROPIC_CUSTOM_HEADERS = stripped;
+      } else {
+        delete env.ANTHROPIC_CUSTOM_HEADERS;
+      }
+    }
+  }
+  if (!settingsChanged) {
+    return changed;
+  }
+  next.env = env;
+  await writeJson(settingsPath, next, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Re-point a managed status line whose helper path is stale, e.g. one still
+ * under `~/.fireconnect` after the install moved to `~/.nexus`. A user's own
+ * status line, or none at all, is left alone.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeStatusLinePathOnUpgrade(home) {
+  const settingsPath = userSettingsPath(home);
+  const settings = await readJsonIfExists(settingsPath);
+  if (!isFireconnectStatusLine(settings.statusLine)) {
     return false;
   }
-  await writeJson(
-    settingsPath,
-    { ...settings, modelPicker: { ...modelPicker, options } },
-    { mode: 0o600 },
+  const next = withClaudeStatusLine(settings);
+  if (next === settings) {
+    return false;
+  }
+  await writeJson(settingsPath, next, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Remove the `CLAUDE_CODE_ATTRIBUTION_HEADER=0` that FireConnect 0.7 and 0.8
+ * left behind, whichever way the user upgrades.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when a file was updated
+ */
+export async function migrateClaudeAttributionHeaderLeftoverOnUpgrade(home) {
+  const settingsPath = userSettingsPath(home);
+  const backupPath = providerBackupPath(resolveDataDir({ home }));
+  const readOrEmpty = (file) => readJsonIfExists(file).catch(() => ({}));
+  const { settings, backup } = stripLegacyAttributionHeaderLeftover(
+    await readOrEmpty(settingsPath),
+    await readOrEmpty(backupPath),
   );
+  if (backup) {
+    await writeJson(backupPath, backup, { mode: 0o600 });
+  }
+  if (settings) {
+    await writeJson(settingsPath, settings, { mode: 0o600 });
+  }
+  return Boolean(settings || backup);
+}
+
+/** A pre-rename `apiKeyHelper` that runs the removed `~/.local/bin/fireconnect` launcher. */
+const LEGACY_HELPER_LAUNCHER = /([/\\]\.local[/\\]bin[/\\])fireconnect(\.cmd)?(?=['"]?(?:\s|$))/;
+
+/**
+ * Re-point a v0.8-era `apiKeyHelper` (`~/.local/bin/fireconnect … key export`)
+ * at the `nexus` launcher, since the rename removes the old one and Claude Code
+ * would otherwise lose its key. A user's own helper is left alone.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeApiKeyHelperLauncherOnUpgrade(home) {
+  const settingsPath = userSettingsPath(home);
+  const settings = await readJsonIfExists(settingsPath);
+  const helper = settings.apiKeyHelper;
+  if (typeof helper !== "string" || !/(?:^|\s)key\s+export(?:\s|$)/.test(helper)) {
+    return false;
+  }
+  const next = helper.replace(LEGACY_HELPER_LAUNCHER, "$1nexus$2");
+  if (next === helper) {
+    return false;
+  }
+  await writeJson(settingsPath, { ...settings, apiKeyHelper: next }, { mode: 0o600 });
   return true;
 }

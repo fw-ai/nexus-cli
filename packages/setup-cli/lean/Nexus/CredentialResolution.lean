@@ -10,7 +10,7 @@ branch order instead of needing prefix-transitivity lemmas. `firstShaped`
 models the flag > global > env > stored-header walk. Attach rules are pure
 `Bool` functions, so every safety property is plain boolean reasoning.
 -/
-namespace FireConnect.CredentialResolution
+namespace Nexus.CredentialResolution
 
 /-- Which provider family a key belongs to. Mirrors `isAnthropicShapedKey` /
 `isOpenAIShapedKey`: the Anthropic branch is checked first, so an `sk-ant-…`
@@ -184,7 +184,7 @@ theorem requiresOpenai_spot :
     requiresOpenaiMembers [] = false := by
   native_decide
 
-/-- Strip FireConnect-managed header lines, preserving user-added ones.
+/-- Strip Nexus-managed header lines, preserving user-added ones.
 Mirrors `stripManagedCustomHeaderLines`: membership in the managed set is the
 only removal criterion. -/
 def stripManaged (managed headers : List String) : List String :=
@@ -210,4 +210,4 @@ theorem stripManaged_spot :
       ["x-anthropic-api-key", "x-user-trace"] = ["x-user-trace"] := by
   native_decide
 
-end FireConnect.CredentialResolution
+end Nexus.CredentialResolution

@@ -20,8 +20,8 @@ describe("configure to harness on propagation", () => {
       );
       assert.notEqual(result.code, 0, `${harness} unexpectedly succeeded`);
       assert.match(result.stderr, /No Fireworks API key found\. No settings were changed\./);
-      assert.match(result.stderr, /fireconnect login/);
-      assert.match(result.stderr, /fireconnect login --account <account-id>/);
+      assert.match(result.stderr, /nexus login/);
+      assert.match(result.stderr, /nexus login --account <account-id>/);
     }
   });
 
@@ -116,22 +116,23 @@ describe("configure to harness on propagation", () => {
     assert.match(onResult.stderr, new RegExp(MISSING_FIREWORKS_API_KEY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
-  it("on --anthropic-api-key persists the key to global config", async () => {
+  it("on --anthropic-api-key is rejected now that FireRouter routes are retired, and persists nothing", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-on-persist-anthropic-"));
     await mkdir(path.dirname(opencodeConfigPath(home)), { recursive: true });
 
     const onResult = await runFireconnect(
       [
-        "opencode", "on", "--model", "firerouter",
+        "opencode", "on",
         "--api-key", "fw_test_key_12345",
         "--anthropic-api-key", "sk-ant-global-key-12345",
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
-    assert.equal(onResult.code, 0, onResult.stderr);
+    assert.notEqual(onResult.code, 0);
+    assert.match(onResult.stderr, /--anthropic-api-key was for FireRouter routes, which are no longer supported/);
 
-    const globalConfig = JSON.parse(await readFile(globalConfigPath(home), "utf8"));
-    assert.equal(globalConfig.anthropicApiKey, "sk-ant-global-key-12345");
+    const globalConfig = JSON.parse(await readFile(globalConfigPath(home), "utf8").catch(() => "{}"));
+    assert.ok(!globalConfig.anthropicApiKey, JSON.stringify(globalConfig));
   });
 
   it("rejects invalid --anthropic-api-key without persisting to global config", async () => {
@@ -140,14 +141,14 @@ describe("configure to harness on propagation", () => {
 
     const onResult = await runFireconnect(
       [
-        "opencode", "on", "--model", "firerouter",
+        "opencode", "on",
         "--api-key", "fw_test_key_12345",
         "--anthropic-api-key", "fw_not_anthropic",
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
     assert.notEqual(onResult.code, 0);
-    assert.match(onResult.stderr, /sk-ant-/);
+    assert.match(onResult.stderr, /--anthropic-api-key was for FireRouter routes, which are no longer supported/);
 
     const globalConfig = JSON.parse(await readFile(globalConfigPath(home), "utf8").catch(() => "{}"));
     assert.ok(!globalConfig.anthropicApiKey, JSON.stringify(globalConfig));

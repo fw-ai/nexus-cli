@@ -12,10 +12,7 @@ import {
 import {
   loadRegisterableModels,
 } from "../../fireworks/models.mjs";
-import {
-  detectApiKeyType,
-  isFireworksKey,
-} from "../../keys/key-type.mjs";
+import { isFireworksKey } from "../../keys/key-type.mjs";
 import {
   CURSOR_FIREWORKS_BASE_URL,
   CURSOR_DEFAULT_MODE,
@@ -128,7 +125,7 @@ export default defineHarnessProfile({
     },
     restart: () => printRestartHint("Quit & reopen Cursor IDE for the change to take effect."),
   },
-  enable: async ({ ctx, paths, effectiveKey, keyType, modelId, includeFirerouter = false }) => {
+  enable: async ({ ctx, paths, effectiveKey, modelId, includeFirerouter = false }) => {
     // Register the preferred catalog; firerouter registers only when explicitly requested. A
     // TTL-cached snapshot serves offline; a cold start with no network must
     // fail the `on` rather than register from an empty model list. When no
@@ -145,7 +142,6 @@ export default defineHarnessProfile({
       dataDir: paths.dataDir,
       apiKey: effectiveKey,
       modelId,
-      keyType,
       extraModels,
       catalogUnavailable: !catalogAvailable,
     });
@@ -160,7 +156,7 @@ export default defineHarnessProfile({
       printNote(
         "Note: no Secret Service (libsecret) was detected for Cursor's Electron safeStorage on this Linux host, "
           + "so Cursor will obfuscate (not encrypt) the stored key. Install gnome-keyring + secret-service for real encryption. "
-          + "(FireConnect's own API key storage shown in `fireconnect status` is separate.)",
+          + "(Nexus's own API key storage shown in `nexus status` is separate.)",
       );
     } else if (result.obfuscatedKey) {
       printNote(linuxSafeStorageObfuscatedKeyNote("cursor"));
@@ -234,7 +230,7 @@ export default defineHarnessProfile({
       return;
     }
 
-    const keyType = provider === "none" ? "none" : detectApiKeyType(openAIKey);
+    const keyType = provider === "none" ? "none" : "fireworks";
     const registered = fireconnectRegisteredModels(blob);
 
     const payload = {

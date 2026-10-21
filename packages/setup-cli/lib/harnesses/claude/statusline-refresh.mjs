@@ -1,10 +1,11 @@
 /**
- * Once-per-session price healing for the Claude status line.
+ * Once-per-model price healing for the Claude status line.
  *
  * A model added mid-session (e.g. via `/model` picking a freshly launched
  * serverless row) can appear in the transcript before any price cache knows
  * its rate, degrading the whole line to `cost n/a`. The helper therefore
- * heals before first paint: it claims a per-session marker, spawns a minimal
+ * heals before first paint: it records the unpriced models in a per-session
+ * marker (each model gets one attempt per session), spawns a minimal
  * detached runner that warms the caches through the shared loaders, and polls
  * for the missing rates within a tight bound — so the line prints dollars
  * when the refresh is quick and never stalls when it is not.
@@ -21,7 +22,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -31,7 +32,7 @@ import { reloadListPriceRates } from "../../pricing/list-price-cache.mjs";
 
 const RUNNER_ENTRY = fileURLToPath(new URL("../../../bin/claude-price-refresh.mjs", import.meta.url));
 const MARKER_DIRNAME = "statusline-refresh";
-// Stale markers are pruned opportunistically so ~/.fireconnect cannot fill
+// Stale markers are pruned opportunistically so ~/.nexus cannot fill
 // with one file per session over time.
 const MARKER_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 // Upper bound the pre-print poll waits: slow networks fall back to the cached
@@ -57,7 +58,7 @@ export function hasUnpricedModels(usage) {
 }
 
 function markerDir(home) {
-  return path.join(home, ".fireconnect", MARKER_DIRNAME);
+  return path.join(home, ".nexus", MARKER_DIRNAME);
 }
 
 function markerFor(home, sessionId) {
@@ -84,16 +85,46 @@ function pruneMarkers(dir) {
   }
 }
 
+function unpricedModelKeys(usage) {
+  return [...new Set(
+    usage.models
+      .filter((model) => model == null || model.cost == null)
+      .map((model) => String(model?.id ?? model?.label ?? "")),
+  )];
+}
+
 /**
- * Claim this session's single healing attempt. Synchronous and side-effect
- * free beyond the marker file, so the render path can call it unconditionally.
+ * Models this session already attempted. Markers that predate per-model
+ * tracking hold a bare timestamp and read as "none attempted", which grants
+ * those sessions one more refresh.
+ */
+function readAttemptedModels(marker) {
+  let raw;
+  try {
+    raw = readFileSync(marker, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed?.models) ? parsed.models.map(String) : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Claim a healing attempt for this session's unpriced models. Each model gets
+ * one attempt per session, so an unpriceable model cannot use up the attempt a
+ * later `/model` switch needs. Synchronous and side-effect free beyond the
+ * marker file, so the render path can call it unconditionally.
  *
  * @param {{ home?: string, transcriptPath?: string, usage?: object | null }} [options]
  * @returns {boolean} True when the caller should kick off a refresh.
  */
 export function claimSessionPriceHealing({ home = "", transcriptPath = "", usage = null } = {}) {
   try {
-    if (process.env.FIRECONNECT_TEST === "1" || process.env.FIRECONNECT_STATUSLINE_REFRESH === "0") {
+    if (process.env.NEXUS_TEST === "1" || process.env.NEXUS_STATUSLINE_REFRESH === "0") {
       return false;
     }
     if (!hasUnpricedModels(usage)) {
@@ -106,13 +137,13 @@ export function claimSessionPriceHealing({ home = "", transcriptPath = "", usage
     const dir = markerDir(home);
     mkdirSync(dir, { recursive: true });
     const marker = markerFor(home, sessionId);
-    try {
-      statSync(marker);
+    const attempted = readAttemptedModels(marker) ?? [];
+    const fresh = unpricedModelKeys(usage).filter((key) => !attempted.includes(key));
+    if (fresh.length === 0) {
       return false;
-    } catch {
-      // Absent: claim before spawning so concurrent turns cannot double up.
     }
-    writeFileSync(marker, String(Date.now()));
+    // Claim before spawning so concurrent turns cannot double up.
+    writeFileSync(marker, JSON.stringify({ at: Date.now(), models: [...attempted, ...fresh] }));
     pruneMarkers(dir);
     return true;
   } catch {
@@ -127,20 +158,29 @@ export function claimSessionPriceHealing({ home = "", transcriptPath = "", usage
  * static graph stays at node builtins — this only executes in the detached
  * runner or in specs.
  */
-export async function refreshPriceCaches({ home = "" } = {}) {
+export async function refreshPriceCaches({ home = "", env = process.env } = {}) {
   try {
     const [
       { loadServerlessCatalog },
-      { resolveFireworksApiKeyValue },
+      { resolveFireworksApiKey },
+      { claudeFireworksKeyFrom },
       { refreshListPriceCache },
     ] = await Promise.all([
       import("../../fireworks/models.mjs"),
-      import("../../keys/api-key.mjs"),
+      import("../../keys/harness-api-key.mjs"),
+      import("./core.mjs"),
       import("../../pricing/list-price-cache.mjs"),
     ]);
     await Promise.all([
       (async () => {
-        const apiKey = await resolveFireworksApiKeyValue({ home });
+        // Claude Code hands the status line its settings env, which carries
+        // the key `nexus claude on` baked into the gateway header. That is
+        // the only key in reach when it was resolved from a shell's
+        // FIREWORKS_API_KEY at `on` time and never persisted.
+        const apiKey = await resolveFireworksApiKey({
+          home,
+          resolveKey: () => claudeFireworksKeyFrom({ env }),
+        });
         if (apiKey) {
           await loadServerlessCatalog({ apiKey, refresh: true });
         }

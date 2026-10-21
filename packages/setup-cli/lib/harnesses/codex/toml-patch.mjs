@@ -1,5 +1,5 @@
 /**
- * Surgical edits to Codex config.toml — only touches FireConnect-owned keys/tables
+ * Surgical edits to Codex config.toml — only touches Nexus-owned keys/tables
  * so array-of-tables and other non-flat TOML is preserved.
  */
 
@@ -210,7 +210,9 @@ export function patchFireconnectRoutingRaw(raw, {
   envHttpHeaders = {},
   chatgptLogin = false,
 }) {
-  const base = stripFireconnectRoutingRaw(raw, { stripRootRouting: true });
+  // Leading blank lines are the separator a previous patch wrote after the
+  // routing block; keeping them would add one more on every re-`on`.
+  const base = stripFireconnectRoutingRaw(raw, { stripRootRouting: true }).replace(/^(?:[ \t]*\r?\n)+/, "");
   const routingBlock = [
     `model_provider = "${providerId}"`,
     ...(catalogPath ? [`model_catalog_json = "${catalogPath}"`] : []),

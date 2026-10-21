@@ -12,6 +12,7 @@ import { reapplyCodexOnUpgrade } from "../harnesses/codex/upgrade-reon.mjs";
 import { isEnabledFireworksHarness, readGlobalConfig } from "../config/global-config.mjs";
 import { HARNESS } from "../harness/id.mjs";
 import { refreshListPriceCache } from "../pricing/list-price-cache.mjs";
+import { runRenameMigration } from "./rename-migration.mjs";
 import { ensureCliDependencies, resolveSetupCliDir } from "./ensure-cli-deps.mjs";
 import { runHarnessForwardMigrations } from "./forward-migrations.mjs";
 
@@ -41,10 +42,12 @@ export async function refreshModelSources(home) {
 }
 
 /**
- * Shared post-bootstrap repair for `install.sh` and `fireconnect upgrade`.
+ * Shared post-bootstrap repair for `install.sh` and `nexus update`.
  *
  * Bootstrap stays separate (bash clone vs git reset). Everything state-sensitive
  * after the CLI bits are on disk goes through this path:
+ *   0. FireConnect → Nexus: move ~/.fireconnect to ~/.nexus and repoint the
+ *      launcher, shell hooks, Claude's status line, and the Desktop shim
  *   1. ensure runtime npm deps
  *   2. re-probe secret storage / migrate plaintext → secure
  *   3. refresh the model sources: serverless catalog, models.dev, stock Codex (best-effort, silent)
@@ -66,12 +69,13 @@ export async function refreshModelSources(home) {
  *   migrate?: typeof runHarnessForwardMigrations,
  *   reconcile?: typeof reconcileHarnessConfigOnUpgrade,
  *   codexSignIn?: typeof reapplyCodexOnUpgrade,
+ *   rename?: typeof runRenameMigration,
  * }} [options]
  * @returns {Promise<{ notes: string[], migrated: boolean, setupDir: string }>}
  */
 export async function finalizeInstallOrUpgrade({
   home = process.env.HOME ?? "",
-  installDir = home ? path.join(home, ".fireconnect/cli") : "",
+  installDir = home ? path.join(home, ".nexus/cli") : "",
   setupDir = "",
   log = console.log,
   ensureDeps = ensureCliDependencies,
@@ -80,8 +84,13 @@ export async function finalizeInstallOrUpgrade({
   migrate = runHarnessForwardMigrations,
   reconcile = reconcileHarnessConfigOnUpgrade,
   codexSignIn = reapplyCodexOnUpgrade,
+  rename = runRenameMigration,
 } = {}) {
   const notes = [];
+  for (const note of await rename(home)) {
+    log(note);
+    notes.push(note);
+  }
   const durableSetup = installDir
     ? path.join(installDir, "packages/setup-cli")
     : "";
@@ -100,10 +109,12 @@ export async function finalizeInstallOrUpgrade({
       const result = await reprobe(home);
       migrated = Boolean(result.migrated);
       if (migrated) {
-        log("Moved Fireworks API key from plaintext fallback to secure storage.");
+        log(result.movedFrom === "file"
+          ? "Moved the Fireworks API key from the encrypted-file fallback to the OS keychain."
+          : "Moved Fireworks API key from plaintext fallback to secure storage.");
       } else if (result.backend?.backend === "plaintext") {
         log(
-          "API key is still in the plaintext fallback (~/.fireconnect/.api-key); "
+          "API key is still in the plaintext fallback (~/.nexus/.api-key); "
             + "secure storage is still unavailable on this host.",
         );
       }
@@ -135,6 +146,7 @@ export async function finalizeInstallOrUpgrade({
     } catch {
       // Best-effort reconcile.
     }
+
 
     // After the rebake, so a legacy env-reference config already holds a
     // literal key for the re-`on` to reuse.

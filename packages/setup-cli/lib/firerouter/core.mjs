@@ -1,10 +1,16 @@
 import {
-  FIREROUTER_MODEL_ID,
+  AUTO_INSTANT_MODEL_ID,
+  canonicalAutoModelId,
+  firerouterRouteMembers,
+  isAutoModelId,
+  isClosedFirerouterMember,
   isFirerouterModel,
   isFirerouterModelPattern,
-  shortFireworksModelRef,
 } from "../fireworks/model-id.mjs";
 import { stdin as input } from "node:process";
+import { NEXUS_PROVIDERS_HEADER } from "../config/auto-providers.mjs";
+
+export { NEXUS_PROVIDERS_HEADER };
 import {
   persistGlobalAnthropicApiKey,
   readGlobalConfig,
@@ -18,120 +24,47 @@ import {
 } from "../telemetry/request-headers.mjs";
 
 export const FIREROUTER_FIREWORKS_HEADER = "X-Fireworks-Api-Key";
+// Bare `firerouter` picks its closed model from the harness and the user's
+// provider access, so its tagline names no provider.
 export const FIREROUTER_TAGLINE =
-  "Routes each user turn between Claude and open models.";
-// The route behind Codex's FireRouter row.
-export const FIREROUTER_ASTRA_ROUTE = `${FIREROUTER_MODEL_ID}/astra`;
-export const FIREROUTER_ASTRA_TAGLINE =
-  "Routes each user turn between GPT Astra, GPT Sol, and open models.";
-// Other routes serve what they name (a family plus open models, or only the
-// listed models), so their tagline names no provider.
+  "Routes each user turn between open models and the closed models you have access to.";
+// A route naming one closed model adds the Fireworks open-model mix; one open
+// model is served on every turn; a list uses only the listed models.
+export const FIREROUTER_CLOSED_ROUTE_TAGLINE =
+  "Routes each user turn between this closed model and Fireworks open models.";
+export const FIREROUTER_SINGLE_OPEN_ROUTE_TAGLINE = "Serves this model on every turn.";
 export const FIREROUTER_ROUTE_TAGLINE =
-  "Routes each user turn across the models in this route.";
+  "Routes each user turn across only the models listed in this route.";
+
+export const AUTO_TAGLINE = "Routes each user turn across Fireworks open models.";
+export const AUTO_INSTANT_TAGLINE =
+  "Routes each user turn across the fastest Fireworks open models.";
+
+/** @param {string} modelId  `auto` or an `auto-*` mix */
+export function autoTagline(modelId) {
+  return canonicalAutoModelId(modelId) === AUTO_INSTANT_MODEL_ID ? AUTO_INSTANT_TAGLINE : AUTO_TAGLINE;
+}
 
 /** @param {string} modelId */
 export function firerouterTagline(modelId = "") {
-  if (shortFireworksModelRef(modelId) === FIREROUTER_ASTRA_ROUTE) {
-    return FIREROUTER_ASTRA_TAGLINE;
+  if (!modelId || isFirerouterModel(modelId)) {
+    return FIREROUTER_TAGLINE;
   }
-  return !modelId || isFirerouterModel(modelId) ? FIREROUTER_TAGLINE : FIREROUTER_ROUTE_TAGLINE;
-}
-// Outbound routing preference FireRouter reads to trade capability vs cost
-// (1 = max intelligence … 5 = max savings). Set via `--routing-preference`;
-// omitted entirely when unset so FireRouter applies its own default. Re-running
-// `on` without the flag clears a previously written value.
-export const ROUTING_PREFERENCE_HEADER = "x-routing-preference";
-export const ROUTING_PREFERENCE_MIN = 1;
-export const ROUTING_PREFERENCE_MAX = 5;
-// Named levels accepted on the CLI, mapped to the numeric value sent on the wire.
-export const ROUTING_PREFERENCE_LEVELS = Object.freeze({
-  "max-intelligence": 1,
-  "more-intelligence": 2,
-  "balanced": 3,
-  "more-savings": 4,
-  "max-savings": 5,
-});
-export const ROUTING_PREFERENCE_LEVEL_NAMES = Object.keys(ROUTING_PREFERENCE_LEVELS).join(", ");
-
-/**
- * Coerce a routing-preference value to its numeric wire value in [1,5], or null
- * when unset/unrecognized. Accepts the named levels (case-insensitive) and the
- * numeric aliases 1-5 (as number or string), so the CLI parser and the header
- * builders share one guard.
- * @param {number|string|null|undefined} value
- * @returns {number|null}
- */
-export function normalizeRoutingPreference(value) {
-  if (value === null || value === undefined || value === "") {
-    return null;
+  const members = firerouterRouteMembers(modelId);
+  // `firerouter/auto` and `firerouter/auto-instant` behave like the mix they name.
+  if (members.length === 1 && isAutoModelId(members[0])) {
+    return autoTagline(members[0]);
   }
-  if (typeof value === "string") {
-    const named = ROUTING_PREFERENCE_LEVELS[value.trim().toLowerCase()];
-    if (named !== undefined) {
-      return named;
-    }
+  if (members.length === 1) {
+    return isClosedFirerouterMember(members[0])
+      ? FIREROUTER_CLOSED_ROUTE_TAGLINE
+      : FIREROUTER_SINGLE_OPEN_ROUTE_TAGLINE;
   }
-  const n = typeof value === "number" ? value : Number(String(value).trim());
-  if (!Number.isInteger(n) || n < ROUTING_PREFERENCE_MIN || n > ROUTING_PREFERENCE_MAX) {
-    return null;
-  }
-  return n;
+  return FIREROUTER_ROUTE_TAGLINE;
 }
-
-/**
- * Named routing level for harness `on` output, or null when unset/invalid.
- * @param {number|string|null|undefined} routingPreference
- * @returns {string|null}
- */
-export function routingPreferenceLevelName(routingPreference) {
-  const preference = normalizeRoutingPreference(routingPreference);
-  if (preference === null) {
-    return null;
-  }
-  return Object.keys(ROUTING_PREFERENCE_LEVELS).find(
-    (level) => ROUTING_PREFERENCE_LEVELS[level] === preference,
-  ) ?? null;
-}
-
-/**
- * Named level with numeric alias, e.g. `balanced (3)`. Falls back to
- * `defaultLevel` when no preference is set; pass `{ defaultLevel: null }` to
- * report only what is actually configured (null when unset), so `status` and
- * the Claude Code status line never claim a level FireRouter wasn't told to use.
- * @param {number|string|null|undefined} routingPreference
- * @param {{ defaultLevel?: string|null }} [options]
- * @returns {string|null}
- */
-export function routingPreferenceLevelLabel(routingPreference, { defaultLevel = "balanced" } = {}) {
-  const levelName = routingPreferenceLevelName(routingPreference) ?? defaultLevel;
-  if (levelName === null) {
-    return null;
-  }
-  return `${levelName} (${ROUTING_PREFERENCE_LEVELS[levelName]})`;
-}
-
-/**
- * Comma-separated routing levels for user-facing hints.
- * @param {{ excludeLevel?: string }} [options]
- * @returns {string}
- */
-export function routingPreferenceOptionsList({ excludeLevel } = {}) {
-  return Object.entries(ROUTING_PREFERENCE_LEVELS)
-    .filter(([name]) => name !== excludeLevel)
-    .map(([name, num]) => `${name} (${num})`)
-    .join(", ");
-}
-
-/**
- * Read the applied routing preference back out of an ANTHROPIC_CUSTOM_HEADERS
- * value (the `x-routing-preference` line `on` writes). Returns the numeric wire
- * value in [1,5], or null when unset/unrecognized.
- * @param {unknown} value
- * @returns {number|null}
- */
-export function routingPreferenceFromCustomHeaders(value) {
-  return normalizeRoutingPreference(customHeaderValue(value, [ROUTING_PREFERENCE_HEADER]));
-}
+// Header the deprecated `--routing-preference` used to write. Earlier releases put it in harness
+// configs, so it stays on every managed-header list and `on`/`off` strip it.
+export const RETIRED_ROUTING_PREFERENCE_HEADER = "x-routing-preference";
 
 export const CLAUDE_FIREROUTER_ENV_KEYS = [
   "ANTHROPIC_BASE_URL",
@@ -165,9 +98,9 @@ export function firerouterStatusFromEnv(env) {
 
 function isFirerouterOwnedEnvEntry(key, value, env) {
   // ANTHROPIC_CUSTOM_HEADERS is handled line-by-line in stripFirerouterOwnedEnv
-  // (it can mix FireConnect-managed lines with user-added ones), never wholesale.
+  // (it can mix Nexus-managed lines with user-added ones), never wholesale.
   // When any slot uses FireRouter, the complete mapping was written by
-  // FireConnect and is rebuilt together. Outside that state a user's own model
+  // Nexus and is rebuilt together. Outside that state a user's own model
   // mapping is never stripped by this helper.
   if (CLAUDE_FIREROUTER_MODEL_ENV_KEYS.includes(key)) {
     return isFirerouterModelPattern(value) || firerouterStatusFromEnv(env) === "firerouter";
@@ -188,7 +121,7 @@ export function stripFirerouterOwnedEnv(env) {
     if (!Object.hasOwn(nextEnv, key)) {
       continue;
     }
-    // ANTHROPIC_CUSTOM_HEADERS can hold user-added lines next to FireConnect's
+    // ANTHROPIC_CUSTOM_HEADERS can hold user-added lines next to Nexus's
     // managed auth/routing headers (direct mode writes X-Fireworks-Api-Key here
     // too). Strip only our lines so re-running `on` — or tearing down — keeps the
     // user's own custom headers instead of dropping the whole field.
@@ -378,12 +311,13 @@ export const OPENAI_BYOK_HEADER = "x-openai-api-key";
 /** Request-body field FireRouter reads on the VS Code Chat wire (firerouter model). */
 export const ANTHROPIC_BYOK_BODY_FIELD = "anthropic_api_key";
 
-/** Every ANTHROPIC_CUSTOM_HEADERS line FireConnect writes (auth + routing). */
+/** Every ANTHROPIC_CUSTOM_HEADERS line Nexus writes or has written. */
 const MANAGED_CUSTOM_HEADER_NAMES = [
   FIREROUTER_FIREWORKS_HEADER,
   ANTHROPIC_BYOK_HEADER,
   OPENAI_BYOK_HEADER,
-  ROUTING_PREFERENCE_HEADER,
+  NEXUS_PROVIDERS_HEADER,
+  RETIRED_ROUTING_PREFERENCE_HEADER,
   ...FIRECONNECT_TELEMETRY_HEADER_NAMES,
 ].map((name) => name.toLowerCase());
 
@@ -401,8 +335,8 @@ export function hasManagedCustomHeaderLine(value) {
 }
 
 /**
- * Remove every FireConnect-managed header line (Fireworks key — current or
- * legacy — plus BYOK and routing-preference headers) from an
+ * Remove every Nexus-managed header line (Fireworks key — current or
+ * legacy — plus BYOK and retired routing-preference headers) from an
  * ANTHROPIC_CUSTOM_HEADERS value, preserving all user-added lines. Returns ""
  * when nothing remains, so callers can drop the key entirely on teardown.
  * @param {unknown} value
@@ -432,13 +366,13 @@ export function stripManagedCustomHeaderLines(value) {
  * would otherwise inject); an optional Anthropic key rides along as a BYOK
  * header so FireRouter can pass hard turns through to real Anthropic models,
  * and a configured OpenAI key rides along the same way for OpenAI members.
- * @param {{ fireworksKey: string, anthropicKey?: string, openaiKey?: string, routingPreference?: number|string|null, telemetryHeaders?: Record<string,string> }} keys
+ * @param {{ fireworksKey: string, anthropicKey?: string, openaiKey?: string, nexusProviders?: string, telemetryHeaders?: Record<string,string> }} keys
  */
 export function buildClaudeCustomHeaders({
   fireworksKey,
   anthropicKey = "",
   openaiKey = "",
-  routingPreference = null,
+  nexusProviders = "",
   telemetryHeaders = {},
 }) {
   const lines = [`${FIREROUTER_FIREWORKS_HEADER}: ${fireworksKey}`];
@@ -448,9 +382,8 @@ export function buildClaudeCustomHeaders({
   if (openaiKey?.trim()) {
     lines.push(`${OPENAI_BYOK_HEADER}: ${openaiKey.trim()}`);
   }
-  const preference = normalizeRoutingPreference(routingPreference);
-  if (preference !== null) {
-    lines.push(`${ROUTING_PREFERENCE_HEADER}: ${preference}`);
+  if (nexusProviders?.trim()) {
+    lines.push(`${NEXUS_PROVIDERS_HEADER}: ${nexusProviders.trim()}`);
   }
   for (const [name, value] of Object.entries(telemetryHeaders)) {
     lines.push(`${name}: ${value}`);
@@ -481,7 +414,7 @@ export function firerouterByokHeaders({ anthropicKey = "", openaiKey = "" } = {}
 
 /**
  * Swap the Fireworks key inside an ANTHROPIC_CUSTOM_HEADERS value while
- * preserving every other line (routing preference, user-added headers).
+ * preserving every other line (BYOK keys, user-added headers).
  * Returns the input unchanged (same reference) when it isn't FireRouter-shaped
  * or there is no key to swap in; callers use identity to mean "nothing to
  * write".

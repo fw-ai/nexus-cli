@@ -450,6 +450,9 @@ function usageWeight(usage = {}) {
     + numberValue(usage.output_tokens);
 }
 
+const META_USER_TAG_RE =
+  /^<(?:local-command-caveat|command-name|local-command-stdout|command-message|command-args|system-reminder)>/;
+
 export function parseClaudeUsageLog(text) {
   // Claude Code writes one record per content block, repeating the SAME
   // message.id. Usage is attached to the LAST of those records — the earlier
@@ -457,10 +460,11 @@ export function parseClaudeUsageLog(text) {
   // priced most calls at zero: a real subagent log with 636k tokens reported
   // $0.00. Billing is per API call, so keep one row per id in first-seen order
   // (`slotOf` points an id at the slot it owns) and let the richest usage win.
-  /** @type {{ model: string, usage: object, weight: number }[]} */
+  /** @type {{ model: string, usage: object, weight: number, turn: number }[]} */
   const calls = [];
   /** @type {Map<string, number>} */
   const slotOf = new Map();
+  let turn = 0;
 
   for (const line of text.split(/\r?\n/)) {
     if (!line.trim()) {
@@ -470,6 +474,23 @@ export function parseClaudeUsageLog(text) {
     try {
       entry = JSON.parse(line);
     } catch {
+      continue;
+    }
+    if (entry?.type === "user") {
+      // Modern transcripts stamp a genuine prompt with `promptSource`
+      // (Claude Code 2.1.304: tool_result and harness-injected user records
+      // carry no such key). Trust that marker when present; only legacy
+      // transcripts without it need the text heuristic below.
+      if ("promptSource" in entry) {
+        if (entry.promptSource) turn += 1;
+        continue;
+      }
+      const content = entry.message?.content ?? entry.content;
+      const isToolResult = Array.isArray(content) && content.some((b) => b?.type === "tool_result");
+      const textContent = textFromMessageContent(content);
+      if (!isToolResult && textContent && !META_USER_TAG_RE.test(textContent) && textContent.toLowerCase() !== "warmstart") {
+        turn += 1;
+      }
       continue;
     }
     if (entry?.type !== "assistant") {
@@ -489,22 +510,27 @@ export function parseClaudeUsageLog(text) {
     const key = message.id || entry.requestId || entry.uuid || "";
     if (!key) {
       // No identity to dedupe on — count it as its own call.
-      calls.push({ model, usage, weight });
+      calls.push({ model, usage, weight, turn });
       continue;
     }
     const slot = slotOf.get(key);
     if (slot === undefined) {
       slotOf.set(key, calls.length);
-      calls.push({ model, usage, weight });
+      calls.push({ model, usage, weight, turn });
       continue;
     }
     // Ties keep the earlier record: repeated all-zero blocks shouldn't churn.
     if (weight > calls[slot].weight) {
-      calls[slot] = { model: model || calls[slot].model, usage, weight };
+      calls[slot] = { model: model || calls[slot].model, usage, weight, turn: calls[slot].turn };
     }
   }
 
-  return calls.map(({ model, usage }) => computeClaudeUsageCost(model, usage));
+  const rows = calls.map(({ model, usage, turn: rowTurn }) => ({
+    ...computeClaudeUsageCost(model, usage),
+    turn: rowTurn,
+  }));
+  rows.currentTurn = turn;
+  return rows;
 }
 
 function sumRows(rows) {
@@ -531,10 +557,13 @@ function reportHasUsage(report) {
 
 function reportFromRows(filePath, rows, { sessionName = "" } = {}) {
   const usedRows = rows.filter(rowHasUsage);
+  const currentTurn = rows.currentTurn ?? 0;
+  const lastRow = rows.at(-1);
   const report = {
     path: filePath,
     requests: usedRows.length,
     rows: usedRows,
+    currentTurnModel: lastRow && lastRow.turn === currentTurn ? lastRow.model : "",
     totals: sumRows(usedRows),
     estimated: usedRows.some((row) => row.estimated),
     unpriced: usedRows.filter((row) => row.priced === false).length,
@@ -941,7 +970,7 @@ function unpricedNote(report) {
   return [
     `Note: ${report.unpriced} request(s) have no rate available, so their cost is not shown`
     + ` and totals that include them read ${UNPRICED_TEXT}: ${models.join(", ")}.`
-    + ` Refresh the model catalog (fireconnect model list --refresh) or see ${FIREWORKS_PRICING_DOCS_URL}.`,
+    + ` Refresh the model catalog (nexus model list --refresh) or see ${FIREWORKS_PRICING_DOCS_URL}.`,
   ];
 }
 
