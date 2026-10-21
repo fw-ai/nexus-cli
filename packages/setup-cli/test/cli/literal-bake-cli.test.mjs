@@ -53,7 +53,7 @@ describe("literal-bake CLI flows", () => {
 
   before(async () => {
     gateway = await startMockGateway();
-    gatewayEnv = { FIRECONNECT_GATEWAY_URL: gateway.url };
+    gatewayEnv = { NEXUS_GATEWAY_URL: gateway.url };
   });
 
   after(() => {

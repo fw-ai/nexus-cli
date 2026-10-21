@@ -3,7 +3,7 @@ import { fetchModelsDevApi } from "../pricing/models-dev.mjs";
 /**
  * Lazy cache of Fireworks model ids listed on models.dev for the fireworks-ai
  * provider. OpenCode resolves standard catalog entries through models.dev; when
- * a model is absent there, FireConnect must write provider.models limits itself.
+ * a model is absent there, Nexus must write provider.models limits itself.
  */
 
 /** @type {Set<string> | null} */
@@ -75,7 +75,7 @@ export function replaceModelsDevFireworksRegistry(ids) {
  * @returns {Promise<boolean>}
  */
 export async function refreshModelsDevFireworksRegistry() {
-  if (process.env.FIRECONNECT_TEST === "1") {
+  if (process.env.NEXUS_TEST === "1") {
     return Boolean(fireworksModelIds?.size);
   }
   return replaceModelsDevFireworksRegistry(

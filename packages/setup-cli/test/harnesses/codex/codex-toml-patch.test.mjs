@@ -45,7 +45,7 @@ describe("codex-toml-patch", () => {
     assert.match(patched, /\[\[mcp_servers\]\]/);
     assert.match(patched, /model_provider = "fireworks-ai"/);
     assert.doesNotMatch(patched, /profile = "fireconnect"/);
-    assert.doesNotMatch(patched, /\[profiles\.fireconnect\]/);
+    assert.doesNotMatch(patched, /\[profiles\.nexus\]/);
 
     const stripped = stripFireconnectRoutingRaw(patched, { stripRootRouting: true });
     assert.match(stripped, /\[\[mcp_servers\]\]/);
@@ -188,7 +188,7 @@ describe("codex-toml-patch", () => {
 
     const patched = patchFireconnectRoutingRaw(legacy, ROUTING);
     assert.doesNotMatch(patched, /profile = "fireconnect"/);
-    assert.doesNotMatch(patched, /\[profiles\.fireconnect\]/);
+    assert.doesNotMatch(patched, /\[profiles\.nexus\]/);
     const doc = parseToml(patched);
     assert.equal(doc.root.model_provider, "fireworks-ai");
     assert.equal(doc.root.model, ROUTING.modelId);
@@ -277,6 +277,16 @@ describe("codex-toml-patch", () => {
     assert.doesNotMatch(stripped, /model_provider = "fireworks-ai"/);
     assert.doesNotMatch(stripped, /^model = /m);
     assert.doesNotMatch(stripped, /\[model_providers\.fireworks-ai\]/);
+  });
+
+  it("re-patching a config with other content does not add a blank line each time", () => {
+    const once = patchFireconnectRoutingRaw("[tui]\nshow_tooltips = true\n", ROUTING);
+    let raw = once;
+    for (let i = 0; i < 3; i += 1) {
+      raw = patchFireconnectRoutingRaw(raw, ROUTING);
+    }
+    assert.equal(raw, once);
+    assert.match(once, /^model = "glm-5p1"\n\n\[tui\]$/m);
   });
 
   it("patchFireconnectRoutingRaw removes stale web_search = disabled written by #320", () => {

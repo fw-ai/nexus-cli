@@ -12,12 +12,14 @@ const MANAGED_NAMES = new Set(FIRECONNECT_TELEMETRY_HEADER_NAMES);
 const VERSION_PATTERN = /\bv?(\d+\.\d+\.\d+)\b/;
 const HARNESS_TITLES = Object.freeze({
   [HARNESS.CLAUDE]: "Claude Code",
+  [HARNESS.CLAUDE_DESKTOP]: "Claude Desktop",
   [HARNESS.OPENCODE]: "OpenCode",
   [HARNESS.CODEX]: "Codex",
   [HARNESS.PI]: "Pi",
   [HARNESS.VSCODE]: "VS Code Chat",
   [HARNESS.COPILOT_APP]: "GitHub Copilot",
   [HARNESS.COPILOT_CLI]: "GitHub Copilot CLI",
+  [HARNESS.DEEPSEEK]: "DeepSeek Harness",
 });
 
 function normalizedVersion(value) {
@@ -32,17 +34,36 @@ export function buildFireconnectTelemetryHeaders(
   if (!harnessTitle) {
     throw new Error(`No request attribution title configured for harness: ${harnessId}`);
   }
-  const safeFireconnectVersion = normalizedVersion(fireconnectVersion);
-  const versionLabel = safeFireconnectVersion ? `v${safeFireconnectVersion}` : "unknown";
   return {
     "X-Title": harnessTitle,
-    "HTTP-Referer": `fireconnect/${versionLabel}`,
+    "HTTP-Referer": telemetryReferer(fireconnectVersion),
   };
+}
+
+/**
+ * The `HTTP-Referer` value that identifies this CLI's traffic to the gateway.
+ * @param {string} [version]
+ */
+export function telemetryReferer(version = readLocalVersion()) {
+  const safeVersion = normalizedVersion(version);
+  return `nexus/${safeVersion ? `v${safeVersion}` : "unknown"}`;
+}
+
+const LEGACY_REFERER = /(?<![\w/.-])(?:fireconnect\/(?:unknown|v\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)|nexus\/unknown)(?![\w.-])/g;
+
+/**
+ * Replace pre-rename `fireconnect/v<version>` referer values baked into a
+ * harness config with the current one. Format-agnostic: the value is unique
+ * to this CLI wherever it appears (JSON, TOML, or header lines).
+ * @param {string} text
+ */
+export function retargetLegacyReferer(text) {
+  return text.replace(LEGACY_REFERER, telemetryReferer());
 }
 
 function isLegacyFireconnectUserAgent(name, value) {
   return name.toLowerCase() === "user-agent"
-    && /^fireconnect\/(?:unknown|\d+\.\d+\.\d+)$/i.test(String(value).trim());
+    && /^(?:fireconnect|nexus)\/(?:unknown|\d+\.\d+\.\d+)$/i.test(String(value).trim());
 }
 
 export function stripFireconnectTelemetryHeaders(headers = {}) {

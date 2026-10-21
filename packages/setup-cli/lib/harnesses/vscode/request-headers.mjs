@@ -1,23 +1,28 @@
 import {
   firerouterRequiresAnthropicKey,
+  isAutoModelId,
   isFirerouterModelPattern,
 } from "../../fireworks/model-id.mjs";
 import {
   ANTHROPIC_BYOK_BODY_FIELD,
   ANTHROPIC_BYOK_HEADER,
+  NEXUS_PROVIDERS_HEADER,
+  RETIRED_ROUTING_PREFERENCE_HEADER,
 } from "../../firerouter/core.mjs";
 import { mergeFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
 
 const BYOK_HEADER_NAMES = new Set([
   ANTHROPIC_BYOK_HEADER,
   "x-openai-api-key",
+  NEXUS_PROVIDERS_HEADER,
+  RETIRED_ROUTING_PREFERENCE_HEADER,
 ]);
 
 export function withFireconnectRequestHeaders(
   model,
   { telemetryHeaders = {}, byokHeaders = {} } = {},
 ) {
-  // Attach byokHeaders (incl. routing-preference) for any firerouter selection;
+  // Attach byokHeaders for any firerouter selection;
   // strip the Anthropic BYOK key when the selection doesn't route to Anthropic.
   const firerouter = isFirerouterModelPattern(model.id);
   const needsAnthropicKey = firerouterRequiresAnthropicKey(model.id);
@@ -32,7 +37,9 @@ export function withFireconnectRequestHeaders(
           ([name]) => needsAnthropicKey || name.toLowerCase() !== ANTHROPIC_BYOK_HEADER,
         ),
       )
-    : {};
+    : isAutoModelId(model.id) && byokHeaders[NEXUS_PROVIDERS_HEADER]
+      ? { [NEXUS_PROVIDERS_HEADER]: byokHeaders[NEXUS_PROVIDERS_HEADER] }
+      : {};
   const requestHeaders = {
     ...mergeFireconnectTelemetryHeaders(priorHeaders, telemetryHeaders),
     ...attachedByok,

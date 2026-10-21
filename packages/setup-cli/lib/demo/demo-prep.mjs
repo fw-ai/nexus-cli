@@ -1,10 +1,9 @@
 /**
- * Pre-race setup for `fireconnect claude demo`: readiness gate, catalog warm,
+ * Pre-race setup for `nexus claude demo`: readiness gate, catalog warm,
  * onboarding wizard, and preferences.
  */
 
 import { resolveFireworksApiKey } from "../keys/harness-api-key.mjs";
-import { detectApiKeyType } from "../keys/key-type.mjs";
 import { warmServerlessPricingCache } from "../fireworks/models.mjs";
 import { CUSTOM_DEMO_PROMPT_ID, resolvePrompt, DEMO_PRESETS } from "./presets.mjs";
 import { runSetupForm } from "./setup-form.mjs";
@@ -35,7 +34,7 @@ export function normalizeOptions(ctx) {
     leftModel,
     rightModel,
     challenger: rightModel,
-    out: ctx.out || "./fireconnect-demo",
+    out: ctx.out || "./nexus-demo",
     noOpen: ctx.noOpen,
     json: ctx.json,
     yes: ctx.yes,
@@ -49,8 +48,8 @@ export async function assertClaudeFireconnected({ home, settingsPath }) {
   }
 }
 
-function resolveSideRates(modelId, keyType = "fireworks", slotMapping = null) {
-  const rates = demoModelRates(modelId, keyType, slotMapping);
+function resolveSideRates(modelId, slotMapping = null) {
+  const rates = demoModelRates(modelId, slotMapping);
   if (!rates) {
     throw new Error(
       `Could not resolve pricing for ${modelId}. Pick a model from the demo setup form.`,
@@ -99,8 +98,7 @@ export async function prepareDemoRun({
       throw new Error(formatReadinessError(await assessDemoReadiness({ home, apiKey: ctx.apiKey })));
     }
 
-    let keyType = detectApiKeyType(fwKey);
-    await warmServerlessPricingCache(fwKey, keyType);
+    await warmServerlessPricingCache(fwKey);
     refreshDemoPickerFromServerlessCatalog();
 
     let prompt = options.prompt || options.promptFile
@@ -144,13 +142,12 @@ export async function prepareDemoRun({
 
     return {
       fwKey,
-      keyType: detectApiKeyType(fwKey),
       options,
       prompt,
       leftLabel: demoModelLabel(options.leftModel),
       rightLabel: demoModelLabel(options.rightModel),
-      leftRates: resolveSideRates(options.leftModel, keyType, readiness.mapping),
-      rightRates: resolveSideRates(options.rightModel, keyType, readiness.mapping),
+      leftRates: resolveSideRates(options.leftModel, readiness.mapping),
+      rightRates: resolveSideRates(options.rightModel, readiness.mapping),
     };
   }
 
@@ -163,8 +160,7 @@ export async function prepareDemoRun({
     throw new Error(formatReadinessError(await assessDemoReadiness({ home, apiKey: ctx.apiKey })));
   }
 
-  let keyType = detectApiKeyType(fwKey);
-  await warmServerlessPricingCache(fwKey, keyType);
+  await warmServerlessPricingCache(fwKey);
   refreshDemoPickerFromServerlessCatalog();
 
   const prompt = options.prompt === CUSTOM_DEMO_PROMPT_ID && !options.promptFile
@@ -179,12 +175,11 @@ export async function prepareDemoRun({
 
   return {
     fwKey,
-    keyType,
     options,
     prompt,
     leftLabel: demoModelLabel(options.leftModel),
     rightLabel: demoModelLabel(options.rightModel),
-    leftRates: resolveSideRates(options.leftModel, keyType, readiness.mapping),
-    rightRates: resolveSideRates(options.rightModel, keyType, readiness.mapping),
+    leftRates: resolveSideRates(options.leftModel, readiness.mapping),
+    rightRates: resolveSideRates(options.rightModel, readiness.mapping),
   };
 }

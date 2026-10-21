@@ -164,7 +164,7 @@ describe("model-display", () => {
     try {
       const display = resolveModelDisplayMetadata("accounts/fireworks/models/test-partial");
       assert.equal(display.maxInputTokens, 262_144);
-      assert.equal(display.maxOutputTokens, 16_384);
+      assert.equal(display.maxOutputTokens, 131_072);
       assert.equal(display.vision, false);
       assert.equal(display.toolCalling, true);
     } finally {

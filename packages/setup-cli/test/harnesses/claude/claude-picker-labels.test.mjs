@@ -10,11 +10,11 @@ describe("Claude picker labels", () => {
   it("uses Claude-style per Mtok pricing in descriptions", () => {
     assert.equal(
       fireworksModelPickerDescription("auto"),
-      "Intelligent router across open models. Similar performance at lower cost.",
+      "Routes each user turn across Fireworks open models.",
     );
     assert.equal(
       fireworksModelPickerDescription("firerouter"),
-      "Intelligent router across Claude and open models. Similar performance at lower cost.",
+      "Routes each user turn between open models and the closed models you have access to.",
     );
     const flash = fireworksModelPickerDescription("deepseek-v4-flash");
     assert.equal(flash, "Fireworks serverless · $0.22/$0.66 per Mtok");
@@ -37,7 +37,11 @@ describe("Claude picker labels", () => {
     );
     assert.equal(
       fireworksModelPickerDescription("firerouter/astra"),
-      "Intelligent router across Claude and open models. Similar performance at lower cost.",
+      "Routes each user turn between this closed model and Fireworks open models.",
+    );
+    assert.equal(
+      fireworksModelPickerDescription("firerouter/opus"),
+      "Routes each user turn between this closed model and Fireworks open models.",
     );
   });
 });

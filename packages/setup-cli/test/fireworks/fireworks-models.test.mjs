@@ -229,7 +229,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
       "Couldn't fetch the Fireworks model catalog and no cached copy exists yet. "
         + "Fireworks API 500 Internal Server Error: Error listing serverless models. "
         + "Retry once the Fireworks API recovers. "
-        + "Once `fireconnect model list` succeeds, the catalog is cached for offline use.",
+        + "Once `nexus model list` succeeds, the catalog is cached for offline use.",
     );
   });
 
@@ -304,7 +304,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
     });
   });
 
-  test("loadServerlessCatalog serves auto like a serverless list member, never for Fire Pass", async () => {
+  test("loadServerlessCatalog serves auto like a serverless list member", async () => {
     const fetchImpl = async () => ({
       ok: true,
       json: async () => ({ object: "list", data: mockServerlessModelRows() }),
@@ -316,12 +316,6 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
       assert.equal(loaded.catalog[0].shortId, "auto");
       assert.ok(loaded.catalog.some((entry) => entry.shortId === "glm-5p2"));
     });
-
-    const firepass = await loadServerlessCatalog({ apiKey: "fpk_test_firepass_key" });
-    assert.ok(
-      firepass.catalog.every((entry) => !isAutoCatalogEntry(entry)),
-      "auto is not supported for Fire Pass keys",
-    );
   });
 
   test("loadServerlessCatalog keeps one auto row however the gateway lists it", async () => {
@@ -346,13 +340,13 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
 
     await withSeededCatalogCache(fetchImpl, async () => {
       const loaded = await loadServerlessCatalog({ apiKey: "fw_test_key", refresh: true });
-      assert.deepEqual(autoIds(loaded.catalog).sort(), ["auto", "auto-instant"]);
+      assert.deepEqual(autoIds(loaded.catalog).sort(), ["auto"], "the retired auto-instant row is dropped");
       assert.deepEqual(loaded.catalog.find((entry) => entry.id === "auto"), autoCatalogEntry());
       const persisted = readCatalogCache()?.snapshot;
       assert.deepEqual(
         autoIds(persisted?.entries ?? []).sort(),
-        ["auto", "auto-instant"],
-        "the persisted snapshot holds one canonical row per auto mix",
+        ["auto"],
+        "the persisted snapshot holds one canonical row for the auto mix",
       );
       for (const id of ["accounts/fireworks/routers/auto", "accounts/fireworks/models/auto"]) {
         assert.equal(persisted.pricingById.get(id), undefined, `${id} borrows no member's pricing`);
@@ -360,9 +354,9 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
         assert.equal(persisted.contextLengthById.get(id), undefined, `${id} borrows no member's context`);
       }
 
-      const sections = organizeCatalogForDisplay(catalogWithAutoEntry(loaded.catalog, "fireworks"));
+      const sections = organizeCatalogForDisplay(catalogWithAutoEntry(loaded.catalog));
       const ids = (title) => sections.find((section) => section.title === title)?.entries.map((e) => e.shortId);
-      assert.deepEqual(ids("SMART ROUTERS"), ["auto", "auto-instant"]);
+      assert.deepEqual(ids("SMART ROUTERS"), ["auto"]);
       assert.ok(!ids("INDIVIDUAL MODELS").some((id) => id.startsWith("auto")));
     });
   });
@@ -377,16 +371,16 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
     const gatewayAuto = { id: "accounts/fireworks/routers/auto", shortId: "auto", displayName: "Auto", kind: "serverless" };
     const gatewayInstant = { ...gatewayAuto, id: "accounts/fireworks/routers/auto-instant", shortId: "auto-instant" };
 
-    const served = catalogWithAutomaticAuto([gatewayAuto, example, { ...gatewayAuto }], "fireworks");
+    const served = catalogWithAutomaticAuto([gatewayAuto, example, { ...gatewayAuto }]);
     assert.deepEqual(served, [autoCatalogEntry(), example]);
 
-    // An auto-instant row alone must not stand in for the default mix.
-    const instantOnly = catalogWithAutomaticAuto([gatewayInstant, example], "fireworks");
-    assert.deepEqual(instantOnly.map((entry) => entry.id), ["auto", "auto-instant", "accounts/fireworks/routers/example-latest"]);
+    // A retired auto-instant row is dropped and does not stand in for the default mix.
+    const instantOnly = catalogWithAutomaticAuto([gatewayInstant, example]);
+    assert.deepEqual(instantOnly.map((entry) => entry.id), ["auto", "accounts/fireworks/routers/example-latest"]);
 
     assert.deepEqual(
-      catalogWithAutoEntry([gatewayAuto, example], "fireworks").filter(isAutoCatalogEntry).map((e) => e.shortId),
-      ["auto-instant", "auto"],
+      catalogWithAutoEntry([gatewayAuto, example]).filter(isAutoCatalogEntry).map((e) => e.shortId),
+      ["auto"],
       "model list matches a resource-path auto row instead of adding a second one",
     );
   });
@@ -424,7 +418,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
       formatCatalogUpdatedAt(Date.UTC(2026, 7, 29, 20, 28), "America/Los_Angeles"),
       "Aug 29, 2026, 1:28 PM PDT",
     );
-    assert.equal(formatCatalogUpdatedAt(null), "bundled with FireConnect");
+    assert.equal(formatCatalogUpdatedAt(null), "bundled with Nexus");
   });
 
   test("formatCatalogSections uses the shared minimal USD format", () => {
@@ -471,9 +465,15 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
 
     assert.match(output, /SMART ROUTERS/);
     assert.match(output, /one model picked per user turn/);
-    assert.match(output, /auto: cost-aware default mix of open models/);
-    assert.match(output, /auto-instant: latency-first mix of open models/);
-    assert.match(output, /firerouter: cost-saving routing between closed and open models/);
+    assert.match(output, /auto: +Routes each user turn across Fireworks open models\./);
+    assert.match(output, /auto-instant: +Routes each user turn across the fastest Fireworks open models\./);
+    assert.match(output, /firerouter: +Routes each user turn between open models and the closed models you have access to\./);
+    // The three notes line up in one column.
+    const noteColumns = output.replace(/\x1b\[[0-9;]*m/g, "").split("\n")
+      .filter((line) => /^ {2}(auto|auto-instant|firerouter):/.test(line))
+      .map((line) => line.indexOf("Routes"));
+    assert.equal(noteColumns.length, 3, output);
+    assert.equal(new Set(noteColumns).size, 1, output);
   });
 
   test("buildPickerCatalogFromApiModels derives routers from usage_identifier", () => {
@@ -728,7 +728,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
     try {
       await warmServerlessPricingCache("sk-ant-not-a-fireworks-key");
       await warmServerlessPricingCache("fpk_firepass_key_0000000000000000");
-      assert.deepEqual(requestedKeys, [], "must not call the gateway with a foreign or Fire Pass key");
+      assert.deepEqual(requestedKeys, [], "must not call the gateway with a non-fw_ key");
 
       await warmServerlessPricingCache("fw_real_fireworks_key");
       assert.deepEqual(requestedKeys, ["Bearer fw_real_fireworks_key"]);
@@ -780,7 +780,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
     });
   });
 
-  test("model list synthesizes the auto rows, except on Fire Pass keys", () => {
+  test("model list synthesizes the auto rows", () => {
     const catalog = [{
       id: "accounts/fireworks/routers/glm-latest",
       shortId: "glm-latest",
@@ -788,24 +788,23 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
       kind: "serverless",
     }];
 
-    const listed = catalogWithAutoEntry(catalog, "fireworks");
-    assert.deepEqual(listed.map((e) => e.shortId), ["auto", "auto-instant", "glm-latest"]);
+    const listed = catalogWithAutoEntry(catalog);
+    assert.deepEqual(listed.map((e) => e.shortId), ["auto", "glm-latest"]);
     assert.equal(listed[0].displayName, "Auto");
-    assert.equal(listed[1].displayName, "Auto Instant");
+    assert.equal(listed[1].displayName, "GLM 5.2 (Latest)");
 
-    assert.deepEqual(
-      catalogWithAutoEntry(catalog, "firepass").map((e) => e.shortId),
-      ["glm-latest"],
-    );
-    // A gateway-supplied auto row must not be duplicated by the synthesized one,
-    // and it must not suppress the other auto routers either.
+    // A gateway-supplied auto row must not be duplicated by the synthesized one.
     const withGatewayRow = [autoCatalogEntry(), ...catalog];
     assert.deepEqual(
-      catalogWithAutoEntry(withGatewayRow, "fireworks").map((e) => e.shortId),
-      ["auto-instant", "auto", "glm-latest"],
+      catalogWithAutoEntry(withGatewayRow).map((e) => e.shortId),
+      ["auto", "glm-latest"],
     );
+    // A retired auto-instant row in the input is dropped, not displayed.
     const withAllGatewayRows = [autoCatalogEntry(), autoCatalogEntry("auto-instant"), ...catalog];
-    assert.equal(catalogWithAutoEntry(withAllGatewayRows, "fireworks"), withAllGatewayRows);
+    assert.deepEqual(
+      catalogWithAutoEntry(withAllGatewayRows).map((e) => e.shortId),
+      ["auto", "glm-latest"],
+    );
   });
 
   test("individual models list every version, newest first", () => {

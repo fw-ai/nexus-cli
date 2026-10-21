@@ -27,9 +27,10 @@ const PENDING_TTL_MS = 5 * 60 * 1000;
 /** How long to suppress the interactive upgrade prompt after the user declines. */
 export const UPGRADE_PROMPT_SNOOZE_MS = 24 * 60 * 60 * 1000;
 
-const UPGRADE_PROMPT = "Upgrade now?";
+const UPGRADE_PROMPT = "Update now?";
 
 const SKIP_UPDATE_CHECK_COMMANDS = new Set([
+  "update",
   "upgrade",
   "uninstall",
   "version",
@@ -57,7 +58,7 @@ export function shouldSpawnChecker(cache, now = Date.now()) {
 
 /**
  * Prompt UI needs a fully interactive terminal: answers on stdin, and both
- * stdout and stderr as TTYs so piping (`fireconnect … | jq`) stays non-blocking.
+ * stdout and stderr as TTYs so piping (`nexus … | jq`) stays non-blocking.
  *
  * @param {{ isTTY?: boolean } | null | undefined} input
  * @param {{ isTTY?: boolean } | null | undefined} stdout
@@ -68,7 +69,7 @@ export function isFullyInteractiveTerminal(input, stdout, output) {
 }
 
 /**
- * Whether to ask "Upgrade now?" instead of only printing the tip.
+ * Whether to ask "Update now?" instead of only printing the tip.
  * Git installs only; requires a fully interactive terminal.
  *
  * @param {{
@@ -91,7 +92,7 @@ export function shouldPromptUpgrade({
   if (!isTTY || !gitInstall || !latestVersion) {
     return false;
   }
-  if (environment.FIRECONNECT_NO_UPDATE_PROMPT === "1") {
+  if (environment.NEXUS_NO_UPDATE_PROMPT === "1") {
     return false;
   }
   return !isUpgradePromptSnoozed(cache, latestVersion, now);
@@ -149,10 +150,10 @@ function spawnChecker(home) {
 
 function printUpdateTip(localVersion, latestVersion, gitInstall) {
   const upgradeInstruction = gitInstall
-    ? "Run: fireconnect upgrade"
-    : "Run: curl -fsSL https://raw.githubusercontent.com/fw-ai/fireconnect/main/install.sh | bash";
+    ? "Run: nexus update"
+    : "Run: curl -fsSL https://nexus.fireworks.ai/install.sh | bash";
   process.stderr.write(
-    `\nFireConnect update available: v${localVersion} → v${latestVersion}\n`
+    `\nNexus update available: v${localVersion} → v${latestVersion}\n`
       + `${upgradeInstruction}\n\n`,
   );
 }
@@ -178,7 +179,7 @@ export async function promptAndMaybeUpgrade({
   output = process.stderr,
 }) {
   process.stderr.write(
-    `\nFireConnect update available: v${localVersion} → v${latestVersion}\n`,
+    `\nNexus update available: v${localVersion} → v${latestVersion}\n`,
   );
 
   let accepted;
@@ -242,11 +243,11 @@ export async function promptAndMaybeUpgrade({
 export async function checkForUpdates(command, homeOverride, options = {}) {
   // Never run under test: detached child races temp-dir cleanup and hits network.
   const environment = options.environment ?? process.env;
-  if (environment.FIRECONNECT_TEST === "1" || environment.NODE_ENV === "test") return;
-  // Explicit opt-out for spawned CLI children that must strip FIRECONNECT_TEST
+  if (environment.NEXUS_TEST === "1" || environment.NODE_ENV === "test") return;
+  // Explicit opt-out for spawned CLI children that must strip NEXUS_TEST
   // (e.g. tests exercising the real file key backend) but still must not spawn
   // the detached checker into a throwaway HOME.
-  if (environment.FIRECONNECT_NO_UPDATE_CHECK === "1") return;
+  if (environment.NEXUS_NO_UPDATE_CHECK === "1") return;
   if (SKIP_UPDATE_CHECK_COMMANDS.has(command)) return;
 
   const home = homeOverride || environment.HOME || "";

@@ -34,6 +34,25 @@ export const HARNESS_ALIASES = Object.freeze({
 });
 
 /**
+ * Every command that connects a harness, in help order. `featured` rows are the
+ * ones `login` suggests next; `nexus harnesses` lists them all.
+ * @type {ReadonlyArray<Readonly<{ command: string, name: string, featured?: boolean }>>}
+ */
+export const HARNESS_COMMANDS = Object.freeze([
+  { command: "claude", name: "Claude Code", featured: true },
+  { command: "claude-desktop", name: "Claude Desktop (Fireworks inference)", featured: true },
+  { command: "opencode", name: "OpenCode", featured: true },
+  { command: "codex", name: "Codex CLI", featured: true },
+  { command: "chatgpt", name: "ChatGPT desktop app", featured: true },
+  { command: "pi", name: "Pi" },
+  { command: "cursor", name: "Cursor IDE" },
+  { command: "vscode", name: "VS Code Chat" },
+  { command: "copilot-app", name: "GitHub Copilot desktop app" },
+  { command: "copilot-cli", name: "GitHub Copilot CLI" },
+  { command: "deepseek", name: "DeepSeek Harness (dsh)" },
+].map(Object.freeze));
+
+/**
  * Resolve a harness alias to its canonical harness id (or return the input
  * unchanged if it is not an alias).
  * @param {string} token
@@ -63,8 +82,8 @@ export const FILE_CONFIG_HARNESS_SET = new Set(FILE_CONFIG_HARNESS_IDS);
  */
 export const AMBIGUOUS_COPILOT_MESSAGE =
   "`copilot` is ambiguous — GitHub ships two products:\n"
-  + "  fireconnect copilot-app    GitHub Copilot desktop app\n"
-  + "  fireconnect copilot-cli    GitHub Copilot CLI (the `copilot` command)";
+  + "  nexus copilot-app    GitHub Copilot desktop app\n"
+  + "  nexus copilot-cli    GitHub Copilot CLI (the `copilot` command)";
 
 export function parseHarnessId(value) {
   if (value === "copilot") {

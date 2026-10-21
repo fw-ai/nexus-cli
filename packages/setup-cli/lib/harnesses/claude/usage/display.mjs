@@ -624,8 +624,8 @@ export function formatClaudeUsageInteractiveFrame(input, state = {}, { stream = 
   const detailMode = Boolean(view.detailSessionId);
   const requestMode = Boolean(view.requestSource);
   const title = sessions.length === 1
-    ? "fireconnect usage · last 1 session"
-    : `fireconnect usage · last ${sessions.length} sessions`;
+    ? "nexus usage · last 1 session"
+    : `nexus usage · last ${sessions.length} sessions`;
   const maxCost = Math.max(...sessions.map((report) => report.grandTotals.cost), 0);
   const lines = [
     dim(title, stream),
@@ -1025,12 +1025,12 @@ function formatSummary({ sessions, totals, calls, estimated, unpriced = 0 }, str
   const hasNames = sessions.some((report) => Boolean(sessionName(report)));
 
   if (sessions.length === 1) {
-    lines.push(...formatSessionDetail(sessions[0], "fireconnect usage · last 1 session", width, stream));
+    lines.push(...formatSessionDetail(sessions[0], "nexus usage · last 1 session", width, stream));
   } else {
     sessions.forEach((report, index) => {
       lines.push(...formatSessionDetail(
         report,
-        `fireconnect usage · session ${index + 1} of ${sessions.length}`,
+        `nexus usage · session ${index + 1} of ${sessions.length}`,
         width,
         stream,
       ));
@@ -1039,7 +1039,7 @@ function formatSummary({ sessions, totals, calls, estimated, unpriced = 0 }, str
     const maxCost = Math.max(...sessions.map((report) => report.grandTotals.cost), 0);
     lines.push(
       "",
-      dim(`fireconnect usage · last ${sessions.length} sessions`, stream),
+      dim(`nexus usage · last ${sessions.length} sessions`, stream),
       "",
       ...formatHero({ totals, calls, sessions: sessions.length }, width, stream),
       "",
@@ -1057,7 +1057,7 @@ function formatSummary({ sessions, totals, calls, estimated, unpriced = 0 }, str
 
 /** Brief, deterministic version of the designer's purple pixel firework. */
 export async function playUsageIntroAnimation(stream = stdout) {
-  if (!stream.isTTY || !useColor(stream) || process.env.FIRECONNECT_NO_USAGE_ANIMATION) return;
+  if (!stream.isTTY || !useColor(stream) || process.env.NEXUS_NO_USAGE_ANIMATION) return;
 
   const blank = ["       ", "       ", "       ", "       ", "       "];
   const frames = [

@@ -25,7 +25,7 @@ const DEFAULTS = {
   leftModel: "opus",
   rightModel: "glm-fast-latest",
   matchupPresetId: "subscription-vs-fireworks",
-  out: "./fireconnect-demo",
+  out: "./nexus-demo",
 };
 
 function state(overrides = {}) {
@@ -170,7 +170,7 @@ test("renderFormLines: uses consistent 3-step numbering", () => {
   assert.match(game, /2\/3 · Pick a challenge/);
   const confirm = renderFormLines(advanceToConfirm(state()), { cols: 100 }).join("\n");
   assert.match(confirm, /3\/3 · Confirm/);
-  assert.match(confirm, /FireConnect Claude setup/);
+  assert.match(confirm, /Nexus Claude setup/);
 });
 
 test("estimateRaceCost: returns a bounded range", () => {
@@ -195,7 +195,8 @@ test("curatedDemoModels: includes Anthropic slots and latest Fireworks picks", (
   const list = curatedDemoModels();
   const ids = list.map((m) => m.id);
   assert.ok(ids.includes("opus"));
-  assert.ok(ids.includes("firerouter"));
+  assert.ok(ids.includes("auto"));
+  assert.ok(!ids.some((id) => id.startsWith("firerouter")));
   assert.ok(!ids.includes("glm-5p2-fast"));
 });
 

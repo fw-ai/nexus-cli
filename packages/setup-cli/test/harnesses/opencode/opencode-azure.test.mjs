@@ -4,7 +4,7 @@ import os from "node:os";
 import { spawn } from "node:child_process";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { seedOnCommandCatalog } from "../../helpers.mjs";
+import { isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
 
 import {
   OPENCODE_AZURE_PROVIDER_ID,
@@ -12,7 +12,7 @@ import {
   opencodeConfigPath,
 } from "../../../lib/harnesses/opencode/core.mjs";
 
-const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "fireconnect.mjs");
+const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "nexus.mjs");
 const AZURE_ENDPOINT = "https://my-res.services.ai.azure.com";
 const AZURE_BASE_URL = "https://my-res.services.ai.azure.com/openai/v1";
 const AZURE_KEY = "azure-test-key-1234567890";
@@ -21,7 +21,7 @@ function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) { seedOnCommandCatalog(env.HOME, args); }
     const child = spawn(process.execPath, [CLI, ...args], {
-      env: { ...process.env, FIREWORKS_API_KEY: "", AZURE_API_KEY: "", FIRECONNECT_SECRET_STORE: "memory", FIRECONNECT_TEST: "1", ...env },
+      env: { ...process.env, FIREWORKS_API_KEY: "", AZURE_API_KEY: "", NEXUS_SECRET_STORE: "memory", NEXUS_TEST: "1", ...env, HOME: isolatedChildHome(env) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
@@ -265,7 +265,7 @@ describe("opencode azure harness", () => {
     });
   });
 
-  it("firerouter -> Azure -> direct -> off preserves the original backup", async () => {
+  it("direct -> Azure -> direct -> off preserves the original backup", async () => {
     await withHome(async (home) => {
       const configPath = opencodeConfigPath(home);
       const original = JSON.stringify({
@@ -276,7 +276,7 @@ describe("opencode azure harness", () => {
 
       const firerouter = await runFireconnect(
         [
-          "opencode", "on", "--model", "firerouter",
+          "opencode", "on",
           "--api-key", "fw_test_key_12345",
         ],
         { HOME: home, FIREWORKS_API_KEY: "" },

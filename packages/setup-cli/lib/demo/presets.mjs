@@ -1,5 +1,5 @@
 /**
- * Prompt presets for `fireconnect demo`.
+ * Prompt presets for `nexus demo`.
  *
  * Each preset produces a single self-contained HTML file (inline CSS/JS, no
  * external deps) so it drops straight into a sandboxed iframe. All are

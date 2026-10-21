@@ -481,14 +481,14 @@ describe("claude usage", () => {
     assert.equal(reportGroup.sessions[1].sessionName, "Middle session");
 
     const text = formatClaudeUsageReports(reportGroup);
-    assert.match(text, /fireconnect usage · last 2 sessions/);
+    assert.match(text, /nexus usage · last 2 sessions/);
     assert.match(text, /TOTAL SPEND/);
     assert.match(text, /SESSION\s+COST\s+CALLS\s+SHARE\s+%/);
     assert.match(text, /▸ 33333333 Newest session/);
     assert.match(text, /▸ 22222222 Middle session/);
     assert.match(text, /▾ 33333333\s+Newest session/);
     assert.match(text, /▾ 22222222\s+Middle session/);
-    assert.ok(text.indexOf("▾ 22222222") < text.indexOf("fireconnect usage · last 2 sessions"));
+    assert.ok(text.indexOf("▾ 22222222") < text.indexOf("nexus usage · last 2 sessions"));
     assert.doesNotMatch(text, /11111111-1111-4111-9111-111111111111/);
     assert.match(text, /\$5\.80/);
 
@@ -509,7 +509,7 @@ describe("claude usage", () => {
     assert.match(plainText, /Usage summary:/);
     assert.match(plainText, /Session totals for last 2 sessions:/);
     assert.match(plainText, /GRAND TOTAL\s+\|\s+2\s+\|\s+1,000,000\s+\|\s+1,000,000\s+\|\s+5\.80/);
-    assert.doesNotMatch(plainText, /fireconnect usage · last 2 sessions/);
+    assert.doesNotMatch(plainText, /nexus usage · last 2 sessions/);
     assert.doesNotMatch(plainText, /█/);
   });
 
@@ -592,7 +592,7 @@ describe("claude usage", () => {
 
     const report = await readClaudeUsage({ home, session: "12345678" });
     const text = formatClaudeUsageReport(report);
-    assert.match(text, /fireconnect usage · last 1 session/);
+    assert.match(text, /nexus usage · last 1 session/);
     assert.match(text, /TOTAL SPEND/);
     assert.match(text, /▾ 12345678/);
     assert.match(text, /glm-5p2/);
@@ -640,7 +640,7 @@ describe("claude usage", () => {
     assert.match(text, /Parent\s+\|\s+accounts\/fireworks\/models\/glm-5p2\s+\|\s+1\s+\|\s+1,000\s+\|\s+3,000/);
     assert.match(text, /alpha\s+\|\s+claude-opus-4-8\s+\|\s+1\s+\|\s+2\s+\|\s+4/);
     assert.match(text, /Grand requests: 2/);
-    assert.doesNotMatch(text, /fireconnect usage · last 1 session/);
+    assert.doesNotMatch(text, /nexus usage · last 1 session/);
     assert.doesNotMatch(text, /TOTAL SPEND/);
     assert.doesNotMatch(text, /█/);
     assert.doesNotMatch(text, /▾/);
@@ -695,7 +695,7 @@ describe("claude usage", () => {
     const result = await runFireconnect(["claude", "usage", "--session", "12345678"], { HOME: home });
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, new RegExp(`No assistant entries found in .*${sessionId}\\.jsonl`));
-    assert.doesNotMatch(result.stdout, /fireconnect usage · last 1 session/);
+    assert.doesNotMatch(result.stdout, /nexus usage · last 1 session/);
   });
 
   it("accepts --plain for the non-interactive summary output", async () => {
@@ -719,7 +719,7 @@ describe("claude usage", () => {
     assert.match(result.stdout, /Usage summary:/);
     assert.match(result.stdout, /Parent\/Sub-agent ID\s+\|\s+Model\s+\|\s+Calls\s+\|\s+Input\s+\|\s+Output\s+\|\s+Cost \(USD\)/);
     assert.match(result.stdout, /Parent\s+\|\s+accounts\/fireworks\/models\/glm-5p2\s+\|\s+1\s+\|\s+1,000\s+\|\s+2,000/);
-    assert.doesNotMatch(result.stdout, /fireconnect usage · last 1 session/);
+    assert.doesNotMatch(result.stdout, /nexus usage · last 1 session/);
     assert.doesNotMatch(result.stdout, /TOTAL SPEND/);
     assert.doesNotMatch(result.stdout, /█/);
     assert.doesNotMatch(result.stdout, /Request #\s+\|\s+Model/);

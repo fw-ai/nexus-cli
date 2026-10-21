@@ -1,9 +1,10 @@
 /**
- * Unified model catalog for `fireconnect demo` — any two models can race.
+ * Unified model catalog for `nexus demo` — any two models can race.
  *
- * Includes Fireworks serverless models, FireRouter, and Claude Code Anthropic
- * subscription slots (opus / sonnet / haiku / fable). Anthropic slots require
- * `fireconnect claude` (same routing check as status).
+ * Includes Fireworks serverless models (with the `auto` mix) and Claude Code
+ * Anthropic subscription slots (opus / sonnet / haiku / fable). Anthropic
+ * slots require `nexus claude` (same routing check as status). FireRouter
+ * routes are retired and are not offered.
  */
 
 import {
@@ -25,7 +26,6 @@ import {
 } from "../fireworks/serverless-catalog-cache.mjs";
 import { lookupFireworksPricing } from "../fireworks/pricing.mjs";
 import {
-  firerouterCatalogEntry,
   firerouterDisplayName,
   preferLatestAliases,
 } from "../fireworks/models.mjs";
@@ -38,7 +38,7 @@ export const ANTHROPIC_SLOT_IDS = Object.freeze(["opus", "sonnet", "haiku", "fab
  * Concrete canonical Anthropic model ids for each slot — the Claude 5 family
  * (mid-2026). The demo's incumbent side races REAL Anthropic by passing these to
  * `claude -p --model`, which bypasses the `ANTHROPIC_DEFAULT_*_MODEL` alias
- * expansion (so the user's fireconnect slot pin doesn't redirect the incumbent
+ * expansion (so the user's nexus slot pin doesn't redirect the incumbent
  * to a Fireworks backend). The request still routes through the Fireworks AI
  * gateway via the live `ANTHROPIC_BASE_URL` + Fireworks key — the gateway serves
  * real Anthropic models by concrete id, no separate Anthropic credential needed.
@@ -74,7 +74,7 @@ function isDemoLatestRouterShortId(shortId) {
 
 /** @param {string} shortId */
 function demoPickerSortKey(shortId) {
-  if (shortId === "firerouter") {
+  if (shortId === "auto") {
     return "0";
   }
   if (shortId.endsWith("-fast-latest")) {
@@ -91,27 +91,28 @@ function staticDemoFireworksPickerIds() {
   const latestAliases = [...KNOWN_LATEST_ROUTER_ALIASES]
     .filter(isDemoLatestRouterShortId)
     .sort((left, right) => demoPickerSortKey(left).localeCompare(demoPickerSortKey(right)));
-  return ["firerouter", ...latestAliases];
+  return ["auto", ...latestAliases];
 }
 
 /**
  * Derive demo picker ids from a serverless catalog snapshot (same source as
- * `fireconnect model list`). Keeps FireRouter and `*-latest` / `*-fast-latest`
+ * `nexus model list`). Keeps the `auto` mix and `*-latest` / `*-fast-latest`
  * routers only — pinned family versions like glm-5p1 are dropped by
- * `preferLatestAliases` when stable aliases exist.
+ * `preferLatestAliases` when stable aliases exist. FireRouter rows are
+ * filtered out even when the gateway still returns them.
  * @param {import("../fireworks/models.mjs").CatalogEntry[]} entries
  * @returns {string[]}
  */
 export function demoFireworksPickerIdsFromCatalog(entries) {
-  const withFirerouter = [
-    firerouterCatalogEntry(),
-    ...entries.filter((entry) => entry.shortId !== "firerouter"),
-  ];
-  const trimmed = preferLatestAliases(withFirerouter);
+  const supported = entries.filter((entry) => (
+    !isFirerouterModelPattern(entry?.shortId ?? "")
+    && !isFirerouterModelPattern(entry?.id ?? "")
+  ));
+  const trimmed = preferLatestAliases(supported);
   const ids = trimmed
     .map((entry) => entry.shortId)
-    .filter((shortId) => shortId === "firerouter" || isDemoLatestRouterShortId(shortId));
-  return [...new Set(ids)].sort((left, right) => (
+    .filter((shortId) => shortId === "auto" || isDemoLatestRouterShortId(shortId));
+  return [...new Set(["auto", ...ids])].sort((left, right) => (
     demoPickerSortKey(left).localeCompare(demoPickerSortKey(right))
   ));
 }
@@ -281,7 +282,7 @@ function autoMixRates(id) {
  * @param {string} id
  * @returns {{ inputPerMillion: number | null, outputPerMillion: number | null, cachedInputPerMillion: number | null, cacheWrite1hPerMillion?: number | null, cacheWrite5mPerMillion?: number | null, cacheReadPerMillion?: number | null, tier: string, source: string, label: string, estimated?: boolean } | null}
  */
-export function demoModelRates(id, keyType = "fireworks", slotMapping = null) {
+export function demoModelRates(id, slotMapping = null) {
   if (isAnthropicSlotModel(id)) {
     // The incumbent side always runs the concrete canonical Anthropic id
     // (ANTHROPIC_SLOT_CONCRETE_IDS) via `claude -p --model`, which bypasses the

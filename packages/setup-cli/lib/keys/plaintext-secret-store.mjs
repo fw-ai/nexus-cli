@@ -1,7 +1,7 @@
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const PLAINTEXT_RELATIVE_PATH = ".fireconnect/.api-key";
+const PLAINTEXT_RELATIVE_PATH = ".nexus/.api-key";
 
 /**
  * @param {string} home

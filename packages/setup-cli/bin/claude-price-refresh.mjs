@@ -8,6 +8,7 @@
  * only cost a retry next turn, and nothing here may write to stdio.
  */
 
+import "../lib/system/legacy-env.mjs";
 import process from "node:process";
 
 import { refreshPriceCaches } from "../lib/harnesses/claude/statusline-refresh.mjs";

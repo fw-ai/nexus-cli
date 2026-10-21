@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, writeFile, mkdir, access } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, access, lstat, symlink } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
@@ -57,9 +57,9 @@ describe("uninstall", () => {
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
 
-    // Regression (gh fw-ai/fireconnect#12): a leftover ~/.fireconnect file
+    // Regression (gh fw-ai/nexus-cli#12): a leftover ~/.nexus file
     // (e.g. the update-check cache) must not survive uninstall.
-    await writeFile(path.join(home, ".fireconnect/update-check.json"), '{"lastCheck":1}');
+    await writeFile(path.join(home, ".nexus/update-check.json"), '{"lastCheck":1}');
 
     const uninstallResult = await runFireconnect(["uninstall"], { HOME: home });
     assert.equal(uninstallResult.code, 0);
@@ -74,13 +74,13 @@ describe("uninstall", () => {
     assert.equal(restoredCodex, codexOriginal);
 
     assert.equal(await pathExists(globalConfigPath(home)), false);
-    assert.equal(await pathExists(path.join(home, ".fireconnect/claude")), false);
-    assert.equal(await pathExists(path.join(home, ".fireconnect/opencode")), false);
-    assert.equal(await pathExists(path.join(home, ".fireconnect/codex")), false);
+    assert.equal(await pathExists(path.join(home, ".nexus/claude")), false);
+    assert.equal(await pathExists(path.join(home, ".nexus/opencode")), false);
+    assert.equal(await pathExists(path.join(home, ".nexus/codex")), false);
     assert.equal(await pathExists(path.join(home, ".codex/fireworks-model-catalog.json")), false);
-    // gh #12: nothing left in ~/.fireconnect, and the dir itself is gone.
-    assert.equal(await pathExists(path.join(home, ".fireconnect/update-check.json")), false);
-    assert.equal(await pathExists(path.join(home, ".fireconnect")), false);
+    // gh #12: nothing left in ~/.nexus, and the dir itself is gone.
+    assert.equal(await pathExists(path.join(home, ".nexus/update-check.json")), false);
+    assert.equal(await pathExists(path.join(home, ".nexus")), false);
   });
 
   it("restores codex from a legacy fireworks-azure routing on uninstall", async () => {
@@ -89,7 +89,7 @@ describe("uninstall", () => {
 
     // The state an Azure-enabled install is left in after the Azure removal:
     // config.toml still routes through fireworks-azure (which Codex CLI 0.160+
-    // refuses to load), and the pre-FireConnect snapshot is the only way back.
+    // refuses to load), and the pre-Nexus snapshot is the only way back.
     const configPath = codexConfigPath(home);
     const codexOriginal = 'model = "gpt-4.1"\n';
     const legacyAzureRouting = [
@@ -116,7 +116,7 @@ describe("uninstall", () => {
     assert.equal(uninstallResult.code, 0, uninstallResult.stderr);
 
     assert.equal(await readFile(configPath, "utf8"), codexOriginal);
-    assert.equal(await pathExists(path.join(home, ".fireconnect/codex")), false);
+    assert.equal(await pathExists(path.join(home, ".nexus/codex")), false);
   });
 
   it("keeps codex catalog when uninstall cannot disable codex", async () => {
@@ -245,7 +245,7 @@ describe("uninstall (interactive path)", () => {
    * Present a harness as routed (or not) and optionally stub its `off`.
    *
    * "On" is resolved from the harness's own config via `providerStatus`, not
-   * from FireConnect's `enabled` flag, so a test that wants a harness treated
+   * from Nexus's `enabled` flag, so a test that wants a harness treated
    * as on has to say so here — writing `enabled: true` into the global config
    * is not enough and would silently test nothing.
    *
@@ -268,10 +268,10 @@ describe("uninstall (interactive path)", () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-interactive-"));
     // Two registered harnesses with on-disk data dirs.
     await writeGlobalConfig(home, { harnesses: { claude: { enabled: true }, opencode: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
-    await mkdir(path.join(home, ".fireconnect/opencode"), { recursive: true });
-    await writeFile(path.join(home, ".fireconnect/claude/marker"), "1");
-    await writeFile(path.join(home, ".fireconnect/opencode/marker"), "1");
+    await mkdir(path.join(home, ".nexus/claude"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/opencode"), { recursive: true });
+    await writeFile(path.join(home, ".nexus/claude/marker"), "1");
+    await writeFile(path.join(home, ".nexus/opencode/marker"), "1");
 
     let claudeOffCalls = 0;
     let opencodeOffCalls = 0;
@@ -293,11 +293,11 @@ describe("uninstall (interactive path)", () => {
     assert.equal(claudeOffCalls, 1, "claude off ran once");
     assert.equal(opencodeOffCalls, 1, "opencode off ran once");
     // Succeeded harness: its data dir was removed right after off succeeded.
-    assert.equal(await pathExists(path.join(home, ".fireconnect/claude/marker")), false,
+    assert.equal(await pathExists(path.join(home, ".nexus/claude/marker")), false,
       "claude data dir removed after successful off");
     // Failed harness: its backup survives. Uninstall stops before the global
     // cleanup precisely so this stays usable for a retry.
-    assert.equal(await pathExists(path.join(home, ".fireconnect/opencode/marker")), true,
+    assert.equal(await pathExists(path.join(home, ".nexus/opencode/marker")), true,
       "failed harness keeps its backup");
     assert.notEqual(process.exitCode, 0, "non-zero exit on off failure");
     process.exitCode = origExitCode;
@@ -308,7 +308,7 @@ describe("uninstall (interactive path)", () => {
     // true. Assert by capturing the force flag the adapter's off receives.
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-interactive-force-"));
     await writeGlobalConfig(home, { harnesses: { claude: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/claude"), { recursive: true });
 
     let capturedForce;
     const restore = stubHarness(HARNESS.CLAUDE, {
@@ -335,7 +335,7 @@ describe("uninstall (interactive path)", () => {
     await writeGlobalConfig(home, {
       harnesses: { claude: { enabled: true }, opencode: { enabled: true } },
     });
-    await mkdir(path.join(home, ".fireconnect/cli"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli"), { recursive: true });
 
     const ran = [];
     const restore = [
@@ -370,13 +370,13 @@ describe("uninstall (interactive path)", () => {
 
   it("restores a harness that is routed but missing from config", async () => {
     // Regression: discovery used to read only config.harnesses, so a lost or
-    // reinstalled ~/.fireconnect meant no `off` ran at all — uninstall deleted
+    // reinstalled ~/.nexus meant no `off` ran at all — uninstall deleted
     // the backup while leaving the harness pointed at Fireworks with its
     // built-in models hidden, which is unrecoverable. providerStatus reads the
     // harness's real config, so it catches what the config map misses.
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-orphan-"));
     // No config.json at all — just an installed CLI.
-    await mkdir(path.join(home, ".fireconnect/cli"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli"), { recursive: true });
 
     let offRan = false;
     const restore = stubHarness(HARNESS.CURSOR, {
@@ -397,7 +397,7 @@ describe("uninstall (interactive path)", () => {
   it("does not restore harnesses that are not routed", async () => {
     // The discovery probe must not drag in every harness — only routed ones.
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-notrouted-"));
-    await mkdir(path.join(home, ".fireconnect/cli"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cli"), { recursive: true });
 
     let offRan = false;
     const restore = stubHarness(HARNESS.CURSOR, {
@@ -423,11 +423,11 @@ describe("uninstall (interactive path)", () => {
     // would be indefensible.
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-abort-"));
     await writeGlobalConfig(home, { harnesses: { cursor: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/cursor"), { recursive: true });
-    await writeFile(path.join(home, ".fireconnect/cursor/cursor-backup.json"), '{"snapshot":{}}');
-    await mkdir(path.join(home, ".fireconnect/cli"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/cursor"), { recursive: true });
+    await writeFile(path.join(home, ".nexus/cursor/cursor-backup.json"), '{"snapshot":{}}');
+    await mkdir(path.join(home, ".nexus/cli"), { recursive: true });
     await mkdir(path.join(home, ".local/bin"), { recursive: true });
-    await writeFile(path.join(home, ".local/bin/fireconnect"), "#!/bin/sh\n");
+    await writeFile(path.join(home, ".local/bin/nexus"), "exec node /cli/packages/setup-cli/bin/nexus.mjs \"$@\"\n");
 
     const restore = stubHarness(HARNESS.CURSOR, {
       off: async () => { throw new Error("Cursor is running."); },
@@ -442,11 +442,11 @@ describe("uninstall (interactive path)", () => {
 
     assert.notEqual(process.exitCode, 0, "exits non-zero");
     process.exitCode = origExitCode;
-    assert.equal(await pathExists(path.join(home, ".fireconnect/cursor/cursor-backup.json")), true,
+    assert.equal(await pathExists(path.join(home, ".nexus/cursor/cursor-backup.json")), true,
       "backup preserved for retry");
-    assert.equal(await pathExists(path.join(home, ".fireconnect/cli")), true,
+    assert.equal(await pathExists(path.join(home, ".nexus/cli")), true,
       "CLI preserved so the retry is runnable");
-    assert.equal(await pathExists(path.join(home, ".local/bin/fireconnect")), true,
+    assert.equal(await pathExists(path.join(home, ".local/bin/nexus")), true,
       "launcher preserved so the retry is runnable");
     assert.equal(await pathExists(globalConfigPath(home)), true, "config preserved");
   });
@@ -457,7 +457,7 @@ describe("uninstall (interactive path)", () => {
     // single restart reminder, so it must silence them.
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-quiet-"));
     await writeGlobalConfig(home, { harnesses: { claude: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/claude"), { recursive: true });
 
     let capturedQuiet;
     const restore = stubHarness(HARNESS.CLAUDE, {
@@ -478,7 +478,7 @@ describe("uninstall (interactive path)", () => {
     // A harness that was never connected must not be reported as "restored".
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-outcome-"));
     await writeGlobalConfig(home, { harnesses: { claude: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/claude"), { recursive: true });
 
     // Routed, so it is listed — but `off` finds nothing to undo (state drift).
     const restore = stubHarness(HARNESS.CLAUDE, { off: async () => "none" });
@@ -501,14 +501,14 @@ describe("uninstall (interactive path)", () => {
 
   it("still removes files when no harnesses are registered (installed CLI only)", async () => {
     // Regression: an install with no `fci <harness> on` yet has an empty
-    // harnesses map but FireConnect files on disk. Uninstall must remove the
-    // files, not bail out with "FireConnect is not installed."
+    // harnesses map but Nexus files on disk. Uninstall must remove the
+    // files, not bail out with "Nexus is not installed."
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-no-harnesses-"));
-    // No global config / no harnesses — but the CLI launcher + ~/.fireconnect exist.
-    await mkdir(path.join(home, ".fireconnect/cli"), { recursive: true });
-    await writeFile(path.join(home, ".fireconnect/cli/marker"), "1");
+    // No global config / no harnesses — but the CLI launcher + ~/.nexus exist.
+    await mkdir(path.join(home, ".nexus/cli"), { recursive: true });
+    await writeFile(path.join(home, ".nexus/cli/marker"), "1");
     await mkdir(path.join(home, ".local/bin"), { recursive: true });
-    await writeFile(path.join(home, ".local/bin/fireconnect"), "#!/bin/sh\n");
+    await writeFile(path.join(home, ".local/bin/nexus"), "exec node /cli/packages/setup-cli/bin/nexus.mjs \"$@\"\n");
 
     const origExitCode = process.exitCode;
     process.exitCode = undefined;
@@ -517,9 +517,9 @@ describe("uninstall (interactive path)", () => {
     } finally {
       process.exitCode = origExitCode;
     }
-    assert.equal(await pathExists(path.join(home, ".fireconnect")), false,
-      "~/.fireconnect removed even with no harnesses");
-    assert.equal(await pathExists(path.join(home, ".local/bin/fireconnect")), false,
+    assert.equal(await pathExists(path.join(home, ".nexus")), false,
+      "~/.nexus removed even with no harnesses");
+    assert.equal(await pathExists(path.join(home, ".local/bin/nexus")), false,
       "launcher removed even with no harnesses");
   });
 
@@ -537,13 +537,13 @@ describe("uninstall (interactive path)", () => {
       process.stdout.write = realWrite;
       process.exitCode = origExitCode;
     }
-    assert.match(stdout, /FireConnect is not installed\./);
+    assert.match(stdout, /Nexus is not installed\./);
   });
 
   it("non-interactive --force path still forces every off", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-force-flag-"));
     await writeGlobalConfig(home, { harnesses: { claude: { enabled: true } } });
-    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
+    await mkdir(path.join(home, ".nexus/claude"), { recursive: true });
 
     let capturedForce;
     const restore = stubHarness(HARNESS.CLAUDE, {
@@ -562,3 +562,68 @@ describe("uninstall (interactive path)", () => {
   });
 
 });
+
+describe("uninstall launchers", () => {
+  it("removes the launchers it installed under either name but not another tool's", async () => {
+    for (const [content, kept] of [
+      ["exec node /cli/packages/setup-cli/bin/nexus.mjs \"$@\"\n", false],
+      ["#!/bin/sh\nexec other-tool \"$@\"\n", true],
+    ]) {
+      const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-nexus-"));
+      const bin = path.join(home, ".local/bin");
+      await mkdir(bin, { recursive: true });
+      await writeFile(path.join(bin, "fireconnect"), "exec node /cli/packages/setup-cli/bin/fireconnect.mjs \"$@\"\n");
+      await writeFile(path.join(bin, "nexus"), content);
+
+      const result = await runFireconnect(["uninstall"], { HOME: home });
+      assert.equal(result.code, 0);
+      assert.equal(await pathExists(path.join(bin, "fireconnect")), false);
+      assert.equal(await pathExists(path.join(bin, "nexus")), kept);
+    }
+  });
+});
+
+describe("uninstall data directories", () => {
+  it("removes ~/.nexus and an unfinished move's ~/.fireconnect", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-deferred-"));
+    await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+    await writeFile(path.join(home, ".fireconnect/update-check.json"), "{}");
+    await symlink(".fireconnect", path.join(home, ".nexus"), "dir");
+
+    const result = await runFireconnect(["uninstall"], { HOME: home });
+    assert.equal(result.code, 0);
+    await assert.rejects(lstat(path.join(home, ".nexus")), { code: "ENOENT" });
+    await assert.rejects(lstat(path.join(home, ".fireconnect")), { code: "ENOENT" });
+  });
+});
+
+describe("legacy data directory next to an existing ~/.nexus", () => {
+  it("merges the old backups in, so off and uninstall work", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-merge-"));
+    await mkdir(path.join(home, ".fireconnect/claude"), { recursive: true });
+    await writeFile(path.join(home, ".fireconnect/claude/settings.backup.json"), "{}");
+    await mkdir(path.join(home, ".nexus"), { recursive: true });
+
+    for (const args of [["claude", "off"], ["uninstall"]]) {
+      const result = await runFireconnect(args, { HOME: home });
+      assert.equal(result.code, 0, `${args.join(" ")}: ${result.stderr}`);
+    }
+    assert.equal(await pathExists(path.join(home, ".nexus")), false);
+    assert.equal(await pathExists(path.join(home, ".fireconnect")), false);
+  });
+  it("removes a kept ~/.nexus-pre, and only the link when it points into dotfiles", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-uninstall-nexus-pre-"));
+    await mkdir(path.join(home, "dotfiles/fireconnect"), { recursive: true });
+    await writeFile(path.join(home, "dotfiles/fireconnect/config.json"), "{}");
+    await symlink(path.join(home, "dotfiles/fireconnect"), path.join(home, ".fireconnect"), "dir");
+    await mkdir(path.join(home, ".nexus"), { recursive: true });
+
+    const result = await runFireconnect(["uninstall"], { HOME: home });
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(await pathExists(path.join(home, ".nexus-pre")), false);
+    assert.equal(await pathExists(path.join(home, ".fireconnect")), false);
+    assert.equal(await readFile(path.join(home, "dotfiles/fireconnect/config.json"), "utf8"), "{}");
+  });
+});
+

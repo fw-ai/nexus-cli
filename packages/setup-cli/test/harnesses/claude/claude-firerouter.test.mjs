@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,7 @@ import {
 } from "../../../lib/harnesses/claude/core.mjs";
 import { refreshFirerouterClaudeKey } from "../../../lib/harnesses/claude/firerouter.mjs";
 import { readJsonIfExists, writeJson } from "../../../lib/io/json.mjs";
+import { FIREWORKS_BASE_URL } from "../../../lib/fireworks/model-id.mjs";
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
 import { cacheServerlessCatalogSnapshot, setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
 import {
@@ -58,7 +60,7 @@ function cliEnv(home) {
 }
 
 describe("Claude FireRouter via --model", () => {
-  it("--model firerouter enables headers without tier slot pins or Anthropic BYOK", async () => {
+  it("rejects --model firerouter and writes nothing", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
@@ -69,85 +71,33 @@ describe("Claude FireRouter via --model", () => {
       ],
       cliEnv(home),
     );
-    assert.equal(result.code, 0, result.stderr);
-
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    // Nothing servable was selected → the FireRouter mix is the pinned default.
-    assert.equal(settings.model, FIREROUTER_MODEL);
-    assert.equal(settings.env?.ANTHROPIC_MODEL, undefined);
-    assertClaudeNativeTierSlots(settings);
-    assertClaudeRegisterablePicker(settings, { includes: [FIREROUTER_MODEL] });
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /X-Fireworks-Api-Key: fw_test_key_12345/);
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);
-    assert.equal(settings.env.ANTHROPIC_API_KEY, undefined);
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /X-Title: Claude Code/);
-    assert.ok(
-      settings.env.ANTHROPIC_CUSTOM_HEADERS.includes(`HTTP-Referer: ${FIRECONNECT_REFERER}`),
-      settings.env.ANTHROPIC_CUSTOM_HEADERS,
-    );
-    assert.equal(settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER, undefined);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--model firerouter is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(userSettingsPath(home)), false);
   });
 
-  it("--model firerouter --openai-api-key writes x-openai-api-key and stores the key", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-openai-"));
+  it("rejects FireRouter compounds and full router ids, with or without BYOK flags", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-reject-"));
     seedCatalogFor(home);
-    const result = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
-        "--openai-api-key", "sk-proj-claude-12345",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(result.code, 0, result.stderr);
-
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-claude-12345/);
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);
+    for (const args of [
+      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "firerouter", "--openai-api-key", "sk-proj-claude-12345"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "firerouter/gpt-5p6", "--openai-api-key", "sk-proj-claude-gpt-12345"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "firerouter/opus", "--openai-api-key", "sk-proj-claude-opus-12345"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "accounts/fireworks/routers/firerouter"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY, "--opus", "firerouter/opus"],
+    ]) {
+      const result = await runFireconnect(args, cliEnv(home));
+      assert.notEqual(result.code, 0, args.join(" "));
+      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/, args.join(" "));
+    }
+    assert.equal(existsSync(userSettingsPath(home)), false);
   });
 
-  it("--model firerouter/gpt-... writes x-openai-api-key for the pinned OpenAI route", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-gpt-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter/gpt-5p6",
-        "--openai-api-key", "sk-proj-claude-gpt-12345",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(result.code, 0, result.stderr);
-
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-claude-gpt-12345/);
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /X-Fireworks-Api-Key: fw_test_key_12345/);
-  });
-
-  it("--model firerouter/opus leaves a configured OpenAI key off the pinned non-GPT route", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-opus-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter/opus",
-        "--openai-api-key", "sk-proj-claude-opus-12345",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(result.code, 0, result.stderr);
-
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
-  });
-
-  it("allows --model firerouter without detecting native auth", async () => {
+  it("allows a plain on without detecting native auth", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-router-auth-optional-"));
+    seedCatalogFor(home);
     const settingsPath = userSettingsPath(home);
-    const dataDir = path.join(home, ".fireconnect/claude");
+    const dataDir = path.join(home, ".nexus/claude");
     await mkdir(path.dirname(settingsPath), { recursive: true });
     const original = '{"theme":"dark"}\n';
     await writeFile(settingsPath, original);
@@ -156,15 +106,15 @@ describe("Claude FireRouter via --model", () => {
       [
         "claude", "on",
         "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
       ],
       cliEnv(home),
     );
 
     assert.equal(result.code, 0, result.stderr);
     const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+    assert.equal(settings.model, "auto[1m]");
     assertClaudeNativeTierSlots(settings);
-    assertClaudeRegisterablePicker(settings, { includes: [FIREROUTER_MODEL] });
+    assertClaudeRegisterablePicker(settings, { includes: ["auto[1m]"], excludes: [FIREROUTER_MODEL] });
     assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, undefined);
     assert.notDeepEqual(await readJsonIfExists(providerBackupPath(dataDir)), {});
   });
@@ -173,7 +123,7 @@ describe("Claude FireRouter via --model", () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-router-native-key-"));
     await writeJson(userSettingsPath(home), { env: { ANTHROPIC_API_KEY: ANTHROPIC_KEY } });
     const result = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "firerouter"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY],
       cliEnv(home),
     );
     assert.equal(result.code, 0, result.stderr);
@@ -183,14 +133,13 @@ describe("Claude FireRouter via --model", () => {
     assert.doesNotMatch(result.stdout, /FireRouter off|removed the one/);
   });
 
-  it("pins per-tier slot flags alongside --model firerouter", async () => {
+  it("pins per-tier slot flags on a plain on", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-slot-firerouter-"));
     seedCatalogFor(home);
     const result = await runFireconnect(
       [
         "claude", "on",
         "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
         "--sonnet", "glm-latest",
       ],
       cliEnv(home),
@@ -202,28 +151,24 @@ describe("Claude FireRouter via --model", () => {
     assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /X-Fireworks-Api-Key: fw_test_key_12345/);
   });
 
-  it("plain re-on preserves picker and accepts router-only options", async () => {
+  it("plain re-on preserves picker and refuses an Anthropic key flag", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-reon-"));
+    seedCatalogFor(home);
     const env = cliEnv(home);
     const first = await runFireconnect(
       [
         "claude", "on",
         "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
       ],
       env,
     );
     assert.equal(first.code, 0, first.stderr);
 
-    const preference = await runFireconnect(
-      ["claude", "on", "--model", "firerouter", "--routing-preference", "max-savings"],
-      env,
-    );
-    assert.equal(preference.code, 0, preference.stderr);
-    let settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
+    const reon = await runFireconnect(["claude", "on"], env);
+    assert.equal(reon.code, 0, reon.stderr);
+    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
     assertClaudeNativeTierSlots(settings);
-    assertClaudeRegisterablePicker(settings, { includes: [FIREROUTER_MODEL] });
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference: 5/);
+    assertClaudeRegisterablePicker(settings, { includes: ["auto[1m]"], excludes: [FIREROUTER_MODEL] });
 
     const before = await readFile(userSettingsPath(home), "utf8");
     const byok = await runFireconnect(
@@ -249,7 +194,7 @@ describe("Claude FireRouter via --model", () => {
     await writeFile(settingsPath, original);
 
     const on = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "firerouter"],
+      ["claude", "on", "--api-key", FIREWORKS_KEY],
       cliEnv(home),
     );
     assert.equal(on.code, 0, on.stderr);
@@ -258,39 +203,31 @@ describe("Claude FireRouter via --model", () => {
     assert.equal(await readFile(settingsPath, "utf8"), original);
   });
 
-  it("re-on keeps firerouter in the picker with the FireRouter default pinned", async () => {
+  it("plain re-on drops a stored FireRouter default from the picker and moves it to auto", async () => {
     const modelHome = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-router-reon-"));
     seedCatalogFor(modelHome);
-    const model = await runFireconnect(
-      [
-        "claude", "on",
-        "--model", "firerouter",
-        "--api-key", FIREWORKS_KEY,
-      ],
-      cliEnv(modelHome),
-    );
-    assert.equal(model.code, 0, model.stderr);
-    let settings = JSON.parse(await readFile(userSettingsPath(modelHome), "utf8"));
-    assert.equal(settings.model, FIREROUTER_MODEL);
-    assertClaudeNativeTierSlots(settings);
-    assertClaudeRegisterablePicker(settings, { includes: [FIREROUTER_MODEL] });
+    // What an earlier release wrote for `claude on --model firerouter`.
+    await writeJson(userSettingsPath(modelHome), {
+      model: FIREROUTER_MODEL,
+      env: {
+        ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+        ANTHROPIC_CUSTOM_HEADERS: `X-Fireworks-Api-Key: ${FIREWORKS_KEY}\nX-Title: Claude Code\nHTTP-Referer: ${FIRECONNECT_REFERER}`,
+      },
+      modelPicker: {
+        fireconnectManaged: true,
+        replaceBuiltInOptions: false,
+        options: [
+          { model: FIREROUTER_MODEL, label: "FireRouter", description: "old" },
+          { model: "glm-latest[1m]", label: "GLM", description: "old" },
+        ],
+      },
+    });
 
     const reon = await runFireconnect(["claude", "on"], cliEnv(modelHome));
     assert.equal(reon.code, 0, reon.stderr);
-    settings = JSON.parse(await readFile(userSettingsPath(modelHome), "utf8"));
-    // The pinned default is a servable picker row, so re-on keeps it.
-    assert.equal(settings.model, FIREROUTER_MODEL);
-    assertClaudeRegisterablePicker(settings, { includes: [FIREROUTER_MODEL] });
-  });
-
-  it("rejects Fire Pass with --model firerouter", async () => {
-    const firepassHome = await mkdtemp(path.join(os.tmpdir(), "fc-claude-fpk-model-"));
-    const firepass = await runFireconnect(
-      ["claude", "on", "--model", "firerouter", "--api-key", "fpk_test_firepass_key"],
-      cliEnv(firepassHome),
-    );
-    assert.notEqual(firepass.code, 0);
-    assert.match(firepass.stderr, /not available for Fire Pass/i);
+    const settings = JSON.parse(await readFile(userSettingsPath(modelHome), "utf8"));
+    assert.equal(settings.model, "auto[1m]");
+    assertClaudeRegisterablePicker(settings, { includes: ["auto[1m]"], excludes: [FIREROUTER_MODEL] });
   });
 
   it("refreshes the baked Fireworks key for firerouter headers", async () => {
@@ -314,7 +251,7 @@ describe("Claude FireRouter via --model", () => {
   it("preserves the original backup across repeat connect", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-backup-"));
     const settingsPath = userSettingsPath(home);
-    const dataDir = path.join(home, ".fireconnect/claude");
+    const dataDir = path.join(home, ".nexus/claude");
     await mkdir(path.dirname(settingsPath), { recursive: true });
     const original = '{"model":"sonnet"}\n';
     await writeFile(settingsPath, original);
@@ -324,7 +261,6 @@ describe("Claude FireRouter via --model", () => {
         [
           "claude", "on",
           "--api-key", FIREWORKS_KEY,
-          "--model", "firerouter",
         ],
         cliEnv(home),
       )).code,
@@ -338,154 +274,30 @@ describe("Claude FireRouter via --model", () => {
     assert.equal(backup.snapshot.raw, original);
   });
 
-  it("claude status surfaces the applied routing preference (text + json)", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-status-routing-"));
+  it("re-on strips a routing-preference header left by an earlier release", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-retired-routing-"));
+    const env = cliEnv(home);
     const on = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
-        "--routing-preference", "max-intelligence",
-      ],
-      cliEnv(home),
+      ["claude", "on", "--api-key", FIREWORKS_KEY],
+      env,
     );
     assert.equal(on.code, 0, on.stderr);
-    assert.match(on.stdout, /Routing: max-intelligence \(1\)/);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference: 1/i);
+    const settingsPath = userSettingsPath(home);
+    const written = JSON.parse(await readFile(settingsPath, "utf8"));
+    written.env.ANTHROPIC_CUSTOM_HEADERS += "\nx-routing-preference: 1";
+    await writeJson(settingsPath, written);
 
-    const status = await runFireconnect(["claude", "status"], cliEnv(home));
-    assert.equal(status.code, 0, status.stderr);
+    const reon = await runFireconnect(["claude", "on"], env);
+    assert.equal(reon.code, 0, reon.stderr);
+    const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference/i);
+    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /X-Fireworks-Api-Key: /);
 
-    const jsonStatus = await runFireconnect(["claude", "status", "--json"], cliEnv(home));
-    assert.equal(jsonStatus.code, 0, jsonStatus.stderr);
-    const payload = JSON.parse(jsonStatus.stdout);
-    assert.equal(payload.routingPreference, 1);
-    assert.equal(payload.routingPreferenceLevel, undefined);
-  });
-
-  it("omits the routing display for firerouter compounds in --model", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-compound-routing-"));
-    const on = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter/kimi-k3",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(on.code, 0, on.stderr);
-    assert.doesNotMatch(on.stdout, /Routing:/);
-    assert.doesNotMatch(on.stdout, /Change routing:/);
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS ?? "", /x-routing-preference/i);
-
-    const status = await runFireconnect(["claude", "status"], cliEnv(home));
+    const status = await runFireconnect(["claude", "status"], env);
     assert.equal(status.code, 0, status.stderr);
     assert.doesNotMatch(status.stdout, /Routing:/);
-  });
-
-  it("claude status omits Routing when no preference is set", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-status-no-routing-"));
-    const on = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "firerouter",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(on.code, 0, on.stderr);
-    assert.doesNotMatch(on.stdout, /Routing:/);
-
-    const status = await runFireconnect(["claude", "status"], cliEnv(home));
-    assert.equal(status.code, 0, status.stderr);
-    assert.doesNotMatch(status.stdout, /Routing:/);
-
-    const jsonStatus = await runFireconnect(["claude", "status", "--json"], cliEnv(home));
+    const jsonStatus = await runFireconnect(["claude", "status", "--json"], env);
     assert.equal(jsonStatus.code, 0, jsonStatus.stderr);
-    const payload = JSON.parse(jsonStatus.stdout);
-    assert.equal(payload.routingPreference, null);
-    assert.equal(payload.routingPreferenceLevel, undefined);
-  });
-
-  it("default on accepts --routing-preference without --model firerouter", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-default-routing-"));
-    seedCatalogFor(home);
-    const on = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--routing-preference", "balanced",
-      ],
-      cliEnv(home),
-    );
-    assert.equal(on.code, 0, on.stderr);
-    // The default top-level model is already the firerouter mix.
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.equal(settings.model, FIREROUTER_MODEL);
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference: 3/i);
-    assert.match(on.stdout, /Routing: balanced \(3\)/);
-
-    const status = await runFireconnect(["claude", "status"], cliEnv(home));
-    assert.equal(status.code, 0, status.stderr);
-    assert.match(status.stdout, /Routing: balanced \(3\)/);
-  });
-
-  it("default --routing-preference re-pins firerouter over a saved picker model", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-default-routing-repin-"));
-    seedCatalogFor(home);
-    const first = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--model", "glm-latest"],
-      cliEnv(home),
-    );
-    assert.equal(first.code, 0, first.stderr);
-    const before = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.notEqual(before.model, FIREROUTER_MODEL);
-
-    const on = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--routing-preference", "balanced"],
-      cliEnv(home),
-    );
-    assert.equal(on.code, 0, on.stderr);
-    // The routing header only applies to bare firerouter, so the saved
-    // glm-latest pick must not survive alongside it.
-    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
-    assert.equal(settings.model, FIREROUTER_MODEL);
-    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-routing-preference: 3/i);
-
-    const status = await runFireconnect(["claude", "status"], cliEnv(home));
-    assert.equal(status.code, 0, status.stderr);
-    assert.match(status.stdout, /Routing: balanced \(3\)/);
-  });
-
-  it("rejects --routing-preference with an explicit non-firerouter model", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-model-routing-reject-"));
-    seedCatalogFor(home);
-    const result = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", FIREWORKS_KEY,
-        "--model", "glm-latest",
-        "--routing-preference", "balanced",
-      ],
-      cliEnv(home),
-    );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--routing-preference requires a Claude slot set to firerouter/);
-  });
-
-  it("rejects default --routing-preference for Fire Pass keys", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-firepass-routing-reject-"));
-    const result = await runFireconnect(
-      [
-        "claude", "on",
-        "--api-key", "fpk_test_firepass_key",
-        "--routing-preference", "balanced",
-      ],
-      cliEnv(home),
-    );
-    assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /not available for Fire Pass/i);
+    assert.equal("routingPreference" in JSON.parse(jsonStatus.stdout), false);
   });
 });

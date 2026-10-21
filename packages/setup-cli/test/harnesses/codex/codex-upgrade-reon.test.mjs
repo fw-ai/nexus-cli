@@ -5,14 +5,16 @@ import process from "node:process";
 import { describe, it } from "node:test";
 
 import { writeGlobalConfig } from "../../../lib/config/global-config.mjs";
-import { codexCatalogPath, codexConfigPath } from "../../../lib/harnesses/codex/core.mjs";
+import { CODEX_CATALOG_TOML_REF, codexCatalogPath, codexConfigPath } from "../../../lib/harnesses/codex/core.mjs";
 import { clearListPriceCache, setListPriceCacheRates } from "../../../lib/pricing/list-price-cache.mjs";
 import {
+  CODEX_FIREROUTER_MIGRATION_NOTE,
   CODEX_SIGN_IN_UPGRADE_NOTE,
   CODEX_UPGRADE_REON_FAILURE,
   reapplyCodexOnUpgrade,
 } from "../../../lib/harnesses/codex/upgrade-reon.mjs";
 import { parseToml } from "../../../lib/harnesses/codex/toml.mjs";
+import { withCodexSignInRows } from "../../../lib/harnesses/codex/catalog.mjs";
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
 import { cacheServerlessCatalogSnapshot, setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-catalog-cache.mjs";
 import { mockServerlessModel, seedKeychainConfig, withTempHome } from "../../helpers.mjs";
@@ -81,12 +83,93 @@ describe("reapplyCodexOnUpgrade", () => {
       assert.equal(table.http_headers["x-fireworks-api-key"], KEY);
       assert.equal(table.env_http_headers, undefined);
       assert.doesNotMatch(raw, /x-openai-api-key|x-anthropic-api-key/);
-      assert.equal(doc.root.model, "firerouter/astra");
+      assert.equal(doc.root.model, "auto", "the legacy FireRouter selection drops to auto");
       assert.match(raw, /\[features\]\nweb_search = true/);
 
       const again = await inHome(home, () => reapplyCodexOnUpgrade(home));
       assert.deepEqual(again, []);
       assert.equal(await readFile(codexConfigPath(home), "utf8"), raw);
+    });
+  });
+
+  it("moves a saved firerouter/astra to auto, then leaves it alone", async () => {
+    await withTempHome("codex-upgrade-reon-astra-", async (home) => {
+      await seedLegacyCodex(home);
+      await inHome(home, () => reapplyCodexOnUpgrade(home));
+      const configPath = codexConfigPath(home);
+      await writeFile(
+        configPath,
+        (await readFile(configPath, "utf8"))
+          .replace(/^model = "auto"$/m, 'model = "firerouter/astra"')
+          .replace(/^model = /m, `model_catalog_json = "${CODEX_CATALOG_TOML_REF}"\nmodel = `),
+      );
+      // 0.9.8 and 0.9.9 wrote the FireRouter row with the Astra slug.
+      await writeFile(codexCatalogPath(home), JSON.stringify({
+        models: [{ slug: "firerouter/astra", display_name: "FireRouter" }],
+      }));
+
+      const notes = await inHome(home, () => reapplyCodexOnUpgrade(home));
+      assert.deepEqual(notes, [CODEX_FIREROUTER_MIGRATION_NOTE]);
+      const raw = await readFile(configPath, "utf8");
+      const doc = parseToml(raw);
+      assert.equal(doc.root.model, "auto");
+      assert.equal(doc.tables["model_providers.fireworks-ai"].requires_openai_auth, true);
+      const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+      assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
+      assert.equal(await readFile(configPath, "utf8"), raw);
+    });
+  });
+
+  it("drops an earlier release's FireRouter row after the user switched models", async () => {
+    await withTempHome("codex-upgrade-reon-astra-row-", async (home) => {
+      await seedLegacyCodex(home);
+      await inHome(home, () => reapplyCodexOnUpgrade(home));
+      const configPath = codexConfigPath(home);
+      await writeFile(
+        configPath,
+        (await readFile(configPath, "utf8"))
+          .replace(/^model = "auto"$/m, `model_catalog_json = "${CODEX_CATALOG_TOML_REF}"\nmodel = "glm-latest"`),
+      );
+      await writeFile(codexCatalogPath(home), JSON.stringify({
+        models: [{ slug: "firerouter/astra", display_name: "FireRouter" }, { slug: "glm-latest", display_name: "GLM" }],
+      }));
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), [CODEX_FIREROUTER_MIGRATION_NOTE]);
+      assert.equal(parseToml(await readFile(configPath, "utf8")).root.model, "glm-latest");
+      const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+      assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
+      assert.ok(slugs.includes("glm-latest"));
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
+    });
+  });
+
+  it("moves a firerouter/astra saved by an earlier release to auto on upgrade", async () => {
+    await withTempHome("codex-upgrade-reon-explicit-astra-", async (home) => {
+      await seedLegacyCodex(home);
+      await inHome(home, () => reapplyCodexOnUpgrade(home));
+      const configPath = codexConfigPath(home);
+      await writeFile(
+        configPath,
+        (await readFile(configPath, "utf8"))
+          .replace(/^model = "auto"$/m, `model_catalog_json = "${CODEX_CATALOG_TOML_REF}"\nmodel = "firerouter/astra"`)
+          .replace(/"HTTP-Referer" = "fireconnect\/[^"]*"/, '"HTTP-Referer" = "fireconnect/v0.9.9"'),
+      );
+      await writeFile(codexCatalogPath(home), JSON.stringify({
+        models: withCodexSignInRows([{ slug: "firerouter/astra", display_name: "FireRouter · Astra" }]),
+      }));
+
+      // Only a firerouter model named in the current run is honored; a
+      // selection saved by an earlier release is carried over, so the
+      // upgrade drops it like any other FireRouter usage.
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), [CODEX_FIREROUTER_MIGRATION_NOTE]);
+      assert.equal(parseToml(await readFile(configPath, "utf8")).root.model, "auto");
+      const slugs = JSON.parse(await readFile(codexCatalogPath(home), "utf8")).models.map((row) => row.slug);
+      assert.deepEqual(slugs.filter((slug) => slug.startsWith("firerouter")), []);
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
     });
   });
 
@@ -106,7 +189,7 @@ describe("reapplyCodexOnUpgrade", () => {
         const notes = await inHome(home, () => reapplyCodexOnUpgrade(home));
         assert.deepEqual(notes, ["Added gpt-99-sol to Codex's model list. Restart Codex to pick it up."]);
         assert.ok((await slugs()).includes("gpt-99-sol"));
-        assert.equal(parseToml(await readFile(codexConfigPath(home), "utf8")).root.model, "firerouter/astra");
+        assert.equal(parseToml(await readFile(codexConfigPath(home), "utf8")).root.model, "auto");
 
         assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
       } finally {

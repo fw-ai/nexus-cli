@@ -5,7 +5,7 @@ import { describe, it } from "node:test";
 import { runCli, withTempHome } from "../helpers.mjs";
 import { readGlobalConfig } from "../../lib/config/global-config.mjs";
 import { userSettingsPath } from "../../lib/harnesses/claude/core.mjs";
-import { opencodeConfigPath } from "../../lib/harnesses/opencode/core.mjs";
+import { opencodeConfigPath, OPENCODE_FIREWORKS_PROVIDER_ID } from "../../lib/harnesses/opencode/core.mjs";
 import { piAuthPath, piModelsPath } from "../../lib/harnesses/pi/core.mjs";
 
 const FIREWORKS_KEY = "fw_test_key_12345";
@@ -29,6 +29,40 @@ function harnessFiles(home) {
   };
 }
 
+/**
+ * Write a saved provider key into a harness config the way an earlier
+ * release's FireRouter `on` baked it in, so `configure --unset` has a copy
+ * to remove from every harness.
+ */
+async function injectSavedKey(file, harness, headerName, key) {
+  const raw = JSON.parse(await readFile(file, "utf8"));
+  if (harness === "claude") {
+    raw.env.ANTHROPIC_CUSTOM_HEADERS = `${raw.env.ANTHROPIC_CUSTOM_HEADERS}\n${headerName}: ${key}`;
+    await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`);
+    return;
+  }
+  if (harness === "opencode") {
+    const options = raw.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options;
+    options.headers = { ...(options.headers ?? {}), [headerName]: key };
+    await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`);
+    return;
+  }
+  if (harness === "pi") {
+    const provider = raw.providers.fireworks;
+    provider.headers = { ...(provider.headers ?? {}), [headerName]: key };
+    await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`);
+    return;
+  }
+  const provider = raw.find((entry) => Array.isArray(entry?.models));
+  for (const model of provider.models) {
+    model.requestHeaders = { ...(model.requestHeaders ?? {}), [headerName]: key };
+    if (headerName === "x-anthropic-api-key") {
+      model.anthropic_api_key = key;
+    }
+  }
+  await writeFile(file, `${JSON.stringify(raw, null, 2)}\n`);
+}
+
 async function withHarnessHome(prefix, fn) {
   await withTempHome(prefix, async (home) => {
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
@@ -37,11 +71,11 @@ async function withHarnessHome(prefix, fn) {
       ANTHROPIC_API_KEY: "",
       OPENAI_API_KEY: "",
       XDG_CONFIG_HOME: path.join(home, ".config"),
-      FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1",
+      NEXUS_VSCODE_SECRET_PLAINTEXT: "1",
     };
-    const on = async (harness, model, flags = []) => {
+    const on = async (harness) => {
       const result = await runCli(
-        [harness, "on", "--model", model, "--api-key", FIREWORKS_KEY, ...flags, ...(harness === "vscode" ? ["--force"] : [])],
+        [harness, "on", "--api-key", FIREWORKS_KEY, ...(harness === "vscode" ? ["--force"] : [])],
         { home, env },
       );
       assert.equal(result.code, 0, `${harness}: ${result.stderr}`);
@@ -53,8 +87,11 @@ async function withHarnessHome(prefix, fn) {
 describe("configure --unset openai-api-key / --unset anthropic-api-key across harnesses", () => {
   it("removes the saved OpenAI key from every harness, and a repeat on doesn't bring it back", async () => {
     await withHarnessHome("unset-openai-harnesses-", async ({ home, env, on, files }) => {
+      const configure = await runCli(["configure", "--openai-api-key", OPENAI_KEY], { home, env });
+      assert.equal(configure.code, 0, configure.stderr);
       for (const harness of HARNESSES) {
-        await on(harness, "firerouter", ["--openai-api-key", OPENAI_KEY]);
+        await on(harness);
+        await injectSavedKey(files[harness], harness, "x-openai-api-key", OPENAI_KEY);
         assert.match(await readFile(files[harness], "utf8"), new RegExp(OPENAI_KEY), harness);
       }
 
@@ -76,7 +113,7 @@ describe("configure --unset openai-api-key / --unset anthropic-api-key across ha
       };
       await assertGone("after unset");
       for (const harness of HARNESSES) {
-        await on(harness, "firerouter");
+        await on(harness);
       }
       await assertGone("after a repeat on");
 
@@ -89,12 +126,15 @@ describe("configure --unset openai-api-key / --unset anthropic-api-key across ha
 
   it("removes the saved Anthropic key from every harness but leaves Claude Code's own sign-in", async () => {
     await withHarnessHome("unset-anthropic-harnesses-", async ({ home, env, on, files }) => {
-      // Claude Code's own sign-in: a key the user set before FireConnect.
+      // Claude Code's own sign-in: a key the user set before Nexus.
       await mkdir(path.dirname(files.claude), { recursive: true });
       await writeFile(files.claude, JSON.stringify({ env: { ANTHROPIC_API_KEY: ANTHROPIC_KEY } }));
-      await on("claude", "firerouter");
+      const configure = await runCli(["configure", "--anthropic-api-key", ANTHROPIC_KEY], { home, env });
+      assert.equal(configure.code, 0, configure.stderr);
+      await on("claude");
       for (const harness of ["opencode", "pi", "vscode"]) {
-        await on(harness, "firerouter/opus", ["--anthropic-api-key", ANTHROPIC_KEY]);
+        await on(harness);
+        await injectSavedKey(files[harness], harness, "x-anthropic-api-key", ANTHROPIC_KEY);
         assert.match(await readFile(files[harness], "utf8"), new RegExp(ANTHROPIC_KEY), harness);
       }
 
@@ -117,7 +157,7 @@ describe("configure --unset openai-api-key / --unset anthropic-api-key across ha
       };
       await assertGone("after unset");
       for (const harness of ["opencode", "pi", "vscode"]) {
-        await on(harness, "firerouter/opus");
+        await on(harness);
       }
       await assertGone("after a repeat on");
       const claude = JSON.parse(await readFile(files.claude, "utf8"));

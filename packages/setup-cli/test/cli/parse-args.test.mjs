@@ -22,10 +22,24 @@ describe("parseCli", () => {
     assert.equal(parsed.ctx.provider, "azure");
   });
 
-  it("parses global upgrade", () => {
+  it("parses global update", () => {
+    const parsed = parseCli(["update"]);
+    assert.equal(parsed.kind, "global");
+    assert.equal(parsed.command, "update");
+  });
+
+  it("parses upgrade as an alias for update", () => {
     const parsed = parseCli(["upgrade"]);
     assert.equal(parsed.kind, "global");
-    assert.equal(parsed.command, "upgrade");
+    assert.equal(parsed.command, "update");
+  });
+
+  it("rejects positional arguments after update", () => {
+    assert.throws(() => parseCli(["update", "now"]), /update does not accept positional arguments/);
+  });
+
+  it("rejects positional arguments after upgrade", () => {
+    assert.throws(() => parseCli(["upgrade", "now"]), /upgrade does not accept positional arguments/);
   });
 
   it("parses hidden finalize-install (install.sh / upgrade shared path)", () => {
@@ -95,7 +109,7 @@ describe("parseCli", () => {
   it("rejects positional arguments after models", () => {
     assert.throws(
       () => parseCli(["models", "list"]),
-      /fireconnect models does not accept positional arguments/,
+      /nexus models does not accept positional arguments/,
     );
   });
 
@@ -206,21 +220,21 @@ describe("parseCli", () => {
   it("rejects --non-interactive on global commands", () => {
     assert.throws(
       () => parseCli(["status", "--non-interactive"]),
-      /applies only to `fireconnect claude on`/,
+      /applies only to `nexus claude on`/,
     );
   });
 
   it("rejects --interactive on global commands", () => {
     assert.throws(
       () => parseCli(["status", "--interactive"]),
-      /applies only to `fireconnect claude on`/,
+      /applies only to `nexus claude on`/,
     );
   });
 
   it("rejects retired flags and points at the current spelling", () => {
     const renamed = [
       ["--main", "--model"],
-      ["--router", "--model firerouter"],
+      ["--router", "--model auto"],
       ["--anthropic-key", "--anthropic-api-key"],
       ["--last_n", "--last-n"],
     ];
@@ -238,28 +252,12 @@ describe("parseCli", () => {
     assert.equal(parsed.ctx.openaiKeyFromFlag, true);
   });
 
-  it("parses --routing-preference named levels into their numeric value", () => {
-    const parsed = parseCli(["claude", "on", "--model", "firerouter", "--routing-preference", "balanced"]);
-    assert.equal(parsed.ctx.routingPreference, 3);
-    assert.equal(parseCli(["claude", "on", "--routing-preference", "max-intelligence"]).ctx.routingPreference, 1);
-    assert.equal(parseCli(["claude", "on", "--routing-preference", "MAX-SAVINGS"]).ctx.routingPreference, 5);
-  });
-
-  it("accepts numeric aliases 1-5 for --routing-preference", () => {
-    assert.equal(parseCli(["claude", "on", "--routing-preference", "1"]).ctx.routingPreference, 1);
-    assert.equal(parseCli(["claude", "on", "--routing-preference", "5"]).ctx.routingPreference, 5);
-  });
-
-  it("leaves routing-preference unset (null) when omitted", () => {
-    assert.equal(parseCli(["claude", "on", "--model", "firerouter"]).ctx.routingPreference, null);
-    assert.equal(parseCli(["claude", "on"]).ctx.routingPreference, null);
-  });
-
-  it("rejects unknown names or out-of-range routing-preference", () => {
-    assert.throws(() => parseCli(["claude", "on", "--routing-preference", "0"]), /must be one of/);
-    assert.throws(() => parseCli(["claude", "on", "--routing-preference", "6"]), /must be one of/);
-    assert.throws(() => parseCli(["claude", "on", "--routing-preference", "3.5"]), /must be one of/);
-    assert.throws(() => parseCli(["claude", "on", "--routing-preference", "smart"]), /must be one of/);
+  it("accepts the deprecated --routing-preference flag, consumes its value, and marks it", () => {
+    const parsed = parseCli(["opencode", "on", "--model", "firerouter", "--routing-preference", "balanced"]);
+    assert.equal(parsed.kind, "harness");
+    assert.equal(parsed.ctx.routingPreferenceDeprecated, true);
+    assert.equal(parsed.ctx.main, "firerouter");
+    assert.equal(parseCli(["opencode", "on"]).ctx.routingPreferenceDeprecated, false);
     assert.throws(() => parseCli(["claude", "on", "--routing-preference"]), /requires a value/);
   });
 
@@ -288,7 +286,7 @@ describe("parseCli", () => {
     for (const subcommand of ["list", "select", "reset", "add"]) {
       assert.throws(
         () => parseCli(["claude", "model", subcommand]),
-        /Unknown harness command.*Run: fireconnect claude help/,
+        /Unknown harness command.*Run: nexus claude help/,
       );
     }
   });
@@ -325,7 +323,7 @@ describe("parseCli", () => {
   it("rejects unsupported global model subcommands", () => {
     assert.throws(
       () => parseCli(["model", "select"]),
-      /Unexpected model subcommand: select.*Run: fireconnect help/,
+      /Unexpected model subcommand: select.*Run: nexus help/,
     );
   });
 });
@@ -369,7 +367,7 @@ describe("parseCli contextual help guidance", () => {
     ]) {
       assert.throws(
         () => parseCli(argv),
-        /Run: fireconnect claude help/,
+        /Run: nexus claude help/,
       );
     }
   });
@@ -385,7 +383,7 @@ describe("parseCli contextual help guidance", () => {
     ]) {
       assert.throws(
         () => parseCli(argv),
-        /Run: fireconnect help/,
+        /Run: nexus help/,
       );
     }
   });

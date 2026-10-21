@@ -1,5 +1,5 @@
 /**
- * Headless raceable harness adapters for `fireconnect claude demo`.
+ * Headless raceable harness adapters for `nexus claude demo`.
  *
  * Each adapter owns:
  *   - `buildRaceSettings({ leftModel, rightModel, home, settingsPath })` — resolve

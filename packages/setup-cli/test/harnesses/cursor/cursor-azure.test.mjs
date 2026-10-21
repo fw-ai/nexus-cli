@@ -291,13 +291,13 @@ describe("cursor azure harness", () => {
       assert.equal(fireworks.code, 0, fireworks.stderr);
 
       const blob = readBlob(dbPath);
-      assert.ok(blob.aiSettings.fireconnectAddedModels.includes("auto"));
+      assert.ok(blob.aiSettings.fireconnectAddedModels.includes("nexus/auto"));
       assert.equal(blob.aiSettings.fireconnectAddedModels.includes(deployment), false);
       assert.equal(
         blob.aiSettings.fireconnectAddedModels.includes("foundry-deployment"),
         false,
       );
-      assert.equal(cursorCurrentModelId(blob, CURSOR_DEFAULT_MODE), "auto");
+      assert.equal(cursorCurrentModelId(blob, CURSOR_DEFAULT_MODE), "nexus/auto");
     });
   });
 });

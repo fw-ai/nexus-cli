@@ -139,8 +139,8 @@ describe("copilot-app core", () => {
     }
   });
 
-  it("resolves the data dir under ~/.fireconnect/copilot-app", () => {
-    assert.equal(copilotDataDir("/tmp/h"), path.join("/tmp/h", ".fireconnect/copilot-app"));
+  it("resolves the data dir under ~/.nexus/copilot-app", () => {
+    assert.equal(copilotDataDir("/tmp/h"), path.join("/tmp/h", ".nexus/copilot-app"));
     assert.equal(copilotDataDir("/tmp/h", "/custom/dir"), "/custom/dir");
   });
 
@@ -535,3 +535,28 @@ function describeIf(condition, name, fn) {
     describe.skip(name, fn);
   }
 }
+
+describe("migrateCopilotAppFirerouterOnUpgrade", () => {
+  itIfSqlite("deletes FireRouter rows from the Nexus provider, then no-ops", async () => {
+    await withTempHome("copilot-app-firerouter-upgrade-", async (home) => {
+      const { copilotAppPathsFor } = await import("../../../lib/harness/context.mjs");
+      const { writeGlobalConfig } = await import("../../../lib/config/global-config.mjs");
+      const { insertCopilotProviderModel } = await import("../../../lib/harnesses/copilot-app/sqlite.mjs");
+      const { migrateCopilotAppFirerouterOnUpgrade } = await import("../../../lib/harnesses/copilot-app/upgrade-migrations.mjs");
+      const dbPath = copilotAppPathsFor({ home }).dbPath;
+      const { providerId } = await enableCopilotFireworks({ dbPath, apiKey: FW_OPENCODE_KEY, modelId: "glm-5p2" });
+      await insertCopilotProviderModel(dbPath, {
+        providerId,
+        model: { id: "firerouter/opus", displayName: "FireRouter · Opus", wireModel: "firerouter/opus" },
+      });
+      await writeGlobalConfig(home, { harnesses: { "copilot-app": { enabled: true, provider: "fireworks" } } });
+
+      assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => false }), true);
+      const remaining = providerModels(dbPath, providerId);
+      assert.ok(remaining.includes("glm-5p2"), remaining.join(","));
+      assert.ok(!remaining.some((id) => id.startsWith("firerouter")), remaining.join(","));
+      assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => false }), false);
+      assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => true }), false);
+    });
+  });
+});

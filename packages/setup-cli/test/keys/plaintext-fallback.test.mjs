@@ -7,7 +7,7 @@ import process from "node:process";
 import { describe, it, beforeEach, afterEach } from "node:test";
 
 import {
-  FIRECONNECT_KEY_STORAGE_ENV,
+  KEY_STORAGE_ENV,
   resetSecretStoreForTests,
   setSecret,
   getSecret,
@@ -21,11 +21,11 @@ import {
 import { plaintextSecretPath, readPlaintextSecret, writePlaintextSecret } from "../../lib/keys/plaintext-secret-store.mjs";
 import { globalConfigPath } from "../../lib/config/global-config.mjs";
 
-const CLI = path.resolve("bin/fireconnect.mjs");
+const CLI = path.resolve("bin/nexus.mjs");
 
 function runCli(args, env) {
   const childEnv = { ...process.env, ...env };
-  delete childEnv.FIRECONNECT_SECRET_STORE;
+  delete childEnv.NEXUS_SECRET_STORE;
   delete childEnv.FIREWORKS_API_KEY;
   const res = spawnSync(process.execPath, [CLI, ...args], {
     env: childEnv,
@@ -41,7 +41,7 @@ async function blockSecureKeyStorage(home) {
   await writeFile(blocked, "not-a-directory");
   process.env.XDG_DATA_HOME = blocked;
   process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
-  process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+  process.env[KEY_STORAGE_ENV] = "file";
   resetSecretStoreForTests();
 }
 
@@ -55,13 +55,13 @@ describe("plaintext secret fallback", () => {
       HOME: process.env.HOME,
       XDG_DATA_HOME: process.env.XDG_DATA_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      [FIRECONNECT_KEY_STORAGE_ENV]: process.env[FIRECONNECT_KEY_STORAGE_ENV],
-      FIRECONNECT_SECRET_STORE: process.env.FIRECONNECT_SECRET_STORE,
-      FIRECONNECT_TEST: process.env.FIRECONNECT_TEST,
+      [KEY_STORAGE_ENV]: process.env[KEY_STORAGE_ENV],
+      NEXUS_SECRET_STORE: process.env.NEXUS_SECRET_STORE,
+      NEXUS_TEST: process.env.NEXUS_TEST,
     };
     process.env.HOME = home;
-    delete process.env.FIRECONNECT_SECRET_STORE;
-    delete process.env.FIRECONNECT_TEST;
+    delete process.env.NEXUS_SECRET_STORE;
+    delete process.env.NEXUS_TEST;
     await blockSecureKeyStorage(home);
   });
 
@@ -94,7 +94,7 @@ describe("plaintext secret fallback", () => {
     assert.equal(await readKeyStorageCache(home), "plaintext");
   });
 
-  it("FIRECONNECT_REPROBE_KEY_STORAGE ignores cache for one run", async () => {
+  it("NEXUS_REPROBE_KEY_STORAGE ignores cache for one run", async () => {
     await setSecret("fw_env_reprobe_key", home);
     assert.equal(await readKeyStorageCache(home), "plaintext");
 
@@ -111,11 +111,11 @@ describe("plaintext secret fallback", () => {
     const realHome = await mkdtemp(path.join(os.tmpdir(), "fc-real-home-"));
     const altHome = await mkdtemp(path.join(os.tmpdir(), "fc-alt-home-"));
     try {
-      delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+      delete process.env[KEY_STORAGE_ENV];
       delete process.env.XDG_DATA_HOME;
       resetSecretStoreForTests();
       process.env.HOME = realHome;
-      process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+      process.env[KEY_STORAGE_ENV] = "file";
       process.env.XDG_DATA_HOME = path.join(realHome, "data");
       process.env.XDG_CONFIG_HOME = path.join(realHome, "cfg");
       await setSecret("fw_real_home_secure_key", realHome);
@@ -134,17 +134,17 @@ describe("plaintext secret fallback", () => {
     const realHome = await mkdtemp(path.join(os.tmpdir(), "fc-real-home-"));
     const altHome = await mkdtemp(path.join(os.tmpdir(), "fc-alt-home-"));
     try {
-      delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+      delete process.env[KEY_STORAGE_ENV];
       delete process.env.XDG_DATA_HOME;
       resetSecretStoreForTests();
       process.env.HOME = realHome;
-      process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+      process.env[KEY_STORAGE_ENV] = "file";
       process.env.XDG_DATA_HOME = path.join(realHome, "data");
       process.env.XDG_CONFIG_HOME = path.join(realHome, "cfg");
       await setSecret("fw_real_home_secure_key", realHome);
 
       process.env.HOME = realHome;
-      process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+      process.env[KEY_STORAGE_ENV] = "file";
       await setSecret("fw_alt_home_secure_key", altHome);
 
       assert.equal(await getSecret(realHome), "fw_real_home_secure_key");
@@ -156,10 +156,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("getSecret falls through stale plaintext cache to secure storage", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_before_cache", home);
@@ -172,10 +172,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("setSecret falls through stale plaintext cache to secure storage", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_original", home);
@@ -190,10 +190,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("setSecret removes orphaned plaintext file when secure storage succeeds", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
 
@@ -208,10 +208,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("detectSecretBackend ignores stale plaintext cache without a file", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_detect", home);
@@ -228,10 +228,10 @@ describe("plaintext secret fallback", () => {
     await setSecret("fw_plaintext_first", home);
     assert.equal(await readKeyStorageCache(home), "plaintext");
 
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
 
@@ -242,10 +242,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("plaintext fallback clears secure store so old keys cannot resurrect", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_original", home);
@@ -260,10 +260,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("getSecret ignores lingering secure key when plaintext fallback file is missing", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_original", home);
@@ -282,10 +282,10 @@ describe("plaintext secret fallback", () => {
     await setSecret("fw_key_migrate_plaintext", home);
     assert.equal(await readKeyStorageCache(home), "plaintext");
 
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
 
@@ -296,10 +296,10 @@ describe("plaintext secret fallback", () => {
   });
 
   it("getSecret prefers secure storage when stale plaintext file remains", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
 
@@ -314,16 +314,16 @@ describe("plaintext secret fallback", () => {
   });
 
   it("setSecret rolls back plaintext when key-storage cache persist fails", async () => {
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
     await setSecret("fw_secure_original", home);
 
     await blockSecureKeyStorage(home);
-    const cacheBlocker = path.join(home, ".fireconnect", "key-storage.json");
+    const cacheBlocker = path.join(home, ".nexus", "key-storage.json");
     await rm(cacheBlocker, { force: true });
     await mkdir(cacheBlocker, { recursive: true });
 
@@ -343,10 +343,10 @@ describe("plaintext secret fallback", () => {
     await setSecret("fw_reprobe_migrate_key", home);
     assert.equal(await readKeyStorageCache(home), "plaintext");
 
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     delete process.env.XDG_DATA_HOME;
     resetSecretStoreForTests();
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
 

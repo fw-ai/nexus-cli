@@ -50,7 +50,7 @@ function stateDbFor(vscodePath) {
 
 /**
  * Read the `secret://<secretId>` row from a temp state.vscdb. Returns undefined
- * when the DB or row is absent. With FIRECONNECT_VSCODE_SECRET_PLAINTEXT the
+ * when the DB or row is absent. With NEXUS_VSCODE_SECRET_PLAINTEXT the
  * stored value is the raw key (no OS crypto), so this equals the API key.
  */
 function readStateSecret(vscodePath, secretId) {
@@ -192,14 +192,14 @@ describe("vscode-core pure transforms", () => {
 
 /* -------------------------------------------------------------------------- */
 /* Integration tests — CLI against a temp chatLanguageModels.json + the sibling */
-/* state.vscdb. FIRECONNECT_VSCODE_SECRET_PLAINTEXT bypasses the OS safeStorage  */
+/* state.vscdb. NEXUS_VSCODE_SECRET_PLAINTEXT bypasses the OS safeStorage  */
 /* crypto (the secret is stored verbatim), so these run headless / on CI with   */
 /* no keychain prompt. `--force` downgrades the running-VS-Code guard to a warn  */
 /* so the suite passes whether or not VS Code happens to be open.               */
 /* -------------------------------------------------------------------------- */
 
 describe("vscode harness integration", () => {
-  const secretEnv = () => ({ FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1" });
+  const secretEnv = () => ({ NEXUS_VSCODE_SECRET_PLAINTEXT: "1" });
 
   itIfSqlite("on writes the provider, the ${input:...} reference, and stores the key", async () => {
     await withTempHome("vscode-on-", async (home) => {
@@ -336,23 +336,19 @@ describe("vscode harness integration", () => {
     });
   });
 
-  it("on --model firerouter registers it without local Anthropic credentials", async () => {
+  it("rejects --model firerouter in VS Code", async () => {
     await withTempHome("vscode-on-firerouter-", async (home) => {
       const vscodePath = path.join(home, "chatLanguageModels.json");
       const on = await runCli(
         ["vscode", "on", "--model", "firerouter", "--api-key", "fw_test_key_12345", "--vscode-path", vscodePath, "--force"],
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" } },
       );
-      assert.equal(on.code, 0, on.stderr);
-      const provider = (await readJson(vscodePath)).find(isFireconnectProvider);
-      const ids = provider.models.map((m) => m.id);
-      assert.ok(ids.includes("firerouter"));
-      const firerouterModel = provider.models.find((m) => m.id === "firerouter");
-      assert.equal(firerouterModel.vision, true);
+      assert.notEqual(on.code, 0);
+      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
     });
   });
 
-  it("on --model firerouter --anthropic-api-key writes anthropic_api_key on the firerouter model", async () => {
+  it("rejects --model firerouter with an Anthropic BYOK flag in VS Code", async () => {
     const anthropicKey = "sk-ant-vscode-firerouter-12345";
     await withTempHome("vscode-on-firerouter-byok-", async (home) => {
       const vscodePath = path.join(home, "chatLanguageModels.json");
@@ -367,17 +363,12 @@ describe("vscode harness integration", () => {
         ],
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
       );
-      assert.equal(on.code, 0, on.stderr);
-      const firerouterModel = (await readJson(vscodePath))
-        .find(isFireconnectProvider)
-        .models
-        .find((m) => m.id === "firerouter");
-      assert.equal(firerouterModel.anthropic_api_key, anthropicKey);
-      assert.equal(firerouterModel.requestHeaders["x-anthropic-api-key"], anthropicKey);
+      assert.notEqual(on.code, 0);
+      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
     });
   });
 
-  it("on --model firerouter --openai-api-key writes x-openai-api-key on the firerouter model", async () => {
+  it("rejects --model firerouter with an OpenAI BYOK flag in VS Code", async () => {
     const openaiKey = "sk-proj-vscode-firerouter-12345";
     await withTempHome("vscode-on-firerouter-openai-", async (home) => {
       const vscodePath = path.join(home, "chatLanguageModels.json");
@@ -392,12 +383,8 @@ describe("vscode harness integration", () => {
         ],
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
       );
-      assert.equal(on.code, 0, on.stderr);
-      const firerouterModel = (await readJson(vscodePath))
-        .find(isFireconnectProvider)
-        .models
-        .find((m) => m.id === "firerouter");
-      assert.equal(firerouterModel.requestHeaders["x-openai-api-key"], openaiKey);
+      assert.notEqual(on.code, 0);
+      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
     });
   });
 

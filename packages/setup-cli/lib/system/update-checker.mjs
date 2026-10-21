@@ -7,7 +7,7 @@ import {
 } from "./update-cache.mjs";
 
 const REMOTE_URL =
-  "https://raw.githubusercontent.com/fw-ai/fireconnect/main/packages/setup-cli/package.json";
+  "https://raw.githubusercontent.com/fw-ai/nexus-cli/main/packages/setup-cli/package.json";
 
 async function main() {
   const home = process.env.HOME ?? "";

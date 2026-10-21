@@ -1,5 +1,5 @@
 /**
- * Multi-step onboarding wizard for `fireconnect claude demo`.
+ * Multi-step onboarding wizard for `nexus claude demo`.
  */
 
 import {
@@ -269,8 +269,8 @@ export function applyKey(state, key) {
 }
 
 export function estimateRaceCost(leftModel, rightModel, slotMapping = null) {
-  const leftRates = demoModelRates(leftModel, "fireworks", slotMapping);
-  const rightRates = demoModelRates(rightModel, "fireworks", slotMapping);
+  const leftRates = demoModelRates(leftModel, slotMapping);
+  const rightRates = demoModelRates(rightModel, slotMapping);
   if (!hasDemoTokenRates(leftRates) || !hasDemoTokenRates(rightRates)) {
     return null;
   }
@@ -296,7 +296,7 @@ export function formResult(state, ref) {
     promptSource = "preset";
   }
   const matchupId = MATCHUP_OPTION_IDS[state.matchupIndex];
-  const out = ref.defaults.out?.trim() || "./fireconnect-demo";
+  const out = ref.defaults.out?.trim() || "./nexus-demo";
   return {
     prompt,
     promptSource,
@@ -334,7 +334,7 @@ function renderModelValue(field, slotMapping = null) {
   }
   const cur = demoModelLabel(field.options[field.index]);
   const head = `◂ ${REVERSE}${BOLD}${cur}${RESET} ▸ ${DIM}[${field.index + 1}/${field.options.length}]${RESET}`;
-  const rates = demoModelRates(field.options[field.index], "fireworks", slotMapping);
+  const rates = demoModelRates(field.options[field.index], slotMapping);
   return hasDemoTokenRates(rates)
     ? `${head}  ${DIM}$${rates.inputPerMillion} / $${rates.outputPerMillion} per Mtok${RESET}`
     : `${head}  ${DIM}pricing after route${RESET}`;
@@ -414,7 +414,7 @@ function renderConfirmStep(state, labelWidth) {
   lines.push(`  ${DIM}Model A:${RESET}   ${BOLD}${demoModelLabel(state.leftModel)}${RESET}`);
   lines.push(`  ${DIM}Model B:${RESET}   ${BOLD}${demoModelLabel(state.rightModel)}${RESET}`);
   lines.push("");
-  lines.push(`  ${DIM}Both sides use your FireConnect Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`);
+  lines.push(`  ${DIM}Both sides use your Nexus Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`);
   if (est) {
     lines.push(`  ${DIM}Est. cost:${RESET}   ~$${est.low.toFixed(2)}–$${est.high.toFixed(2)} · opens browser when done`);
   } else {
@@ -429,7 +429,7 @@ export function renderFormLines(state, meta) {
   const labelWidth = 18;
   const lines = [
     "",
-    `  ${BOLD}${CYAN}FireConnect Demo${RESET}`,
+    `  ${BOLD}${CYAN}Nexus Demo${RESET}`,
     `  ${DIM}Same prompt, two models — race and compare.${RESET}`,
     "",
   ];

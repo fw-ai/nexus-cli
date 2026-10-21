@@ -7,8 +7,8 @@ import { after, before, describe, it } from "node:test";
 
 // In-memory secret store so persistApiKeyToKeychain never touches the real
 // keychain. Read at call time, so setting it here (after imports) is enough.
-process.env.FIRECONNECT_SECRET_STORE ??= "memory";
-process.env.FIRECONNECT_TEST ??= "1";
+process.env.NEXUS_SECRET_STORE ??= "memory";
+process.env.NEXUS_TEST ??= "1";
 
 import { persistApiKeyToKeychain } from "../../lib/keys/api-key.mjs";
 import { resetSecretStoreForTests } from "../../lib/keys/secret-store.mjs";
@@ -62,18 +62,18 @@ describe("signInSucceeded (#3: verify-as-success)", () => {
 
   before(async () => {
     gateway = await startMockVerify();
-    savedUrl = process.env.FIRECONNECT_GATEWAY_URL;
+    savedUrl = process.env.NEXUS_GATEWAY_URL;
     savedEnvKey = process.env.FIREWORKS_API_KEY;
-    process.env.FIRECONNECT_GATEWAY_URL = gateway.url;
+    process.env.NEXUS_GATEWAY_URL = gateway.url;
     delete process.env.FIREWORKS_API_KEY;
   });
 
   after(() => {
     gateway.server.close();
     if (savedUrl === undefined) {
-      delete process.env.FIRECONNECT_GATEWAY_URL;
+      delete process.env.NEXUS_GATEWAY_URL;
     } else {
-      process.env.FIRECONNECT_GATEWAY_URL = savedUrl;
+      process.env.NEXUS_GATEWAY_URL = savedUrl;
     }
     if (savedEnvKey === undefined) {
       delete process.env.FIREWORKS_API_KEY;
@@ -123,12 +123,12 @@ describe("signInSucceeded (#3: verify-as-success)", () => {
   it("true on a network blip (a rejection it is not)", async () => {
     await withHome("network", async (home) => {
       await persistApiKeyToKeychain(home, VALID_KEY);
-      const real = process.env.FIRECONNECT_GATEWAY_URL;
-      process.env.FIRECONNECT_GATEWAY_URL = "http://127.0.0.1:1"; // unreachable
+      const real = process.env.NEXUS_GATEWAY_URL;
+      process.env.NEXUS_GATEWAY_URL = "http://127.0.0.1:1"; // unreachable
       try {
         assert.equal(await signInSucceeded(home), true); // lenient, not a rejection
       } finally {
-        process.env.FIRECONNECT_GATEWAY_URL = real;
+        process.env.NEXUS_GATEWAY_URL = real;
       }
     });
   });

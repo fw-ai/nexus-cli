@@ -17,7 +17,7 @@ import { setServerlessCatalogSnapshot } from "../../../lib/fireworks/serverless-
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
 import { mockServerlessModel } from "../../helpers.mjs";
 
-process.env.FIRECONNECT_TEST ??= "1";
+process.env.NEXUS_TEST ??= "1";
 
 describe("opencode catalog model handling", () => {
   it("identifies router overrides vs models.dev catalog entries", () => {
@@ -177,8 +177,8 @@ describe("opencode catalog model handling", () => {
     await enableOpencodeFireworks({
       configPath,
       dataDir,
-      apiKey: "fpk_test_firepass_key",
-      effectiveApiKey: "fpk_test_firepass_key",
+      apiKey: "fw_test_key_12345",
+      effectiveApiKey: "fw_test_key_12345",
       catalogModelIds,
       catalogAvailable: true,
     });
@@ -196,8 +196,8 @@ describe("opencode catalog model handling", () => {
     await enableOpencodeFireworks({
       configPath,
       dataDir,
-      apiKey: "fpk_test_firepass_key",
-      effectiveApiKey: "fpk_test_firepass_key",
+      apiKey: "fw_test_key_12345",
+      effectiveApiKey: "fw_test_key_12345",
       catalogModelIds,
       catalogAvailable: true,
     });
@@ -209,7 +209,7 @@ describe("opencode catalog model handling", () => {
   });
 
   it("plain re-on refreshes existing model metadata", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firepass-cost-"));
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-refresh-cost-"));
     const configPath = path.join(home, "opencode.json");
     const dataDir = path.join(home, "data");
     await mkdir(dataDir, { recursive: true });
@@ -223,29 +223,27 @@ describe("opencode catalog model handling", () => {
       }),
     ]));
     try {
-      await enableOpencodeFireworks({
+      const enable = () => enableOpencodeFireworks({
         configPath,
         dataDir,
         apiKey: "fw_test_key_12345",
         effectiveApiKey: "fw_test_key_12345",
         catalogModelIds,
       });
+      await enable();
 
       const withCost = JSON.parse(await readFile(configPath, "utf8")).provider["fireworks-ai"].models["glm-latest"];
       assert.ok(withCost?.cost?.input, "standard key registers metered cost");
 
-      await enableOpencodeFireworks({
-        configPath,
-        dataDir,
-        apiKey: "fpk_test_firepass_key",
-        effectiveApiKey: "fpk_test_firepass_key",
-        catalogModelIds,
-      });
+      const stale = JSON.parse(await readFile(configPath, "utf8"));
+      stale.provider["fireworks-ai"].models["glm-latest"].cost = { input: 99, output: 99 };
+      stale.provider["fireworks-ai"].models["glm-latest"].limit = { context: 1, output: 1 };
+      await writeFile(configPath, `${JSON.stringify(stale, null, 2)}\n`);
+
+      await enable();
 
       const entry = JSON.parse(await readFile(configPath, "utf8")).provider["fireworks-ai"].models["glm-latest"];
-      // Re-`on` refreshes entries from the catalog; a Fire Pass key carries no
-      // metered cost, so the re-rendered row drops it (same as Pi's refresh).
-      assert.equal(entry.cost?.input, undefined);
+      assert.deepEqual(entry.cost, withCost.cost);
       assert.ok(entry.limit.context >= 1_000_000, "limits still resolved");
     } finally {
       setServerlessCatalogSnapshot(null);

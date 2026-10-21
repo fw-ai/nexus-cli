@@ -1,5 +1,5 @@
 /-
-Formal model of the three `formatUsd` variants in FireConnect:
+Formal model of the three `formatUsd` variants in Nexus:
 
 - `pricing.mjs` (`formatPricingInOut` helper): minimal decimals, no finiteness
   guard (callers guarantee numbers).
@@ -11,7 +11,7 @@ Amounts are modeled as `Nat` thousandths of a dollar (list/pricing domain), so
 separately where needed. The divergence theorem below is the Lean-found bug
 that motivates unifying on one shared formatter.
 -/
-namespace FireConnect.Pricing
+namespace Nexus.Pricing
 
 /-- Pad a Nat's decimal representation to exactly `width` digits. -/
 def padLeft (width : Nat) (n : Nat) : String :=
@@ -85,4 +85,4 @@ theorem pricing_no_trailing_zero_spot :
     pricingFormat 44 = "$0.044" ∧
     pricingFormat 0 = "$0" := by native_decide
 
-end FireConnect.Pricing
+end Nexus.Pricing

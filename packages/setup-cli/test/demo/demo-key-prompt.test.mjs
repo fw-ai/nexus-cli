@@ -51,9 +51,14 @@ test("validateAnthropicKey: trims whitespace before checking", () => {
 
 // ── validateFireworksKey (pure) ──────────────────────────────────────────────
 
-test("validateFireworksKey: accepts fw_ and fpk_ prefixed keys", () => {
+test("validateFireworksKey: accepts fw_ prefixed keys", () => {
   assert.deepEqual(validateFireworksKey("fw_abc123XYZ"), { ok: true });
-  assert.deepEqual(validateFireworksKey("fpk_abc123XYZ"), { ok: true });
+});
+
+test("validateFireworksKey: rejects fpk_ prefixed keys", () => {
+  const r = validateFireworksKey("fpk_abc123XYZ");
+  assert.equal(r.ok, false);
+  assert.match(r.error, /fw_/);
 });
 
 test("validateFireworksKey: rejects empty", () => {
@@ -65,7 +70,7 @@ test("validateFireworksKey: rejects empty", () => {
 test("validateFireworksKey: rejects non-Fireworks shapes", () => {
   const r = validateFireworksKey("sk-ant-abc123");
   assert.equal(r.ok, false);
-  assert.match(r.error, /fw_|fpk_/);
+  assert.match(r.error, /fw_/);
 });
 
 test("validateFireworksKey: trims whitespace before checking", () => {

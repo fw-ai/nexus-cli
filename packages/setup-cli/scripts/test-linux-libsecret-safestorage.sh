@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-KEYRING_PW="${FIRECONNECT_KEYRING_PW:-fireconnect}"
+KEYRING_PW="${NEXUS_KEYRING_PW:-nexus}"
 BASE="$(mktemp -d)"
 export DISPLAY="${DISPLAY:-:99}"
 export HOME="$BASE/home"

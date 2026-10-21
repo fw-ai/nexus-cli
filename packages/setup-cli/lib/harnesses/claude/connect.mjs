@@ -1,4 +1,5 @@
 import {
+  assertNotFirerouterModelId,
   canonicalRequestedModelId,
   isClaudeNativeModel,
   isClaudeNativeSlotAlias,
@@ -31,6 +32,7 @@ export function claudeSlotOverridesFromCtx(ctx) {
     if (!raw) {
       continue;
     }
+    assertNotFirerouterModelId(raw, SLOT_FLAG_NAMES[slot]);
     overrides[slot] = normalizeModelId(raw);
   }
   return overrides;
@@ -39,24 +41,6 @@ export function claudeSlotOverridesFromCtx(ctx) {
 /** Whether any tier-slot flag (`--opus` … `--subagent`) was passed. */
 export function hasClaudeSlotOverrides(ctx) {
   return CLAUDE_TIER_SLOTS.some((slot) => Boolean(ctx[slot]?.trim()));
-}
-
-/**
- * Whether `--routing-preference` without `--model` implies a firerouter picker
- * row. Only when no tier slot pins a real model: an explicit pin opts out of
- * the FireRouter mix, so synthesizing firerouter there would attach a routing
- * header the pinned tiers ignore (the `on` guard then rejects instead). A
- * `native` flag normalizes to the unpinned sentinel, which is end-state
- * identical to passing no flag — so it must not block the synth. Pure so the
- * Lean model (`SlotMapping.lean`) can pin the truth table.
- * @param {{ routingPreference?: number|null, main?: string, opus?: string, sonnet?: string, haiku?: string, fable?: string, subagent?: string }} ctx
- */
-export function shouldImplyFirerouterPickerRow(ctx) {
-  const overrides = claudeSlotOverridesFromCtx(ctx);
-  const hasPin = Object.values(overrides).some((modelId) => !isClaudeNativeModel(modelId));
-  return ctx.routingPreference !== null
-    && !ctx.main?.trim()
-    && !hasPin;
 }
 
 /**

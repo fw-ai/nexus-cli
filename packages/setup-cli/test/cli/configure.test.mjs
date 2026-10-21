@@ -51,7 +51,7 @@ describe("configure (provider / FireRouter setup)", () => {
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(result.code, 1);
-    assert.match(result.stderr, /fireconnect login/);
+    assert.match(result.stderr, /nexus login/);
     assert.match(result.stderr, /requires --provider azure/);
   });
 
@@ -60,7 +60,7 @@ describe("configure (provider / FireRouter setup)", () => {
     const result = await runFireconnect(["configure"], { HOME: home, FIREWORKS_API_KEY: "" });
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /Nothing to configure/);
-    assert.match(result.stdout, /fireconnect login/);
+    assert.match(result.stdout, /nexus login/);
   });
 
   it("rejects removed --api-key-mode flag", () => {
@@ -107,6 +107,6 @@ describe("configure (provider / FireRouter setup)", () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-harness-unset-flag-"));
     const result = await runFireconnect(["opencode", "on", "--unset", "openai-api-key"], { HOME: home });
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /fireconnect configure --unset openai-api-key/);
+    assert.match(result.stderr, /nexus configure --unset openai-api-key/);
   });
 });

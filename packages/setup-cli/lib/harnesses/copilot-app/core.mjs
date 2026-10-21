@@ -2,7 +2,7 @@ import path from "node:path";
 
 import {
   isAutoModelId,
-  isFirerouterModelPattern,
+  isAutoInstantModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
@@ -13,7 +13,6 @@ import {
   resolveCopilotModelId,
 } from "../copilot-shared.mjs";
 import {
-  detectApiKeyType,
   isFireworksKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
@@ -36,7 +35,7 @@ import {
  *   provider_models (id, provider_id, model_id, wire_model, display_name, ...)
  *
  * The built-in `github_copilot:*` provider row is what the app itself ships —
- * we never touch it. FireConnect adds one BYOK provider row (id prefix `fc-`)
+ * we never touch it. Nexus adds one BYOK provider row (id prefix `fc-`)
  * pointing at the Fireworks OpenAI-compatible gateway, registers the model
  * catalog under it, and stores the API key in the macOS keychain under the
  * app's own BYOK secret slot (service `github-copilot-app`, account =
@@ -51,7 +50,7 @@ import {
 export { ensureCopilotStopped } from "./sqlite.mjs";
 export { COPILOT_FIREWORKS_BASE_URL } from "../copilot-shared.mjs";
 
-export const COPILOT_DATA_RELATIVE_DIR = ".fireconnect/copilot-app";
+export const COPILOT_DATA_RELATIVE_DIR = ".nexus/copilot-app";
 
 /**
  * The harness is platform-independent. The app keeps its whole tree in
@@ -61,9 +60,9 @@ export const COPILOT_DATA_RELATIVE_DIR = ".fireconnect/copilot-app";
  */
 
 /**
- * The desktop harness's FireConnect data dir. Separate from copilot-cli's so
+ * The desktop harness's Nexus data dir. Separate from copilot-cli's so
  * the two harnesses' backups can never collide. Defaults to
- * `~/.fireconnect/copilot-app` unless overridden via `--data-dir`.
+ * `~/.nexus/copilot-app` unless overridden via `--data-dir`.
  * @param {string} home
  * @param {string} [dataDir]
  * @returns {string}
@@ -129,14 +128,13 @@ export async function copilotProviderStatus(dbPath) {
  * row with the Fireworks base URL + keychain secret, and register the resolved
  * model plus the catalog under it.
  *
- * @param {{ dbPath: string, apiKey: string, modelId?: string, keyType?: "fireworks" | "firepass", extraModels?: string[], extraHeaders?: Record<string,string>, catalogUnavailable?: boolean }} opts
- * @returns {Promise<{ model: string, modelsAdded: string[], keyType: "fireworks" | "firepass", providerId: string }>}
+ * @param {{ dbPath: string, apiKey: string, modelId?: string, extraModels?: string[], extraHeaders?: Record<string,string>, catalogUnavailable?: boolean }} opts
+ * @returns {Promise<{ model: string, modelsAdded: string[], providerId: string }>}
  */
 export async function enableCopilotFireworks({
   dbPath,
   apiKey,
   modelId,
-  keyType = "fireworks",
   extraModels = [],
   extraHeaders = {},
   catalogUnavailable = false,
@@ -145,10 +143,7 @@ export async function enableCopilotFireworks({
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
 
-  const resolvedKeyType = keyType === "fireworks" ? detectApiKeyType(apiKey) : keyType;
-  const resolvedModel = shortFireworksModelRef(
-    resolveCopilotModelId(modelId?.trim(), resolvedKeyType),
-  );
+  const resolvedModel = shortFireworksModelRef(resolveCopilotModelId(modelId?.trim()));
 
   // Re-`on` reuses the same provider id so the app's stored sessions keep
   // resolving; only the registered models are replaced.
@@ -174,7 +169,7 @@ export async function enableCopilotFireworks({
     const plan = planCatalogRefresh({
       currentIds: current,
       freshIds: catalogModels,
-      keepUnserved: (id) => isAutoModelId(id) || isFirerouterModelPattern(id),
+      keepUnserved: (id) => isAutoModelId(id) && !isAutoInstantModelId(id),
     });
     toRegister = [...plan.kept, ...plan.added];
   }
@@ -185,7 +180,6 @@ export async function enableCopilotFireworks({
   return {
     model: resolvedModel,
     modelsAdded: toRegister,
-    keyType: resolvedKeyType,
     providerId,
   };
 }

@@ -19,23 +19,23 @@ let snapshotResolved = false;
 // command refreshes it from the network. Overridable for tests.
 export const DEFAULT_CATALOG_TTL_MS = 60 * 60 * 1000; // 1 hour
 export function catalogTtlMs() {
-  const raw = Number(process.env.FIRECONNECT_CATALOG_TTL_MS);
+  const raw = Number(process.env.NEXUS_CATALOG_TTL_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CATALOG_TTL_MS;
 }
 
-// FIRECONNECT_CACHE_DIR lets tests (and CI) point persisted caches at
+// NEXUS_CACHE_DIR lets tests (and CI) point persisted caches at
 // a throwaway dir so in-process loads never touch the developer's real
-// ~/.fireconnect. When set, it's scoped by HOME so spawned CLI children (which
-// inherit FIRECONNECT_CACHE_DIR but each get their own temp HOME) read their own
+// ~/.nexus. When set, it's scoped by HOME so spawned CLI children (which
+// inherit NEXUS_CACHE_DIR but each get their own temp HOME) read their own
 // cache file instead of all colliding on one.
 export function scopedCacheFilePath(filename) {
   const home = process.env.HOME ?? os.homedir();
-  let dir = process.env.FIRECONNECT_CACHE_DIR;
+  let dir = process.env.NEXUS_CACHE_DIR;
   if (dir) {
     const scope = createHash("sha1").update(home).digest("hex").slice(0, 12);
     dir = path.join(dir, scope);
   } else {
-    dir = path.join(home, ".fireconnect");
+    dir = path.join(home, ".nexus");
   }
   return path.join(dir, filename);
 }

@@ -1,15 +1,13 @@
 import {
+  AUTO_INSTANT_MODEL_ID,
   AUTO_MODEL_ID,
   FIREROUTER_ROUTER_ID,
-  KIMI_FAST_LATEST_ROUTER_ID,
+  OPENAI_MODEL_FAMILIES,
   canonicalAutoModelId,
   isFirerouterModel,
   isFirerouterModelPattern,
 } from "./model-id.mjs";
-import {
-  detectApiKeyType,
-  MISSING_FIREWORKS_API_KEY_MESSAGE,
-} from "../keys/key-type.mjs";
+import { MISSING_FIREWORKS_API_KEY_MESSAGE } from "../keys/key-type.mjs";
 import {
   FIREWORKS_PRICING_DOCS_URL,
   lookupModelSpec,
@@ -33,46 +31,6 @@ export const FIREWORKS_GATEWAY_URL = "https://api.fireworks.ai";
 export const PLATFORM_ACCOUNT_ID = "fireworks";
 export const KIND_SERVERLESS = "serverless";
 export const SERVERLESS_CODING_USE_CASE = "coding";
-export const FIREPASS_ROUTER_ID = KIMI_FAST_LATEST_ROUTER_ID;
-export const FIREPASS_ROUTER_IDS = new Set([
-  FIREPASS_ROUTER_ID,
-  "accounts/fireworks/routers/glm-latest",
-  "accounts/fireworks/routers/glm-5p2-fast",
-  "accounts/fireworks/routers/glm-fast-latest",
-]);
-
-/** Fire Pass keys cannot list the catalog; these routers stay available offline. */
-export const FIREPASS_FALLBACK_ROUTERS = [
-  {
-    id: "accounts/fireworks/routers/glm-latest",
-    shortId: "glm-latest",
-    displayName: "GLM Latest",
-    baseModelId: "accounts/fireworks/models/glm-5p2",
-    kind: KIND_SERVERLESS,
-  },
-  {
-    id: "accounts/fireworks/routers/glm-fast-latest",
-    shortId: "glm-fast-latest",
-    displayName: "GLM Fast Latest",
-    baseModelId: "accounts/fireworks/models/glm-5p2",
-    kind: KIND_SERVERLESS,
-  },
-  {
-    id: "accounts/fireworks/routers/glm-5p2-fast",
-    shortId: "glm-5p2-fast",
-    displayName: "GLM 5.2 Fast",
-    baseModelId: "accounts/fireworks/models/glm-5p2",
-    kind: KIND_SERVERLESS,
-  },
-  {
-    id: "accounts/fireworks/routers/kimi-fast-latest",
-    shortId: "kimi-fast-latest",
-    displayName: "Kimi Fast Latest",
-    baseModelId: "accounts/fireworks/models/kimi-k3",
-    kind: KIND_SERVERLESS,
-  },
-];
-
 /** @typedef {{ id: string, shortId: string, displayName: string, baseModelId?: string, kind: "serverless", serverlessMode?: string }} CatalogEntry */
 
 export function firerouterCatalogEntry() {
@@ -127,8 +85,10 @@ export function prettyModelName(modelId) {
   const tokens = last.split(/[-_]/).filter(Boolean);
   const pretty = tokens.map((tok) => {
     if (/^[a-z]+$/i.test(tok)) {
-      // short all-letter tokens are acronyms (GLM); longer ones are names (Kimi, Qwen, Deepseek)
-      return tok.length <= 3 ? tok.toUpperCase() : tok.charAt(0).toUpperCase() + tok.slice(1);
+      // short all-letter tokens are acronyms (GLM); longer ones are names (Kimi, Qwen, Deepseek).
+      // GPT family names are names however short (Sol, like Astra and Luna).
+      const name = tok.length > 3 || OPENAI_MODEL_FAMILIES.includes(tok.toLowerCase());
+      return name ? tok.charAt(0).toUpperCase() + tok.slice(1) : tok.toUpperCase();
     }
     let m = tok.match(/^([a-zA-Z])(\d+)p(\d+)$/); // k2p6 -> K2.6
     if (m) {
@@ -202,7 +162,7 @@ class FireworksHttpError extends Error {
 async function fetchGatewayPage(path, apiKey) {
   // Same dev/test override as verify-api-key.mjs — lets the mock gateway
   // serve the catalog in specs.
-  const gatewayUrl = process.env.FIRECONNECT_GATEWAY_URL?.trim() || FIREWORKS_GATEWAY_URL;
+  const gatewayUrl = process.env.NEXUS_GATEWAY_URL?.trim() || FIREWORKS_GATEWAY_URL;
   // The serverless listing is read-only and occasionally returns a transient
   // 5xx ("Error listing serverless models" from the control plane). Retry once
   // so a single blip doesn't force every harness `on` into offline mode.
@@ -631,6 +591,9 @@ function dedupeCatalog(entries) {
     // auto row (a router, a model, or an alias on several models) collapses
     // to the one canonical row the synthesized entry would have been.
     const autoId = autoCatalogEntryId(entry);
+    if (autoId === AUTO_INSTANT_MODEL_ID) {
+      continue; // Retired mix: never enters a snapshot.
+    }
     if (autoId) {
       byId.set(autoId, autoCatalogEntry(autoId));
       continue;
@@ -655,21 +618,16 @@ export async function fetchServerlessCatalog(apiKey) {
 /**
  * Populate pricing/modality cache from the serverless API. Swallows errors.
  *
- * Only genuine Fireworks inference keys (`fw_`) are sent to api.fireworks.ai.
- * `detectApiKeyType` classifies every non-`fpk_` token as "fireworks", so a
- * bare prefix check is required to avoid forwarding a foreign credential (e.g.
- * an Anthropic key read from ANTHROPIC_API_KEY) to the Fireworks gateway.
+ * Only genuine Fireworks inference keys (`fw_`) are sent to api.fireworks.ai,
+ * so a foreign credential (e.g. an Anthropic key read from ANTHROPIC_API_KEY)
+ * never reaches the Fireworks gateway.
  */
-export async function warmServerlessPricingCache(apiKey, keyType = "") {
+export async function warmServerlessPricingCache(apiKey) {
   // Anthropic/OpenAI list prices come from the keyless models.dev cache, so
-  // they refresh for every key type (including Fire Pass) ahead of the fw_ gate.
+  // they refresh for every key ahead of the fw_ gate.
   await refreshListPriceCache();
   const trimmed = apiKey?.trim();
   if (!trimmed || !trimmed.startsWith("fw_")) {
-    return;
-  }
-  const resolvedKeyType = keyType || detectApiKeyType(trimmed);
-  if (resolvedKeyType === "firepass") {
     return;
   }
   try {
@@ -700,13 +658,6 @@ export async function fetchServerlessCatalogRaw(apiKey) {
   } while (pageToken);
 
   return models;
-}
-
-export function filterCatalogForKeyType(catalog, keyType) {
-  if (keyType !== "firepass") {
-    return catalog;
-  }
-  return catalog.filter((entry) => FIREPASS_ROUTER_IDS.has(entry.id));
 }
 
 export function filterCatalogBySearch(catalog, search = "") {
@@ -878,16 +829,18 @@ export function preferLatestAliases(catalog) {
  * already carries the `auto` mix (see `loadServerlessCatalog`); FireRouter is
  * included only when explicitly requested via `on --model firerouter`.
  * @param {import("./models.mjs").CatalogEntry[]} catalog
- * @param {string} keyType
  * @param {{ includeFirerouter?: boolean }} [opts]
  * @returns {string[]}
  */
-export function registerableModelIds(catalog, keyType, { includeFirerouter = false } = {}) {
+export function registerableModelIds(catalog, { includeFirerouter = false } = {}) {
   return catalogWithAutomaticFirerouter(
     preferLatestAliases(catalog),
-    keyType,
     { includeFirerouter },
-  ).map((entry) => entry.id);
+  )
+    // The retired `auto-instant` mix never registers, even when the
+    // gateway still returns its row.
+    .filter((entry) => autoCatalogEntryId(entry) !== AUTO_INSTANT_MODEL_ID)
+    .map((entry) => entry.id);
 }
 
 /**
@@ -910,16 +863,8 @@ export function autoCatalogEntryId(entry) {
   return canonicalAutoModelId(entry?.shortId) || canonicalAutoModelId(shortIdFromResourceName(entry?.id));
 }
 
-export function catalogWithAutomaticFirerouter(
-  catalog,
-  keyType,
-  { includeFirerouter = false } = {},
-) {
+export function catalogWithAutomaticFirerouter(catalog, { includeFirerouter = false } = {}) {
   const withoutFirerouter = catalog.filter((entry) => entry.id !== FIREROUTER_ROUTER_ID);
-  if (keyType === "firepass") {
-    // Fire Pass serves only its curated routers — never FireRouter or auto.
-    return withoutFirerouter.filter((entry) => !isAutoCatalogEntry(entry));
-  }
   if (!includeFirerouter) {
     return withoutFirerouter;
   }
@@ -936,16 +881,14 @@ export function catalogWithAutomaticFirerouter(
  * without listing it, so the served catalog synthesizes the row once, up
  * front — every `on` path below (`registerableModelIds`, the Codex bundle,
  * `model list`, the Claude picker) then receives it like any other entry.
- * Fire Pass is excluded throughout: the mix needs no bare-slug entry there.
  * Empty lists stay empty so an unreachable catalog still reads as
  * unavailable (and model validation keeps skipping it) instead of
  * validating against a one-row list.
  * @param {import("./models.mjs").CatalogEntry[]} catalog
- * @param {string} keyType
  * @returns {import("./models.mjs").CatalogEntry[]}
  */
-export function catalogWithAutomaticAuto(catalog, keyType) {
-  if (keyType === "firepass" || catalog.length === 0) {
+export function catalogWithAutomaticAuto(catalog) {
+  if (catalog.length === 0) {
     return catalog;
   }
   const canonical = withCanonicalAutoRows(catalog);
@@ -966,6 +909,11 @@ function withCanonicalAutoRows(catalog) {
   let changed = false;
   for (const entry of catalog) {
     const autoId = autoCatalogEntryId(entry);
+    if (autoId === AUTO_INSTANT_MODEL_ID) {
+      // Retired mix: dropped from every canonical catalog/snapshot.
+      changed = true;
+      continue;
+    }
     if (!autoId) {
       rows.push(entry);
     } else if (seen.has(autoId)) {
@@ -981,33 +929,15 @@ function withCanonicalAutoRows(catalog) {
 }
 
 export async function loadRegisterableModels({ apiKey, includeFirerouter = false }) {
-  const { catalog, keyType, source } = await loadServerlessCatalog({ apiKey, refresh: true });
-  const ids = registerableModelIds(catalog, keyType, { includeFirerouter });
-  return { ids, keyType, available: source !== "stale" };
+  const { catalog, source } = await loadServerlessCatalog({ apiKey, refresh: true });
+  const ids = registerableModelIds(catalog, { includeFirerouter });
+  return { ids, available: source !== "stale" };
 }
 
-export async function loadServerlessCatalog({ apiKey, keyType = "", refresh = false }) {
+export async function loadServerlessCatalog({ apiKey, refresh = false }) {
   const resolvedKey = apiKey;
   if (!resolvedKey) {
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
-  }
-
-  const resolvedKeyType = keyType || detectApiKeyType(resolvedKey);
-
-  // Fire Pass keys cannot list the account catalog, so return the known
-  // Fire Pass router directly without hitting the API. `refresh` has nothing to
-  // refetch here, and dropping the cache would leave harnesses with no snapshot
-  // to register from offline.
-  if (resolvedKeyType === "firepass") {
-    return {
-      apiKey: resolvedKey,
-      keyType: resolvedKeyType,
-      catalog: filterCatalogForKeyType(FIREPASS_FALLBACK_ROUTERS, "firepass"),
-      rawModels: [],
-      routersUnavailable: false,
-      source: "firepass",
-      updatedAt: null,
-    };
   }
 
   // Eligible commands (harness `on`, `model list`, the Claude picker) all load
@@ -1028,11 +958,7 @@ export async function loadServerlessCatalog({ apiKey, keyType = "", refresh = fa
     setServerlessCatalogSnapshot(cache.snapshot);
     return {
       apiKey: resolvedKey,
-      keyType: resolvedKeyType,
-      catalog: catalogWithAutomaticAuto(
-        filterCatalogForKeyType(cache.snapshot.entries, resolvedKeyType),
-        resolvedKeyType,
-      ),
+      catalog: catalogWithAutomaticAuto(cache.snapshot.entries),
       rawModels: [],
       routersUnavailable: false,
       source: "cache",
@@ -1049,11 +975,9 @@ export async function loadServerlessCatalog({ apiKey, keyType = "", refresh = fa
     // models.dev. The fresh prices land on disk for the next read.
     void refreshListPriceCache({ force: refresh });
     const { catalog, rawModels, routersUnavailable, updatedAt } = await fetchServerlessCatalog(resolvedKey);
-    const filteredCatalog = filterCatalogForKeyType(catalog, resolvedKeyType);
     return {
       apiKey: resolvedKey,
-      keyType: resolvedKeyType,
-      catalog: catalogWithAutomaticAuto(filteredCatalog, resolvedKeyType),
+      catalog: catalogWithAutomaticAuto(catalog),
       rawModels,
       routersUnavailable,
       source: "network",
@@ -1064,11 +988,7 @@ export async function loadServerlessCatalog({ apiKey, keyType = "", refresh = fa
       setServerlessCatalogSnapshot(cache.snapshot);
       return {
         apiKey: resolvedKey,
-        keyType: resolvedKeyType,
-        catalog: catalogWithAutomaticAuto(
-          filterCatalogForKeyType(cache.snapshot.entries, resolvedKeyType),
-          resolvedKeyType,
-        ),
+          catalog: catalogWithAutomaticAuto(cache.snapshot.entries),
         rawModels: [],
         routersUnavailable: false,
         source: "stale",
@@ -1083,7 +1003,7 @@ export async function loadServerlessCatalog({ apiKey, keyType = "", refresh = fa
       : "";
     throw new Error(
       `Couldn't fetch the Fireworks model catalog and no cached copy exists yet. ${reason} ${retry}`
-      + "Once `fireconnect model list` succeeds, the catalog is cached for offline use.",
+      + "Once `nexus model list` succeeds, the catalog is cached for offline use.",
       { cause: error },
     );
   }

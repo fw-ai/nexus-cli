@@ -35,7 +35,7 @@ const MAX_LEVELS = [...STANDARD_LEVELS, reasoningLevel("max")];
  * docs confirm it (GLM 5.2, GLM 5.3 incl. Flash, DeepSeek V4 Pro/Flash). Some models may treat the
  * lower tiers as a no-op; the tier is still selectable rather than absent.
  *
- * FireConnect never sets a default effort: the table carries ladders only, and
+ * Nexus never sets a default effort: the table carries ladders only, and
  * each harness applies its own default.
  */
 export const MODEL_REASONING = {

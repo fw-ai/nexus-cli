@@ -83,6 +83,14 @@ describe("harness resolveKey", () => {
     });
   });
 
+  test("claude skips fpk_ tokens", async () => {
+    await withTempHome("claude-fpk", async (home) => {
+      await writeClaudeSettings(home, FPK_KEY);
+      const key = await claude.resolveKey(harnessCtx(home));
+      assert.equal(key, "");
+    });
+  });
+
   test("opencode returns harness-local Fireworks key", async () => {
     await withTempHome("opencode-key", async (home) => {
       await writeClaudeSettings(home, FW_CLAUDE_KEY);
@@ -97,10 +105,10 @@ describe("harness resolveKey", () => {
     await withTempHome("opencode-envref", async (home) => {
       await writeOpencodeConfig(home, OPENCODE_API_KEY_ENV_REF);
       const prev = process.env.FIREWORKS_API_KEY;
-      process.env.FIREWORKS_API_KEY = FPK_KEY;
+      process.env.FIREWORKS_API_KEY = FW_OPENCODE_KEY;
       try {
         const key = await opencode.resolveKey(harnessCtx(home));
-        assert.equal(key, FPK_KEY);
+        assert.equal(key, FW_OPENCODE_KEY);
       } finally {
         if (prev === undefined) {
           delete process.env.FIREWORKS_API_KEY;
@@ -152,10 +160,10 @@ describe("harness resolveKey", () => {
     await withTempHome("pi-envref", async (home) => {
       await writePiAuth(home, PI_API_KEY_ENV_REF);
       const prev = process.env.FIREWORKS_API_KEY;
-      process.env.FIREWORKS_API_KEY = FPK_KEY;
+      process.env.FIREWORKS_API_KEY = FW_CLAUDE_KEY;
       try {
         const key = await pi.resolveKey(harnessCtx(home));
-        assert.equal(key, FPK_KEY);
+        assert.equal(key, FW_CLAUDE_KEY);
       } finally {
         if (prev === undefined) {
           delete process.env.FIREWORKS_API_KEY;
@@ -170,14 +178,14 @@ describe("harness resolveKey", () => {
 describe("resolveFireworksApiKey with harness resolveKey", () => {
   test("claude chain prefers harness-local key over env", async () => {
     await withTempHome("chain-claude-local", async (home) => {
-      await writeClaudeSettings(home, FPK_KEY);
+      await writeClaudeSettings(home, FW_CLAUDE_KEY);
       const ctx = harnessCtx(home);
       await withoutEnvFireworksKey(async () => {
         const resolved = await resolveFireworksApiKey({
           resolveKey: () => claude.resolveKey(ctx),
           home,
         });
-        assert.equal(resolved, FPK_KEY);
+        assert.equal(resolved, FW_CLAUDE_KEY);
       });
     });
   });

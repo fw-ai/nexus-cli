@@ -13,7 +13,7 @@ import {
   hasSecret,
   deleteSecret,
   resetSecretStoreForTests,
-  FIRECONNECT_KEY_STORAGE_ENV,
+  KEY_STORAGE_ENV,
 } from "../../lib/keys/secret-store.mjs";
 import {
   keyStatusSummary,
@@ -27,7 +27,7 @@ import { verifyKeyExportWorks } from "../../lib/keys/selfcheck.mjs";
 import { resolveHarnessOnApiKey } from "../../lib/keys/harness-api-key.mjs";
 import { seedOnCommandCatalog, withoutEnvFireworksKey, withLinuxSshEnv } from "../helpers.mjs";
 
-const CLI = path.resolve("bin/fireconnect.mjs");
+const CLI = path.resolve("bin/nexus.mjs");
 const KEY = "fw_backend_test_key_000000000000";
 
 /**
@@ -43,12 +43,12 @@ function runCli(args, env) {
   }
   const childEnv = { ...process.env };
   // Never use the in-memory test seam for these; we want the real file backend.
-  delete childEnv.FIRECONNECT_SECRET_STORE;
-  delete childEnv.FIRECONNECT_TEST;
-  // Deleting FIRECONNECT_TEST would re-enable the detached update checker,
+  delete childEnv.NEXUS_SECRET_STORE;
+  delete childEnv.NEXUS_TEST;
+  // Deleting NEXUS_TEST would re-enable the detached update checker,
   // whose worker outlives the child and races afterEach temp-dir cleanup
   // (ENOTEMPTY). Keep the checker off while still exercising the real backend.
-  childEnv.FIRECONNECT_NO_UPDATE_CHECK = "1";
+  childEnv.NEXUS_NO_UPDATE_CHECK = "1";
   delete childEnv.FIREWORKS_API_KEY;
   Object.assign(childEnv, env);
   const res = spawnSync(process.execPath, [CLI, ...args], {
@@ -64,7 +64,7 @@ function fileBackendEnv(home) {
     HOME: home,
     XDG_DATA_HOME: path.join(home, "data"),
     XDG_CONFIG_HOME: path.join(home, "cfg"),
-    [FIRECONNECT_KEY_STORAGE_ENV]: "file",
+    [KEY_STORAGE_ENV]: "file",
     KEYRING_FILE_MASTER_KEY: process.env.KEYRING_FILE_MASTER_KEY || "a".repeat(64),
   };
 }
@@ -79,18 +79,18 @@ describe("secret backend detection + file backend", () => {
       HOME: process.env.HOME,
       XDG_DATA_HOME: process.env.XDG_DATA_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      [FIRECONNECT_KEY_STORAGE_ENV]: process.env[FIRECONNECT_KEY_STORAGE_ENV],
-      FIRECONNECT_SECRET_STORE: process.env.FIRECONNECT_SECRET_STORE,
-      FIRECONNECT_TEST: process.env.FIRECONNECT_TEST,
+      [KEY_STORAGE_ENV]: process.env[KEY_STORAGE_ENV],
+      NEXUS_SECRET_STORE: process.env.NEXUS_SECRET_STORE,
+      NEXUS_TEST: process.env.NEXUS_TEST,
       KEYRING_FILE_MASTER_KEY: process.env.KEYRING_FILE_MASTER_KEY,
     };
     process.env.HOME = home;
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.KEYRING_FILE_MASTER_KEY = process.env.KEYRING_FILE_MASTER_KEY || "a".repeat(64);
-    delete process.env.FIRECONNECT_SECRET_STORE;
-    delete process.env.FIRECONNECT_TEST;
+    delete process.env.NEXUS_SECRET_STORE;
+    delete process.env.NEXUS_TEST;
     resetSecretStoreForTests();
   });
 
@@ -99,7 +99,7 @@ describe("secret backend detection + file backend", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     resetSecretStoreForTests();
     await rm(home, { recursive: true, force: true });
   });
@@ -117,8 +117,8 @@ describe("secret backend detection + file backend", () => {
       if (!isLinux) {
         return;
       }
-      const prevStorage = process.env[FIRECONNECT_KEY_STORAGE_ENV];
-      delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+      const prevStorage = process.env[KEY_STORAGE_ENV];
+      delete process.env[KEY_STORAGE_ENV];
       resetSecretStoreForTests();
       try {
         const backend = await detectSecretBackend(home);
@@ -126,11 +126,11 @@ describe("secret backend detection + file backend", () => {
         assert.match(backend.label, /Encrypted file/);
       } finally {
         if (prevStorage === undefined) {
-          delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+          delete process.env[KEY_STORAGE_ENV];
         } else {
-          process.env[FIRECONNECT_KEY_STORAGE_ENV] = prevStorage;
+          process.env[KEY_STORAGE_ENV] = prevStorage;
         }
-        process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+        process.env[KEY_STORAGE_ENV] = "file";
         resetSecretStoreForTests();
       }
     });
@@ -147,7 +147,7 @@ describe("secret backend detection + file backend", () => {
   });
 
   it("detectSecretBackend reports unavailable for the null backend", async () => {
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "null";
+    process.env[KEY_STORAGE_ENV] = "null";
     resetSecretStoreForTests();
     const backend = await detectSecretBackend(home);
     assert.equal(backend.backend, "unavailable");
@@ -155,7 +155,7 @@ describe("secret backend detection + file backend", () => {
   });
 
   it("detectSecretBackend ignores an unknown backend value (falls back to auto)", async () => {
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "bogus";
+    process.env[KEY_STORAGE_ENV] = "bogus";
     resetSecretStoreForTests();
     const backend = await detectSecretBackend(home);
     // On the CI host a native keychain may or may not be present; either keychain
@@ -165,7 +165,7 @@ describe("secret backend detection + file backend", () => {
   });
 
   it("persistApiKeyToKeychain refuses and leaves config unchanged when the backend is unavailable", async () => {
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "null";
+    process.env[KEY_STORAGE_ENV] = "null";
     resetSecretStoreForTests();
     // Seed an existing config so we can prove it is NOT overwritten on failure.
     await writeGlobalConfig(home, { apiKey: "{env:FIREWORKS_API_KEY}", harnesses: {} });
@@ -217,7 +217,7 @@ describe("secret backend detection + file backend", () => {
     await writeGlobalConfig(home, { apiKey: legacyKey });
 
     const summary = await keyStatusSummary(home);
-    assert.equal(summary.configRef, "(legacy literal — run `fireconnect login` to move it into secure storage)");
+    assert.equal(summary.configRef, "(legacy literal — run `nexus login` to move it into secure storage)");
     assert.doesNotMatch(summary.configRef, /upgrade/);
   });
 
@@ -288,7 +288,7 @@ describe("configure / on via CLI with file backend", () => {
 
   it("harness on refuses with a friendly error when the backend is unavailable", async () => {
     const env = fileBackendEnv(home);
-    env[FIRECONNECT_KEY_STORAGE_ENV] = "null";
+    env[KEY_STORAGE_ENV] = "null";
     const res = runCli(["claude", "on", "--api-key", KEY], env);
     assert.notEqual(res.code, 0);
     // Graceful failure (no stack-trace crash) when nothing can persist the key.
@@ -308,8 +308,8 @@ describe("shell hook interactive hint", () => {
     const block = shellHookBlock("/tmp/fc-shell-hook-test");
     assert.match(block, /export FIREWORKS_API_KEY="\$\(/);
     assert.match(block, /\[ -t 2 \]/);
-    assert.match(block, /fireconnect status/);
-    // The hint must NOT execute `fireconnect status` via command substitution:
+    assert.match(block, /nexus status/);
+    // The hint must NOT execute `nexus status` via command substitution:
     // the echo argument is single-quoted so backticks are literal.
     const echoLine = block.split("\n").find((l) => l.includes("echo"));
     assert.ok(echoLine, "echo hint line present");
@@ -320,17 +320,17 @@ describe("shell hook interactive hint", () => {
 
 describe("vscode-safestorage plaintextMode strict parse", () => {
   it("treats only the exact value '1' as enabled (not '0' or other strings)", () => {
-    const prev = process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
+    const prev = process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
     try {
       for (const v of ["0", "false", "yes", "true", ""]) {
-        process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = v;
+        process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = v;
         assert.equal(plaintextMode(), false, `value ${JSON.stringify(v)} must NOT enable plaintext`);
       }
-      process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = "1";
+      process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = "1";
       assert.equal(plaintextMode(), true);
     } finally {
-      if (prev === undefined) delete process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT;
-      else process.env.FIRECONNECT_VSCODE_SECRET_PLAINTEXT = prev;
+      if (prev === undefined) delete process.env.NEXUS_VSCODE_SECRET_PLAINTEXT;
+      else process.env.NEXUS_VSCODE_SECRET_PLAINTEXT = prev;
     }
   });
 });
@@ -345,26 +345,26 @@ describe("key export self-check", () => {
       HOME: process.env.HOME,
       XDG_DATA_HOME: process.env.XDG_DATA_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      [FIRECONNECT_KEY_STORAGE_ENV]: process.env[FIRECONNECT_KEY_STORAGE_ENV],
-      FIRECONNECT_SECRET_STORE: process.env.FIRECONNECT_SECRET_STORE,
-      FIRECONNECT_TEST: process.env.FIRECONNECT_TEST,
+      [KEY_STORAGE_ENV]: process.env[KEY_STORAGE_ENV],
+      NEXUS_SECRET_STORE: process.env.NEXUS_SECRET_STORE,
+      NEXUS_TEST: process.env.NEXUS_TEST,
       KEYRING_FILE_MASTER_KEY: process.env.KEYRING_FILE_MASTER_KEY,
     };
     process.env.HOME = home;
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.KEYRING_FILE_MASTER_KEY = process.env.KEYRING_FILE_MASTER_KEY || "a".repeat(64);
-    delete process.env.FIRECONNECT_SECRET_STORE;
-    delete process.env.FIRECONNECT_TEST;
+    delete process.env.NEXUS_SECRET_STORE;
+    delete process.env.NEXUS_TEST;
     resetSecretStoreForTests();
 
-    // Install a real launcher at ~/.local/bin/fireconnect so the self-check
+    // Install a real launcher at ~/.local/bin/nexus so the self-check
     // resolves the CLI the way it does in production (not via process.argv[1],
     // which is the test file in this process).
     const binDir = path.join(home, ".local/bin");
     await mkdir(binDir, { recursive: true });
-    const launcher = path.join(binDir, "fireconnect");
+    const launcher = path.join(binDir, "nexus");
     await writeFile(
       launcher,
       `#!/usr/bin/env bash\nexec "${process.execPath}" "${CLI}" "$@"\n`,
@@ -377,7 +377,7 @@ describe("key export self-check", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     resetSecretStoreForTests();
     await rm(home, { recursive: true, force: true });
   });
@@ -409,18 +409,18 @@ describe("exportFireworksApiKey --stored-only", () => {
       FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY,
       XDG_DATA_HOME: process.env.XDG_DATA_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
-      [FIRECONNECT_KEY_STORAGE_ENV]: process.env[FIRECONNECT_KEY_STORAGE_ENV],
-      FIRECONNECT_SECRET_STORE: process.env.FIRECONNECT_SECRET_STORE,
-      FIRECONNECT_TEST: process.env.FIRECONNECT_TEST,
+      [KEY_STORAGE_ENV]: process.env[KEY_STORAGE_ENV],
+      NEXUS_SECRET_STORE: process.env.NEXUS_SECRET_STORE,
+      NEXUS_TEST: process.env.NEXUS_TEST,
       KEYRING_FILE_MASTER_KEY: process.env.KEYRING_FILE_MASTER_KEY,
     };
     process.env.HOME = home;
     process.env.XDG_DATA_HOME = path.join(home, "data");
     process.env.XDG_CONFIG_HOME = path.join(home, "cfg");
-    process.env[FIRECONNECT_KEY_STORAGE_ENV] = "file";
+    process.env[KEY_STORAGE_ENV] = "file";
     process.env.KEYRING_FILE_MASTER_KEY = process.env.KEYRING_FILE_MASTER_KEY || "a".repeat(64);
-    delete process.env.FIRECONNECT_SECRET_STORE;
-    delete process.env.FIRECONNECT_TEST;
+    delete process.env.NEXUS_SECRET_STORE;
+    delete process.env.NEXUS_TEST;
     resetSecretStoreForTests();
   });
 
@@ -429,7 +429,7 @@ describe("exportFireworksApiKey --stored-only", () => {
       if (v === undefined) delete process.env[k];
       else process.env[k] = v;
     }
-    delete process.env[FIRECONNECT_KEY_STORAGE_ENV];
+    delete process.env[KEY_STORAGE_ENV];
     resetSecretStoreForTests();
     await rm(home, { recursive: true, force: true });
   });

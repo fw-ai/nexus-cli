@@ -77,7 +77,7 @@ export const AZURE_PROVIDER_LABEL = "Fireworks on Microsoft Foundry";
 
 /**
  * Azure endpoint precedence, shared by every harness's `on --azure`: an explicit
- * `--base-url` wins, then the endpoint from `fireconnect configure`, then the
+ * `--base-url` wins, then the endpoint from `nexus configure`, then the
  * endpoint already stored from a previous `on --azure`.
  * @param {{ baseUrl?: string, baseUrlFromFlag?: boolean }} ctx
  * @param {{ baseUrl?: string }} configured
@@ -101,7 +101,7 @@ export const MISSING_AZURE_API_KEY_MESSAGE =
   `No Azure API key found. Export ${AZURE_API_KEY_ENV} or pass --api-key with your Foundry key.`;
 
 export const FIREWORKS_KEY_AS_AZURE_MESSAGE =
-  "The Azure API key cannot be a Fireworks key (fw_... or fpk_...). "
+  "The Azure API key cannot be a Fireworks key (fw_...). "
   + "Use the endpoint key from Microsoft Foundry.";
 
 /**
@@ -195,7 +195,7 @@ export function normalizeAzureBaseUrl(endpoint) {
  * Resolution order:
  *   1. explicit `--api-key` (stored literally)
  *   2. existing stored key on a previous `on` (reused as-is)
- *   3. the key configured via `fireconnect configure` (stored literally)
+ *   3. the key configured via `nexus configure` (stored literally)
  *   4. `AZURE_API_KEY` environment variable (stored as the {env:...} reference)
  *
  * @param {{

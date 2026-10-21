@@ -17,7 +17,7 @@ import {
   runtimeDepsInstalled,
 } from "../../lib/system/ensure-cli-deps.mjs";
 import {
-  FIRECONNECT_KEY_STORAGE_ENV,
+  KEY_STORAGE_ENV,
   resetSecretStoreForTests,
 } from "../../lib/keys/secret-store.mjs";
 
@@ -42,10 +42,10 @@ function fileBackendEnv(home) {
     HOME: home,
     XDG_DATA_HOME: path.join(home, "data"),
     XDG_CONFIG_HOME: path.join(home, "cfg"),
-    [FIRECONNECT_KEY_STORAGE_ENV]: "file",
+    [KEY_STORAGE_ENV]: "file",
     KEYRING_FILE_MASTER_KEY: "a".repeat(64),
   };
-  delete env.FIRECONNECT_SECRET_STORE;
+  delete env.NEXUS_SECRET_STORE;
   delete env.FIREWORKS_API_KEY;
   return env;
 }
@@ -108,7 +108,7 @@ describe("dep-less checkout configure", () => {
     const res = spawnSync(
       process.execPath,
       [
-        path.join(setupDir, "bin/fireconnect.mjs"),
+        path.join(setupDir, "bin/nexus.mjs"),
         "--home", home,
         "claude", "on",
         "--api-key", "fw_fallback_test_key",
@@ -134,11 +134,11 @@ describe("dep-less checkout configure", () => {
 
     const res = spawnSync(
       process.execPath,
-      [path.join(setupDir, "bin/fireconnect.mjs"), "help"],
+      [path.join(setupDir, "bin/nexus.mjs"), "help"],
       { env, encoding: "utf8", timeout: 30000 },
     );
     assert.equal(res.status, 1, `${res.stderr}\n${res.stdout}`);
-    assert.match(res.stderr, /fireconnect upgrade/i);
+    assert.match(res.stderr, /nexus update/i);
     assert.match(res.stderr, new RegExp(cliDependenciesMissingMessage().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
@@ -146,7 +146,7 @@ describe("dep-less checkout configure", () => {
     assert.equal(ensureCliDependencies(setupDir), true);
     // Keep package.json so the startup dependency guard does not auto-repair
     // the package. Removing the ESM entry point makes the runtime import fail,
-    // which exercises FireConnect's built-in encrypted-file fallback on every
+    // which exercises Nexus's built-in encrypted-file fallback on every
     // OS, including macOS where a successfully reinstalled package would use
     // the native Keychain instead.
     await rm(
@@ -160,7 +160,7 @@ describe("dep-less checkout configure", () => {
     const res = spawnSync(
       process.execPath,
       [
-        path.join(setupDir, "bin/fireconnect.mjs"),
+        path.join(setupDir, "bin/nexus.mjs"),
         "--home", home,
         "claude", "on",
         "--api-key", "fw_builtin_only_key",

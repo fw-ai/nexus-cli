@@ -36,7 +36,7 @@ function readStateSecret(vscodePath, secretId) {
 // Plaintext secret mode: the stored secret equals the raw key (no OS crypto),
 // and encryption is always "available" so `on` works headless.
 const azureEnv = (extra = {}) => ({
-  FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1",
+  NEXUS_VSCODE_SECRET_PLAINTEXT: "1",
   FIREWORKS_API_KEY: "",
   AZURE_API_KEY: "",
   ...extra,

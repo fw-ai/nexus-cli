@@ -18,13 +18,13 @@ import {
 } from "../lib/fireworks/serverless-catalog-cache.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const CLI = path.join(__dirname, "../bin/fireconnect.mjs");
+const CLI = path.join(__dirname, "../bin/nexus.mjs");
 
-process.env.FIRECONNECT_SECRET_STORE ??= "memory";
-process.env.FIRECONNECT_TEST ??= "1";
-process.env.FIRECONNECT_TEST_CLAUDE_KEYCHAIN ??= "";
+process.env.NEXUS_SECRET_STORE ??= "memory";
+process.env.NEXUS_TEST ??= "1";
+process.env.NEXUS_TEST_CLAUDE_KEYCHAIN ??= "";
 // Keep test catalog caches out of the developer's home.
-process.env.FIRECONNECT_CACHE_DIR ??= mkdtempSync(path.join(os.tmpdir(), "fc-cache-"));
+process.env.NEXUS_CACHE_DIR ??= mkdtempSync(path.join(os.tmpdir(), "fc-cache-"));
 
 /**
  * Persist a catalog snapshot for CLI children using this home.
@@ -74,11 +74,11 @@ delete process.env.CLAUDE_CONFIG_DIR;
 
 // Attribution header value for the version under test. Read from package.json so
 // a release bump can't strand these assertions on a stale literal.
-export const FIRECONNECT_REFERER = `fireconnect/v${
+export const FIRECONNECT_REFERER = `nexus/v${
   JSON.parse(readFileSync(path.join(__dirname, "../package.json"), "utf8")).version
 }`;
 
-export const FPK_KEY = "fpk_test_firepass_key_000000000000";
+export const FPK_KEY = "fpk_test_retired_key_000000000000";
 export const FW_CLAUDE_KEY = "fw_test_claude_key_00000000000000";
 export const FW_OPENCODE_KEY = "fw_test_opencode_key_00000000000";
 export const FW_CODEX_KEY = "fw_test_codex_key_00000000000000";
@@ -86,9 +86,9 @@ export const SK_ANT_KEY = "sk-ant-test-non-fireworks-token";
 
 export const NO_ENV_KEY = { FIREWORKS_API_KEY: "" };
 export const TEST_SECRET_STORE_ENV = {
-  FIRECONNECT_SECRET_STORE: "memory",
-  FIRECONNECT_TEST: "1",
-  FIRECONNECT_TEST_CLAUDE_KEYCHAIN: "",
+  NEXUS_SECRET_STORE: "memory",
+  NEXUS_TEST: "1",
+  NEXUS_TEST_CLAUDE_KEYCHAIN: "",
 };
 
 export async function withoutEnvFireworksKey(fn) {
@@ -109,9 +109,6 @@ export const GLM_LATEST = "glm-latest";
 export const GLM_FAST_LATEST = "glm-fast-latest";
 export const GLM_5P2_FAST = "glm-5p2-fast";
 export const KIMI_FAST_LATEST = "kimi-fast-latest";
-export const FIREPASS_ROUTER = "accounts/fireworks/routers/kimi-fast-latest";
-// Default model for Fire Pass keys.
-export const FIREPASS_DEFAULT_ROUTER = FIREPASS_ROUTER;
 
 /**
  * Flat `/v1/serverless/models` row: one (model, serverless_mode) pair. A
@@ -212,7 +209,7 @@ export function expectedOpencodeLatestRouterEntry(label, context = 1_048_575, ou
 export function claudePaths(home) {
   return {
     settingsPath: path.join(home, USER_SETTINGS_RELATIVE_PATH),
-    dataDir: path.join(home, ".fireconnect/claude"),
+    dataDir: path.join(home, ".nexus/claude"),
   };
 }
 
@@ -231,7 +228,7 @@ const CLAUDE_SLOT_PIN_ENV_KEYS = [
   "CLAUDE_CODE_SUBAGENT_MODEL",
 ];
 
-/** FireConnect default: Anthropic tier slots stay native (no env pin). */
+/** Nexus default: Anthropic tier slots stay native (no env pin). */
 export function assertClaudeNativeTierSlots(settings, message = "") {
   const prefix = message ? `${message}: ` : "";
   for (const key of CLAUDE_SLOT_PIN_ENV_KEYS) {
@@ -241,12 +238,15 @@ export function assertClaudeNativeTierSlots(settings, message = "") {
 }
 
 /** Registerable serverless models appear in Claude Code's settings.modelPicker. */
-export function assertClaudeRegisterablePicker(settings, { includes = [] } = {}) {
+export function assertClaudeRegisterablePicker(settings, { includes = [], excludes = [] } = {}) {
   assert.equal(settings.modelPicker?.fireconnectManaged, true);
   assert.equal(settings.modelPicker?.replaceBuiltInOptions, false);
   const models = settings.modelPicker?.options?.map((row) => row.model) ?? [];
   for (const id of includes) {
     assert.ok(models.includes(id), `picker missing ${id}: ${models.join(", ")}`);
+  }
+  for (const id of excludes) {
+    assert.ok(!models.includes(id), `picker should not include ${id}: ${models.join(", ")}`);
   }
   return models;
 }
@@ -273,17 +273,17 @@ export async function withLinuxSshEnv(fn) {
   }
   const prev = {
     SSH_CONNECTION: process.env.SSH_CONNECTION,
-    FIRECONNECT_KEY_STORAGE: process.env.FIRECONNECT_KEY_STORAGE,
+    NEXUS_KEY_STORAGE: process.env.NEXUS_KEY_STORAGE,
   };
   process.env.SSH_CONNECTION = "203.0.113.1 12345 198.51.100.2 22";
-  delete process.env.FIRECONNECT_KEY_STORAGE;
+  delete process.env.NEXUS_KEY_STORAGE;
   try {
     return await fn(true);
   } finally {
     if (prev.SSH_CONNECTION === undefined) delete process.env.SSH_CONNECTION;
     else process.env.SSH_CONNECTION = prev.SSH_CONNECTION;
-    if (prev.FIRECONNECT_KEY_STORAGE === undefined) delete process.env.FIRECONNECT_KEY_STORAGE;
-    else process.env.FIRECONNECT_KEY_STORAGE = prev.FIRECONNECT_KEY_STORAGE;
+    if (prev.NEXUS_KEY_STORAGE === undefined) delete process.env.NEXUS_KEY_STORAGE;
+    else process.env.NEXUS_KEY_STORAGE = prev.NEXUS_KEY_STORAGE;
   }
 }
 
@@ -320,6 +320,16 @@ export function codexOnOffArgs(args) {
     : args;
 }
 
+/**
+ * HOME for a spawned CLI child. A child that inherits the developer's HOME
+ * runs the rename migration and launcher rewrite against their real install,
+ * so a call that names no HOME gets a throwaway one instead.
+ * @param {Record<string, string | undefined>} env
+ */
+export function isolatedChildHome(env = {}) {
+  return env.HOME ?? mkdtempSync(path.join(os.tmpdir(), "fc-run-home-"));
+}
+
 export function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) {
@@ -330,8 +340,9 @@ export function runFireconnect(args, env = {}) {
         ...process.env,
         ...TEST_SECRET_STORE_ENV,
         ...env,
-        FIRECONNECT_SECRET_STORE: "memory",
-        FIRECONNECT_TEST: "1",
+        HOME: isolatedChildHome(env),
+        NEXUS_SECRET_STORE: "memory",
+        NEXUS_TEST: "1",
         FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -380,8 +391,8 @@ export async function runCli(args, { home, env = {} } = {}) {
         ...TEST_SECRET_STORE_ENV,
         ...env,
         HOME: home,
-        FIRECONNECT_SECRET_STORE: "memory",
-        FIRECONNECT_TEST: "1",
+        NEXUS_SECRET_STORE: "memory",
+        NEXUS_TEST: "1",
         FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
       },
       stdio: ["ignore", "pipe", "pipe"],

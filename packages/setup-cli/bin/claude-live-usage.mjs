@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import "../lib/system/legacy-env.mjs";
 import process from "node:process";
 
 import { runLiveUsagePane } from "../lib/harnesses/claude/live-usage-pane.mjs";

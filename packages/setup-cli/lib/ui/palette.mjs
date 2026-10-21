@@ -32,7 +32,7 @@ export const ANSI = Object.freeze({
 
 /**
  * Live cost-meter palette (same codes as claude-transparent / PR #230).
- * Kept here so `fireconnect claude usage` and the meter share one source.
+ * Kept here so `nexus claude usage` and the meter share one source.
  */
 export const METER = Object.freeze({
   accent: "\u001b[38;2;103;32;255m",

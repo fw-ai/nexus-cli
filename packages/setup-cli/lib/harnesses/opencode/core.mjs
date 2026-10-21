@@ -13,11 +13,12 @@ import {
   normalizeAzureBaseUrl,
 } from "../../fireworks/azure-core.mjs";
 import {
-  DEFAULT_FIREPASS_MAIN_MODEL,
   defaultMainModel,
+  dropRetiredModelId,
   fireworksModelSlug,
   fullFireworksResourceId,
   isAutoModelId,
+  isAutoInstantModelId,
   isFirerouterModelPattern,
   normalizeModelId,
   shortFireworksModelRef,
@@ -37,9 +38,8 @@ import {
 } from "../../fireworks/models-dev-registry.mjs";
 import { lookupCachedContextLength } from "../../fireworks/serverless-catalog-cache.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
-import { omitHeaders } from "../../firerouter/core.mjs";
+import { NEXUS_PROVIDERS_HEADER, RETIRED_ROUTING_PREFERENCE_HEADER, omitHeaders } from "../../firerouter/core.mjs";
 import {
-  detectApiKeyType,
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
@@ -47,6 +47,7 @@ import { isHarnessEnabled } from "../../config/global-config.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import { mergeFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
 import { dropOpencodeProvider, mirrorOpencodeV2Providers } from "./providers-v2.mjs";
+import { DATA_DIRNAME, LEGACY_DATA_DIRNAME } from "../../system/data-dir.mjs";
 
 /**
  * Restore a raw config snapshot from a backup (or delete the config when the
@@ -79,7 +80,7 @@ export async function restoreOpencodeSnapshot({ configPath, backupPath, backup }
 }
 
 export const OPENCODE_CONFIG_RELATIVE_PATH = ".config/opencode/opencode.json";
-export const OPENCODE_DATA_RELATIVE_DIR = ".fireconnect/opencode";
+export const OPENCODE_DATA_RELATIVE_DIR = ".nexus/opencode";
 export const OPENCODE_API_KEY_ENV_REF = "{env:FIREWORKS_API_KEY}";
 export const OPENCODE_FIREWORKS_PROVIDER_ID = "fireworks-ai";
 export const OPENCODE_AZURE_PROVIDER_ID = "fireworks-azure";
@@ -102,7 +103,7 @@ function isEmptyObject(value) {
   return typeof value === "object" && value !== null && Object.keys(value).length === 0;
 }
 
-/** Drop the provider id FireConnect used before `fireworks-ai`; it never had a v2 mirror. */
+/** Drop the provider id Nexus used before `fireworks-ai`; it never had a v2 mirror. */
 function withoutRetiredFireworksProvider(config) {
   if (!config.provider?.fireworks) {
     return config;
@@ -112,7 +113,7 @@ function withoutRetiredFireworksProvider(config) {
 }
 
 /**
- * Whether FireConnect should write a provider.models entry for this model.
+ * Whether Nexus should write a provider.models entry for this model.
  * Anything models.dev already lists is in OpenCode's picker under its full id,
  * so an override would only add a duplicate row. Otherwise FireRouter,
  * `auto` / `auto-*`, `-latest` router aliases, and catalog models need
@@ -284,14 +285,12 @@ export function opencodeAuthKeyMode(storedRef) {
  * Latest router aliases are absent from models.dev, so limit.context/output
  * must be set explicitly or OpenCode falls back to ~128k.
  * @param {string} modelId
- * @param {{ firepass?: boolean }} [opts]
  * @returns {{ name: string, limit: { context: number, output: number }, modalities?: { input: string[] } }}
  */
-export function buildOpencodeModelEntry(modelId, { firepass = false } = {}) {
+export function buildOpencodeModelEntry(modelId) {
   const normalized = normalizeModelId(modelId);
   const { limits, input } = resolveFireworksCatalog(normalized);
-  // Fire Pass is a subscription — no per-model metered cost.
-  const pricing = firepass ? null : lookupFireworksPricing(normalized);
+  const pricing = lookupFireworksPricing(normalized);
   return {
     name: resolveManagedDisplayName(normalized),
     limit: {
@@ -351,7 +350,7 @@ export function opencodeProviderModelKey(modelId) {
 }
 
 function homeFromDataDir(dataDir) {
-  if (path.basename(dataDir) !== "opencode" || path.basename(path.dirname(dataDir)) !== ".fireconnect") {
+  if (path.basename(dataDir) !== "opencode" || ![DATA_DIRNAME, LEGACY_DATA_DIRNAME].includes(path.basename(path.dirname(dataDir)))) {
     return "";
   }
   return path.dirname(path.dirname(dataDir));
@@ -364,7 +363,6 @@ export async function enableOpencodeFireworks({
   apiKeyFromFlag = false,
   effectiveApiKey = "",
   modelId,
-  keyType = "fireworks",
   byokHeaders = {},
   telemetryHeaders = {},
   catalogModelIds = [],
@@ -393,8 +391,6 @@ export async function enableOpencodeFireworks({
   if (!resolvedEffective?.trim()) {
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
-  const resolvedKeyType = keyType === "fireworks" ? detectApiKeyType(resolvedEffective) : keyType;
-
   const prefix = `${OPENCODE_FIREWORKS_PROVIDER_ID}/`;
   const modelRef = typeof config.model === "string" ? config.model : "";
   // Model precedence: explicit request > model already configured by a previous
@@ -405,14 +401,9 @@ export async function enableOpencodeFireworks({
       ? modelRef.slice("fireworks/".length)
       : "";
 
-  // Fire Pass defaults to the GLM Latest router; when no explicit model is
-  // requested, use that so the user gets a working config out of the box.
-  let effectiveModelId = modelId;
-  if (resolvedKeyType === "firepass" && !modelId) {
-    effectiveModelId = DEFAULT_FIREPASS_MAIN_MODEL;
-  }
-
-  const resolvedModel = normalizeModelId(effectiveModelId || currentModelId || defaultMainModel());
+  // A plain re-`on` drops a carried-over FireRouter selection to `auto`;
+  // (a FireRouter `--model` is rejected at admission, so `modelId` is never one from the CLI).
+  const resolvedModel = normalizeModelId(modelId || dropRetiredModelId(currentModelId) || defaultMainModel());
   const storedModel = shortFireworksModelRef(resolvedModel);
 
   const backupPath = opencodeBackupPath(dataDir, configPath);
@@ -441,11 +432,14 @@ export async function enableOpencodeFireworks({
   // too, to clean up configs written before OpenAI BYOK was removed.
   // x-fireworks-api-key is dropped because the Fireworks key belongs in
   // options.apiKey, never in a header; stripping it here clears stale keys left
-  // in headers by older releases.
+  // in headers by older releases, and the retired routing-preference header
+  // goes the same way.
   const byokHeaderNames = [
     "x-anthropic-api-key",
     "x-openai-api-key",
     "x-fireworks-api-key",
+    NEXUS_PROVIDERS_HEADER,
+    RETIRED_ROUTING_PREFERENCE_HEADER,
   ];
   const priorHeaders = Object.fromEntries(
     Object.entries(existing.options?.headers ?? {}).filter(
@@ -468,7 +462,6 @@ export async function enableOpencodeFireworks({
   const catalog = catalogModelIds.filter(
     (id) => typeof id === "string" && (id.startsWith("accounts/") || isAutoModelId(id)),
   );
-  const firepass = resolvedKeyType === "firepass";
   const buildModels = (ids) => {
     /** @type {Record<string, { name: string, modalities?: { input: string[] } }>} */
     const out = {};
@@ -479,7 +472,7 @@ export async function enableOpencodeFireworks({
       const normalized = normalizeModelId(id);
       const stored = opencodeProviderModelKey(normalized);
       if (stored) {
-        out[stored] = buildOpencodeModelEntry(normalized, { firepass });
+        out[stored] = buildOpencodeModelEntry(normalized);
       }
     }
     return out;
@@ -498,7 +491,7 @@ export async function enableOpencodeFireworks({
     const plan = planCatalogRefresh({
       currentIds: Object.keys(models).map(keyOf),
       freshIds: catalog.map(fullFireworksResourceId),
-      keepUnserved: (id) => isFirerouterModelPattern(id) || isAutoModelId(id),
+      keepUnserved: (id) => isAutoModelId(id) && !isAutoInstantModelId(id),
     });
     const keepSet = new Set(plan.kept);
     models = Object.fromEntries(
@@ -522,7 +515,6 @@ export async function enableOpencodeFireworks({
     model: next.model,
     modelsAdded: Object.keys(next.provider?.[OPENCODE_FIREWORKS_PROVIDER_ID]?.models ?? {}),
     apiKeyMode: "literal",
-    keyType: resolvedKeyType,
   };
 }
 
@@ -700,7 +692,7 @@ export async function refreshOpencodeGatewayKey({ configPath, fireworksKey }) {
 
 /**
  * Drop saved provider keys from the gateway `fireworks-ai` provider's
- * `options.headers`, after `fireconnect configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * `options.headers`, after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
  * @param {{ configPath: string, headerNames: string[] }} opts
  * @returns {Promise<boolean>} whether opencode.json changed
  */

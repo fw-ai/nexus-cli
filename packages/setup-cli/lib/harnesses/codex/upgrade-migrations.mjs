@@ -14,9 +14,9 @@ import { parseToml } from "./toml.mjs";
 import { stripStaleCodexWebSearchDisabledRaw } from "./toml-patch.mjs";
 
 /**
- * Re-stamp the current constant catalog fields (notably
- * `supports_search_tool: false`, which lets MCP tools reach the model) onto
- * the FireConnect-managed Codex catalog of an enabled Fireworks-routed config.
+ * Re-stamp the current constant catalog fields, `supports_search_tool`
+ * included, onto the Nexus-managed Codex catalog of an enabled
+ * Fireworks-routed config.
  * @param {string} home
  * @returns {Promise<boolean>} true when the catalog was updated
  */

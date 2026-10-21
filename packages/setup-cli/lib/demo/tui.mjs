@@ -1,5 +1,5 @@
 /**
- * Raw-ANSI split-pane TUI for `fireconnect demo` (§4 of the brief).
+ * Raw-ANSI split-pane TUI for `nexus demo` (§4 of the brief).
  *
  * Zero dependencies: hand-rolled cursor positioning + per-row clear, drawing two
  * equal columns with a vertical divider. Each column has a static header, a

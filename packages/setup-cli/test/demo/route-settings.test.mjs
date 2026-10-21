@@ -27,7 +27,7 @@ async function seedFireconnectedClaude(home) {
 
 test("demoCliModel: Anthropic slots resolve to concrete canonical ids (real Anthropic)", () => {
   // A concrete id bypasses ANTHROPIC_DEFAULT_*_MODEL alias expansion, so the
-  // incumbent runs real Anthropic instead of the user's fireconnect slot pin.
+  // incumbent runs real Anthropic instead of the user's nexus slot pin.
   // claudeCodeModelId appends [1m] for 1M-context models; Haiku 4.5 is 200K,
   // so it must NOT receive the [1m] suffix.
   assert.equal(demoCliModel("opus"), "claude-opus-5[1m]");

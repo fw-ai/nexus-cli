@@ -3,7 +3,7 @@
  *
  * Nothing here renders anything. COST IS NOT COMPUTED HERE either — every call
  * is priced by `computeClaudeUsageCost`, the same helper behind one-shot
- * `fireconnect claude usage`, so the live figures and the snapshot cannot
+ * `nexus claude usage`, so the live figures and the snapshot cannot
  * disagree.
  */
 

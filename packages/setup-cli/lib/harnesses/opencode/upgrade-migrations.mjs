@@ -1,5 +1,5 @@
 import { isHarnessEnabled } from "../../config/global-config.mjs";
-import { fullFireworksResourceId } from "../../fireworks/model-id.mjs";
+import { dropRetiredModelId, fullFireworksResourceId, isRetiredModelId } from "../../fireworks/model-id.mjs";
 import { refreshModelsDevFireworksRegistry } from "../../fireworks/models-dev-registry.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import {
@@ -14,7 +14,7 @@ import {
 import { mirrorOpencodeV2Providers } from "./providers-v2.mjs";
 
 /**
- * The default opencode.json of an enabled harness, when FireConnect routes it
+ * The default opencode.json of an enabled harness, when Nexus routes it
  * through one of the given statuses.
  * @param {string} home
  * @param {ReadonlyArray<string>} statuses
@@ -35,7 +35,7 @@ async function readRoutedOpencodeConfig(home, statuses) {
 /**
  * Releases through 0.9.9 wrote only `provider`, which OpenCode v2 discards
  * when the same file has a native `providers[id]`. Mirror the managed entries
- * into an existing `providers` map of a FireConnect-routed config.
+ * into an existing `providers` map of a Nexus-routed config.
  * @param {string} home
  * @returns {Promise<boolean>} true when opencode.json was updated
  */
@@ -49,6 +49,66 @@ export async function migrateOpencodeV2ProvidersOnUpgrade(home) {
     return false;
   }
   await writeOpencodeConfig(routed.configPath, routed.config);
+  return true;
+}
+
+/**
+ * Move a Nexus-routed OpenCode install off FireRouter on upgrade: a
+ * `model` selection naming a FireRouter route becomes the `auto` mix.
+ * Provider model rows are left for the next `on`'s catalog refresh.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when opencode.json was updated
+ */
+export async function migrateOpencodeFirerouterOnUpgrade(home) {
+  const routed = await readRoutedOpencodeConfig(home, ["fireworks"]);
+  if (!routed) {
+    return false;
+  }
+  const { config, configPath } = routed;
+  const prefix = `${OPENCODE_FIREWORKS_PROVIDER_ID}/`;
+  // Re-`on` also recognizes the older `fireworks/` prefix, so a stored
+  // selection may carry either spelling; both rewrite to the canonical one.
+  const ref = typeof config.model === "string" && config.model.startsWith(prefix)
+    ? config.model.slice(prefix.length)
+    : typeof config.model === "string" && config.model.startsWith("fireworks/")
+      ? config.model.slice("fireworks/".length)
+      : "";
+  const migrated = dropRetiredModelId(ref);
+  const provider = config.provider?.[OPENCODE_FIREWORKS_PROVIDER_ID];
+  const models = provider?.models && typeof provider.models === "object" && !Array.isArray(provider.models)
+    ? provider.models
+    : {};
+  const keptModels = Object.fromEntries(
+    Object.entries(models).filter(([id]) => !isRetiredModelId(id)),
+  );
+  const headers = provider?.options?.headers && typeof provider.options.headers === "object"
+    ? provider.options.headers
+    : {};
+  const keptHeaders = Object.fromEntries(
+    Object.entries(headers).filter(([name]) => !["x-anthropic-api-key", "x-openai-api-key"].includes(name.toLowerCase())),
+  );
+  const modelChanged = Boolean(ref) && migrated !== ref;
+  const rowsChanged = Object.keys(keptModels).length !== Object.keys(models).length;
+  const headersChanged = Object.keys(keptHeaders).length !== Object.keys(headers).length;
+  if (!modelChanged && !rowsChanged && !headersChanged) {
+    return false;
+  }
+  // BYOK headers only ever served the FireRouter route being dropped.
+  await writeOpencodeConfig(configPath, {
+    ...config,
+    ...(modelChanged ? { model: `${prefix}${migrated}` } : {}),
+    provider: {
+      ...config.provider,
+      [OPENCODE_FIREWORKS_PROVIDER_ID]: {
+        ...provider,
+        models: keptModels,
+        options: {
+          ...(provider?.options ?? {}),
+          ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : { headers: undefined }),
+        },
+      },
+    },
+  });
   return true;
 }
 
@@ -77,9 +137,13 @@ export async function migrateOpencodePickerDuplicatesOnUpgrade(home) {
   }
   const { config, configPath } = routed;
   const prefix = `${OPENCODE_FIREWORKS_PROVIDER_ID}/`;
+  // Re-`on` also recognizes the older `fireworks/` prefix, so a stored
+  // selection may carry either spelling; both rewrite to the canonical one.
   const ref = typeof config.model === "string" && config.model.startsWith(prefix)
     ? config.model.slice(prefix.length)
-    : "";
+    : typeof config.model === "string" && config.model.startsWith("fireworks/")
+      ? config.model.slice("fireworks/".length)
+      : "";
   const model = Object.hasOwn(current, ref) && !Object.hasOwn(models, ref)
     ? `${prefix}${fullFireworksResourceId(ref)}`
     : config.model;

@@ -63,7 +63,7 @@ describe("release notes", () => {
     assert.ok(release);
 
     const formatted = formatReleaseNotes(release);
-    assert.match(formatted, /What's new in FireConnect v0\.9\.8/);
+    assert.match(formatted, /What's new in Nexus v0\.9\.8/);
     assert.match(formatted, /`fireconnect claude-desktop on`/);
     assert.match(formatted, /`fireconnect claude-desktop mcp sync`/);
     assert.match(formatted, /--subagent deepseek-flash-latest/);
@@ -81,7 +81,7 @@ describe("release notes", () => {
     assert.ok(release);
 
     const formatted = formatReleaseNotes(release);
-    assert.match(formatted, /What's new in FireConnect v0\.9\.9/);
+    assert.match(formatted, /What's new in Nexus v0\.9\.9/);
     assert.match(formatted, /Codex starts on FireRouter/);
     assert.match(formatted, /MCP servers and ChatGPT app connectors work in Codex/);
     assert.match(formatted, /Rotate your Fireworks key without breaking a harness/);
@@ -93,6 +93,25 @@ describe("release notes", () => {
     assert.match(formatted, /OpenCode's `\/models` no longer lists routers like `glm-latest` twice/);
     assert.doesNotMatch(formatted, /\u2014/);
     assert.doesNotMatch(formatted, /\b(supports_search_tool|requires_openai_auth|launchd|shim|plist|standalone|lsof|Bugbot|Lean)\b/i);
+  });
+
+  it("formats the v0.10.0 user-facing summary", async () => {
+    const releases = await readReleaseNotes();
+    const release = releases.find((candidate) => candidate.version === "0.10.0");
+    assert.ok(release);
+
+    const formatted = formatReleaseNotes(release);
+    assert.match(formatted, /What's new in Nexus v0\.10\.0/);
+    assert.match(formatted, /FireConnect is now Nexus/);
+    assert.match(formatted, /Environment variables are now `NEXUS_\*` \(`FIRECONNECT_\*` still works\)/);
+    assert.match(formatted, /FireRouter is retired/);
+    assert.match(formatted, /FireRouter routes are no longer supported\. Use `--model auto` instead/);
+    assert.match(formatted, /`nexus auto --providers fireworks`/);
+    assert.match(formatted, /`nexus auto --reset` restores the default/);
+    assert.match(formatted, /Claude Desktop works on Linux/);
+    // Keep the notes simple: no placeholder harness commands.
+    assert.doesNotMatch(formatted, /<harness>/);
+    assert.doesNotMatch(formatted, /\u2014/);
   });
 
   it("selects releases newer than the installed version", () => {
@@ -117,7 +136,7 @@ describe("release notes", () => {
       toVersion: "0.9.0",
       output: capture.output,
     }), true);
-    assert.match(capture.text(), /What's new in FireConnect v0\.9\.0/);
+    assert.match(capture.text(), /What's new in Nexus v0\.9\.0/);
 
     const statePath = path.join(home, RELEASE_NOTES_STATE_RELATIVE_PATH);
     const state = JSON.parse(await readFile(statePath, "utf8"));
@@ -131,7 +150,7 @@ describe("release notes", () => {
       output: capture.output,
     }), false);
     assert.equal(
-      capture.text().match(/What's new in FireConnect/g)?.length,
+      capture.text().match(/What's new in Nexus/g)?.length,
       1,
     );
   });
@@ -140,7 +159,7 @@ describe("release notes", () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-release-notes-help-"));
     const result = await runCli(["help"], { home });
     assert.equal(result.code, 0, result.stderr);
-    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /What's new in FireConnect/);
+    assert.doesNotMatch(`${result.stdout}\n${result.stderr}`, /What's new in Nexus/);
   });
 
   it("reads future notes from the checkout updated by upgrade", async () => {

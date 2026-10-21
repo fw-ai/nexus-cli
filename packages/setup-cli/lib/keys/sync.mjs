@@ -19,6 +19,7 @@ import {
 } from "../harnesses/pi/core.mjs";
 import {
   chatLanguageModelsPath,
+  isVscodeRunning,
   refreshVscodeGatewayKey,
   removeVscodeSavedProviderKeys,
 } from "../harnesses/vscode/core.mjs";
@@ -79,31 +80,31 @@ export async function syncBakedKeysAfterStore(home, fireworksKey) {
     {
       id: HARNESS.CLAUDE,
       label: "Claude Code",
-      hint: "fireconnect claude",
+      hint: "nexus claude",
       refresh: () => refreshFirerouterClaudeKey({ settingsPath: userSettingsPath(home), fireworksKey }),
     },
     {
       id: HARNESS.CODEX,
       label: "Codex",
-      hint: "fireconnect codex on",
+      hint: "nexus codex on",
       refresh: () => refreshCodexGatewayKey({ configPath: codexConfig, fireworksKey }),
     },
     {
       id: HARNESS.PI,
       label: "Pi",
-      hint: "fireconnect pi on",
+      hint: "nexus pi on",
       refresh: () => refreshPiGatewayKey({ authPath: piAuthPath(home), fireworksKey }),
     },
     {
       id: HARNESS.OPENCODE,
       label: "OpenCode",
-      hint: "fireconnect opencode on",
+      hint: "nexus opencode on",
       refresh: () => refreshOpencodeGatewayKey({ configPath: opencodeConfig, fireworksKey }),
     },
     {
       id: HARNESS.DEEPSEEK,
       label: "DeepSeek Harness",
-      hint: "fireconnect deepseek on",
+      hint: "nexus deepseek on",
       refresh: () => refreshDeepseekGatewayKey({
         settingsPath: deepseekSettings,
         credentialsPath: deepseekCredentials,
@@ -113,19 +114,19 @@ export async function syncBakedKeysAfterStore(home, fireworksKey) {
     {
       id: HARNESS.COPILOT_APP,
       label: "Copilot app",
-      hint: "fireconnect copilot-app on",
+      hint: "nexus copilot-app on",
       refresh: () => refreshCopilotAppGatewayKey({ dbPath: copilotDataDbPath({ home }), fireworksKey }),
     },
     {
       id: HARNESS.COPILOT_CLI,
       label: "Copilot CLI",
-      hint: "fireconnect copilot-cli on",
+      hint: "nexus copilot-cli on",
       refresh: () => refreshCopilotCliGatewayKey({ providersPath: copilotProvidersPath({ home }), fireworksKey }),
     },
     {
       id: HARNESS.VSCODE,
       label: "VS Code",
-      hint: "fireconnect vscode on",
+      hint: "nexus vscode on",
       refresh: () => refreshVscodeGatewayKey({ vscodePath: chatLanguageModelsPath({ home }), fireworksKey }),
     },
   ];
@@ -149,11 +150,19 @@ export async function syncBakedKeysAfterStore(home, fireworksKey) {
  * Remove saved provider keys (`x-anthropic-api-key`, `x-openai-api-key`) from
  * every enabled Fireworks harness that bakes them into its own config, so a
  * repeat `on` can't read them back. Never throws.
+ *
+ * `skipRunningIdes` leaves an IDE that is open alone (it rewrites its config
+ * from memory and would drop the edit), reporting it in `skipped` only when
+ * it still holds one of `headerNames`.
  * @param {string} home
  * @param {string[]} headerNames
- * @returns {Promise<{ updated: string[], failed: { label: string, id: string }[] }>}
+ * @param {{ skipRunningIdes?: boolean, vscodeRunning?: () => boolean }} [options]
+ * @returns {Promise<{ updated: string[], failed: { label: string, id: string }[], skipped: { label: string, id: string }[] }>}
  */
-export async function removeSavedProviderKeysFromHarnesses(home, headerNames) {
+export async function removeSavedProviderKeysFromHarnesses(home, headerNames, {
+  skipRunningIdes = false,
+  vscodeRunning = isVscodeRunning,
+} = {}) {
   const { harnesses } = await readGlobalConfig(home);
   const targets = [
     {
@@ -175,15 +184,24 @@ export async function removeSavedProviderKeysFromHarnesses(home, headerNames) {
       id: HARNESS.VSCODE,
       label: "VS Code",
       remove: () => removeVscodeSavedProviderKeys({ filePath: chatLanguageModelsPath({ home }), headerNames }),
+      pending: () => removeVscodeSavedProviderKeys({ filePath: chatLanguageModelsPath({ home }), headerNames, dryRun: true }),
+      running: vscodeRunning,
     },
   ];
   const updated = [];
   const failed = [];
-  for (const { id, label, remove } of targets) {
+  const skipped = [];
+  for (const { id, label, remove, pending, running } of targets) {
     if (!shouldSyncFireworksHarness(harnesses, id)) {
       continue;
     }
     try {
+      if (skipRunningIdes && running?.()) {
+        if (await pending()) {
+          skipped.push({ id, label });
+        }
+        continue;
+      }
       if (await remove()) {
         updated.push(label);
       }
@@ -191,7 +209,7 @@ export async function removeSavedProviderKeysFromHarnesses(home, headerNames) {
       failed.push({ id, label });
     }
   }
-  return { updated, failed };
+  return { updated, failed, skipped };
 }
 
 /**

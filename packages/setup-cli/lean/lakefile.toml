@@ -1,10 +1,10 @@
-name = "fireconnect-verification"
+name = "nexus-verification"
 version = "0.1.0"
-defaultTargets = ["FireConnect"]
+defaultTargets = ["Nexus"]
 
 [[lean_lib]]
-name = "FireConnect"
+name = "Nexus"
 
 [[lean_exe]]
-name = "fireconnect-verify"
+name = "nexus-verify"
 root = "Main"

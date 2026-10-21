@@ -8,6 +8,7 @@ import {
   defaultMainModel,
   firerouterRequiresAnthropicKey,
   isAutoModelId,
+  isAutoInstantModelId,
   isFirerouterModelPattern,
   fullFireworksResourceId,
   normalizeModelId,
@@ -15,13 +16,12 @@ import {
 } from "../../fireworks/model-id.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import {
-  detectApiKeyType,
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
 import { resolveModelDisplayMetadata } from "../../fireworks/model-display.mjs";
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
-import { FIREPASS_ROUTER_ID, autoDisplayName, firerouterDisplayName, prettyModelName } from "../../fireworks/models.mjs";
+import { autoDisplayName, firerouterDisplayName, prettyModelName } from "../../fireworks/models.mjs";
 import {
   AZURE_API_KEY_ENV,
   AZURE_API_KEY_ENV_REF,
@@ -59,7 +59,7 @@ import {
 
 /**
  * VS Code Chat's custom language models live in `chatLanguageModels.json` (a
- * JSON array of providers). fireconnect adds a "Fireworks" provider whose
+ * JSON array of providers). nexus adds a "Fireworks" provider whose
  * `apiKey` is a `${input:chat.lm.secret.<id>}` reference.
  *
  * The real key is NOT a per-secret OS keychain entry: VS Code's
@@ -90,7 +90,7 @@ import {
 const SECRET_STORAGE_PREFIX = "secret://";
 
 export const VSCODE_FIREWORKS_MODEL_URL = "https://api.fireworks.ai/inference";
-/** Provider display name fireconnect writes. */
+/** Provider display name nexus writes. */
 export const FIRECONNECT_PROVIDER_NAME = "Fireworks";
 /** Secret id prefix that marks a provider as fireconnect-owned. */
 export const FIRECONNECT_SECRET_PREFIX = "chat.lm.secret.fw-";
@@ -245,7 +245,7 @@ export function makeFireconnectSecretId() {
 
 /**
  * @param {object} provider
- * @returns {boolean} whether the provider entry was created by fireconnect
+ * @returns {boolean} whether the provider entry was created by nexus
  */
 export function isFireconnectProvider(provider) {
   return fireconnectSecretId(provider?.apiKey) !== null;
@@ -280,7 +280,7 @@ export function fireworksProviderStatus(arr) {
 }
 
 /**
- * Whether the fireconnect provider routes to Microsoft Foundry (Azure): a
+ * Whether the nexus provider routes to Microsoft Foundry (Azure): a
  * chat-completions provider whose model URL points somewhere other than the
  * Fireworks gateway (and isn't FireRouter). "none" otherwise.
  * @param {object[]} arr
@@ -300,7 +300,7 @@ export function vscodeAzureProviderStatus(arr) {
   return "none";
 }
 
-/** @param {object[]} arr @returns {string[]} model ids fireconnect registered */
+/** @param {object[]} arr @returns {string[]} model ids nexus registered */
 export function fireconnectRegisteredModels(arr) {
   const provider = findFireconnectProvider(arr);
   return (provider?.models ?? []).map((m) => m.id);
@@ -327,13 +327,14 @@ export function vscodeStoredByokHeaders(arr) {
 }
 
 /**
- * Drop saved provider keys from the FireConnect provider's models in
+ * Drop saved provider keys from the Nexus provider's models in
  * `chatLanguageModels.json` (`requestHeaders`, plus the Anthropic body field),
- * after `fireconnect configure --unset anthropic-api-key` / `--unset openai-api-key`.
- * @param {{ filePath: string, headerNames: string[] }} opts
- * @returns {Promise<boolean>} whether the file changed
+ * after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * `dryRun` reports whether anything would be removed without writing.
+ * @param {{ filePath: string, headerNames: string[], dryRun?: boolean }} opts
+ * @returns {Promise<boolean>} whether the file changed (or would change)
  */
-export async function removeVscodeSavedProviderKeys({ filePath, headerNames }) {
+export async function removeVscodeSavedProviderKeys({ filePath, headerNames, dryRun = false }) {
   const arr = await readChatLanguageModels(filePath);
   const provider = findFireconnectProvider(arr);
   if (!provider?.models?.length) {
@@ -359,8 +360,8 @@ export async function removeVscodeSavedProviderKeys({ filePath, headerNames }) {
     }
     return next;
   });
-  if (!changed) {
-    return false;
+  if (!changed || dryRun) {
+    return changed;
   }
   await writeChatLanguageModels(filePath, arr.map((entry) => (entry === provider ? { ...provider, models } : entry)));
   return true;
@@ -409,7 +410,7 @@ export function buildAzureModelEntry(modelId, baseUrl) {
 
 /**
  * Add (or update) the fireconnect-owned Fireworks provider with the given
- * models. Replaces an existing fireconnect provider's models; leaves other
+ * models. Replaces an existing nexus provider's models; leaves other
  * providers alone.
  *
  * `apiType` selects VS Code's request/response format for the group: both
@@ -452,30 +453,22 @@ export function removeFireconnectProvider(arr) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Default model id fireconnect registers for VS Code. Fire Pass keys are
- * restricted to the Fire Pass router; regular keys default to the shared
- * Fireworks main model (`auto`).
- * @param {"fireworks" | "firepass"} keyType
+ * Default model id nexus registers for VS Code: the shared Fireworks
+ * main model (`auto`).
  * @returns {string}
  */
-export function defaultModelIdFor(keyType) {
-  return keyType === "firepass"
-    ? FIREPASS_ROUTER_ID
-    : fullFireworksResourceId(defaultMainModel());
+export function defaultModelIdFor() {
+  return fullFireworksResourceId(defaultMainModel());
 }
 
 /**
- * Resolve a user-supplied model id (`--model`). Fire Pass keys are restricted
- * to the Fire Pass router; otherwise the id is normalized.
+ * Resolve a user-supplied model id (`--model`), normalized, falling back to
+ * the default.
  * @param {string | undefined} modelId
- * @param {"fireworks" | "firepass"} keyType
  * @returns {string}
  */
-function resolveVscodeModelId(modelId, keyType) {
-  if (keyType === "firepass") {
-    return FIREPASS_ROUTER_ID;
-  }
-  return normalizeModelId(modelId || defaultModelIdFor(keyType));
+function resolveVscodeModelId(modelId) {
+  return normalizeModelId(modelId || defaultModelIdFor());
 }
 
 /* -------------------------------------------------------------------------- */
@@ -536,11 +529,11 @@ export function assertVscodeStopped({ force = false } = {}) {
 /* Snapshot/restore (mirror cursor-core's backup pattern)                      */
 /* -------------------------------------------------------------------------- */
 
-export const VSCODE_DATA_RELATIVE_DIR = ".fireconnect/vscode";
+export const VSCODE_DATA_RELATIVE_DIR = ".nexus/vscode";
 
 /**
- * VS Code's FireConnect data dir (backup + state). Defaults to
- * `~/.fireconnect/vscode` unless overridden via `--data-dir`.
+ * VS Code's Nexus data dir (backup + state). Defaults to
+ * `~/.nexus/vscode` unless overridden via `--data-dir`.
  * @param {string} home
  * @param {string} [dataDir]
  * @returns {string}
@@ -565,7 +558,7 @@ export async function readVscodeBackup(dataDir, filePath) {
 
 /**
  * One-time relocation of VS Code backups from the legacy shared Claude data dir
- * (`~/.fireconnect/claude`, where older releases wrote them because the
+ * (`~/.nexus/claude`, where older releases wrote them because the
  * VS Code harness reused Claude's `resolveDataDir`) into VS Code's own data
  * dir. Idempotent; safe to call on every command. Leaves any claude-owned
  * `provider-*` files untouched.
@@ -573,7 +566,7 @@ export async function readVscodeBackup(dataDir, filePath) {
  */
 export async function relocateLegacyVscodeBackups({ home, dataDir }) {
   const newDir = vscodeDataDir(home, dataDir);
-  const legacyDir = path.join(home, ".fireconnect/claude");
+  const legacyDir = path.join(home, ".nexus/claude");
   if (path.resolve(newDir) === path.resolve(legacyDir) || !existsSync(legacyDir)) {
     return;
   }
@@ -598,7 +591,7 @@ export async function relocateLegacyVscodeBackups({ home, dataDir }) {
 }
 
 /**
- * Persist a pre-Fireconnect snapshot (raw file text + the secret ids fireconnect
+ * Persist a pre-Fireconnect snapshot (raw file text + the secret ids nexus
  * is about to create, for clean keychain cleanup on `off`). Owner-only perms.
  * @param {string} dataDir
  * @param {string} filePath
@@ -652,15 +645,14 @@ export function currentVariant(vscodePath) {
  * fresh `secret://chat.lm.secret.fw-<hex>` row, and add the Fireworks provider
  * entry with the resolved default model.
  *
- * @param {{ vscodePath: string, dataDir: string, apiKey: string, modelId?: string, keyType?: "fireworks" | "firepass", stateDbPath?: string }} opts
- * @returns {Promise<{ model: string, keyType: "fireworks" | "firepass", secretId: string, stateDbPath: string }>}
+ * @param {{ vscodePath: string, dataDir: string, apiKey: string, modelId?: string, stateDbPath?: string }} opts
+ * @returns {Promise<{ model: string, secretId: string, stateDbPath: string }>}
  */
 export async function enableVscodeFireworks({
   vscodePath,
   dataDir,
   apiKey,
   modelId,
-  keyType = "fireworks",
   stateDbPath,
   byokHeaders = {},
   telemetryHeaders = {},
@@ -677,10 +669,7 @@ export async function enableVscodeFireworks({
     throw new Error(secretEncryptionUnavailableMessage(variant));
   }
 
-  const resolvedKeyType = keyType === "fireworks" ? detectApiKeyType(apiKey) : keyType;
-  const resolvedModel = shortFireworksModelRef(
-    resolveVscodeModelId(modelId, resolvedKeyType),
-  );
+  const resolvedModel = shortFireworksModelRef(resolveVscodeModelId(modelId));
 
   const { existed: fileExisted, raw: fileRaw } = await readRawIfExists(vscodePath);
   // Parse via the shared helper so the snapshot, the in-memory array, and
@@ -696,7 +685,7 @@ export async function enableVscodeFireworks({
     await writeVscodeBackup(dataDir, vscodePath, { fileExisted, fileRaw, secretIds: [] });
   }
 
-  // If a fireconnect provider already exists, reuse its secret id; otherwise
+  // If a nexus provider already exists, reuse its secret id; otherwise
   // generate one and store the key.
   const existing = findFireconnectProvider(arr);
   const secretId = existing ? fireconnectSecretId(existing.apiKey) : makeFireconnectSecretId();
@@ -720,7 +709,7 @@ export async function enableVscodeFireworks({
   );
   // FireRouter BYOK: attach x-anthropic-api-key as a per-model requestHeader on
   // the firerouter entry (VS Code sends it verbatim), even when it isn't the
-  // active model. Telemetry applies to every FireConnect-managed model.
+  // active model. Telemetry applies to every Nexus-managed model.
   models = withFireconnectRequestHeadersForModels(models, {
     telemetryHeaders,
     byokHeaders,
@@ -738,7 +727,6 @@ export async function enableVscodeFireworks({
   return {
     model: resolvedModel,
     modelsAdded: fireconnectRegisteredModels(next),
-    keyType: resolvedKeyType,
     secretId,
     stateDbPath: dbPath,
     obfuscatedKey,
@@ -823,8 +811,8 @@ export async function enableVscodeAzure({
 }
 
 /**
- * Compute the models list for the fireconnect provider on `on`.
- * @param {object | undefined} existing the current fireconnect provider, if any
+ * Compute the models list for the nexus provider on `on`.
+ * @param {object | undefined} existing the current nexus provider, if any
  * @param {string | undefined} modelId the `--model` argument (raw)
  * @param {string} resolvedModel the normalized default/`--model` model id
  * @returns {object[]}
@@ -856,7 +844,7 @@ function computeVscodeModels(existing, modelId, resolvedModel, catalogModelIds =
     const plan = planCatalogRefresh({
       currentIds: [...byId.keys()],
       freshIds: catalogModelIds.map((id) => shortFireworksModelRef(id)).filter(Boolean),
-      keepUnserved: (id) => isFirerouterModelPattern(id) || isAutoModelId(id),
+      keepUnserved: (id) => isAutoModelId(id) && !isAutoInstantModelId(id),
     });
     for (const id of plan.pruned) {
       byId.delete(id);
@@ -882,7 +870,7 @@ function computeVscodeModels(existing, modelId, resolvedModel, catalogModelIds =
 
 /**
  * Disable Fireworks routing for VS Code Chat. If a pre-`on` snapshot exists,
- * restore the file byte-for-byte and delete the fireconnect secrets from
+ * restore the file byte-for-byte and delete the nexus secrets from
  * `state.vscdb`; otherwise strip only the fireconnect-owned provider + secrets.
  *
  * @param {{ vscodePath: string, dataDir: string, wasEnabled?: boolean, stateDbPath?: string }} opts
@@ -908,7 +896,7 @@ export async function disableVscodeFireworks({
       );
     }
     const { fileExisted, fileRaw, secretIds } = backup.snapshot;
-    // Delete the secrets fireconnect created (snapshot-era + current) BEFORE
+    // Delete the secrets nexus created (snapshot-era + current) BEFORE
     // restoring the JSON. If this fails, abort with the file untouched so the
     // provider + secret stay consistent and the user can retry `off` (the
     // JSON restore and backup removal only run once the secrets are gone).
@@ -934,7 +922,7 @@ export async function disableVscodeFireworks({
     return "none";
   }
 
-  // No backup: strip only what fireconnect owns. If the user configured a
+  // No backup: strip only what nexus owns. If the user configured a
   // Fireworks provider manually (no fw- secret), leave it alone.
   const ids = fireconnectSecretIds(arr);
   if (ids.length === 0) {
@@ -960,7 +948,7 @@ export async function disableVscodeFireworks({
 }
 
 /**
- * Delete the given fireconnect secret ids from `state.vscdb` in one transaction.
+ * Delete the given nexus secret ids from `state.vscdb` in one transaction.
  * @param {string} dbPath
  * @param {string[]} secretIds
  * @returns {Promise<void>}
@@ -977,7 +965,7 @@ async function deleteSecrets(dbPath, secretIds) {
 
 /**
  * Read the harness-local Fireworks key — decrypt the `secret://<id>` row from
- * `state.vscdb` referenced by the fireconnect provider in the JSON. Returns ""
+ * `state.vscdb` referenced by the nexus provider in the JSON. Returns ""
  * when none is present or it can't be decrypted.
  *
  * Pass `arr` (the already-parsed chatLanguageModels.json array) when the caller
@@ -1003,7 +991,7 @@ export async function readVscodeStoredKey(vscodePath, stateDbPath, arr) {
 }
 
 /**
- * Re-encrypt the Fireworks gateway key into the fireconnect provider's
+ * Re-encrypt the Fireworks gateway key into the nexus provider's
  * `state.vscdb` secret after a key rotation. Azure providers hold a Foundry
  * key and are left alone. Throws while VS Code is running: it rewrites
  * `state.vscdb` on exit and would silently drop the new key.
@@ -1035,7 +1023,7 @@ export async function refreshVscodeGatewayKey({ vscodePath, stateDbPath, firewor
   assertVscodeStopped();
   const encrypted = encryptSecret(fireworksKey, cryptoOpts);
   if (linuxSecretUsesKeyringBackend(stored) && linuxEncryptUsesBasicTextBackend(encrypted)) {
-    throw new Error("VS Code's API key is keyring-encrypted but FireConnect can only write an obfuscated one here; left it unchanged.");
+    throw new Error("VS Code's API key is keyring-encrypted but Nexus can only write an obfuscated one here; left it unchanged.");
   }
   await writeItemTableValue(dbPath, secretStorageKey(secretId), encrypted);
   return true;

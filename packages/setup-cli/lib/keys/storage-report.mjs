@@ -69,23 +69,23 @@ export function storedKeyMessage(backend) {
     if (backend.error?.includes("cross-keychain")) {
       return (
         `Stored Fireworks API key in an encrypted file at ${where} `
-        + "(AES-256-GCM, 0600). Re-run `fireconnect upgrade` to restore OS keychain support."
+        + "(AES-256-GCM, 0600). Re-run `nexus update` to restore OS keychain support."
       );
     }
     return (
       `No OS keychain detected; stored Fireworks API key in an encrypted file at ${where} `
       + "(AES-256-GCM, 0600). Install gnome-keyring + secret-service on Linux, then run "
-      + "`fireconnect upgrade` to move it to the OS keychain."
+      + "`nexus update` to move it to the OS keychain."
     );
   }
   if (backend.backend === "memory") {
     return "Stored Fireworks API key in the in-memory test store.";
   }
   if (backend.backend === "plaintext") {
-    const where = backend.location ?? "~/.fireconnect/.api-key";
+    const where = backend.location ?? "~/.nexus/.api-key";
     return (
       `Stored Fireworks API key in a plaintext fallback file at ${where} `
-      + "(0600). Secure storage failed; run `fireconnect upgrade` when keychain access is restored."
+      + "(0600). Secure storage failed; run `nexus update` when keychain access is restored."
     );
   }
   return "";
@@ -149,5 +149,5 @@ export function activeKeySourceNote(storedKey) {
   if (envKey && !stored) {
     return `Using ${accent("FIREWORKS_API_KEY")} from your shell (${maskKey(envKey)}); no key is stored on disk.`;
   }
-  return "This key is now your source of truth — every tool resolves it from here.";
+  return "This key is now your source of truth: every harness resolves it from here.";
 }

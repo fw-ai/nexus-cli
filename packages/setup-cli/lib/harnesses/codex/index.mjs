@@ -9,9 +9,10 @@ import {
 import path from "node:path";
 import process from "node:process";
 import {
-  defaultMainModel,
+  FIREROUTER_MODEL_ID,
   firerouterNamesAnthropicModel,
   isFirerouterModel,
+  isRetiredModelId,
 } from "../../fireworks/model-id.mjs";
 import { isFirerouterModelPattern } from "../../fireworks/model-specs.mjs";
 import {
@@ -36,7 +37,7 @@ import {
   readCodexTomlIfExists,
 } from "./core.mjs";
 import { DEFAULT_AZURE_MODEL } from "../../fireworks/azure-core.mjs";
-import { detectApiKeyType, isFireworksKey } from "../../keys/key-type.mjs";
+import { isFireworksKey } from "../../keys/key-type.mjs";
 import { finishEnvHarnessOn } from "../../harness/env-hook.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import { readProviderSettings } from "../../config/global-config.mjs";
@@ -45,7 +46,6 @@ import {
   ensureHomeForHarness,
 } from "../../harness/context.mjs";
 import {
-  codexDisplayModelId,
   codexModelExclusionReason,
   isCodexOpenaiModelSlug,
 } from "./catalog.mjs";
@@ -56,7 +56,7 @@ import { harnessStatusKeySource } from "../../keys/api-key.mjs";
 import { existsSync } from "node:fs";
 
 const CODEX_PROVIDER_KEYS_REMOVED_NOTE =
-  "Codex now pays for GPT turns only with its own sign-in, so FireConnect removed the "
+  "Codex now pays for GPT turns only with its own sign-in, so Nexus removed the "
   + "provider-key headers from config.toml. To pay with an OpenAI key, sign Codex in with it: "
   + "`codex login --with-api-key`.";
 
@@ -68,7 +68,7 @@ async function ensureCodexStopped(ctx) {
   await ensureCodexSessionsClosed({ force: ctx.force });
 }
 
-// Codex's own sign-in pays for GPT turns, so FireConnect forwards no provider key.
+// Codex's own sign-in pays for GPT turns, so Nexus forwards no provider key.
 const CODEX_FIREROUTER = Object.freeze({
   byok: "none",
   autoCatalog: true,
@@ -92,7 +92,7 @@ async function codexResolveOnContext(ctx) {
   if (ctx.azure || provider === "azure") {
     throw new Error(
       "Codex no longer supports Azure/Foundry mode: Codex CLI 0.160+ removed `wire_api = \"chat\"`. " +
-      "Run `fireconnect configure --provider fireworks` to use the Fireworks gateway.",
+      "Run `nexus configure --provider fireworks` to use the Fireworks gateway.",
     );
   }
   // The GPT rows, and which GPT IDs `--model` accepts, follow stock Codex's own
@@ -100,20 +100,22 @@ async function codexResolveOnContext(ctx) {
   if (ctx.home?.trim()) {
     await refreshCodexStockModels({ codexHome: path.dirname(codexPathsFor(ctx).configPath) });
   }
-  // On Codex, `firerouter` names its one FireRouter row (CODEX_DEFAULT_MODEL),
-  // whether passed as --model or saved by an earlier `on`.
+  // Any spelling of bare `firerouter` is stored as the bare route id.
   if (ctx.main?.trim()) {
-    return isFirerouterModel(ctx.main) ? { ...ctx, main: CODEX_DEFAULT_MODEL } : ctx;
+    return isFirerouterModel(ctx.main) ? { ...ctx, main: FIREROUTER_MODEL_ID } : ctx;
   }
   const home = ctx.home?.trim() ?? "";
   if (!home) {
     return ctx;
   }
-  // A first `on` lands on FireRouter; a re-`on` keeps the current model.
-  const { doc } = await readCodexTomlIfExists(codexPathsFor(ctx).configPath);
+  // A first `on` lands on `auto`; a re-`on` keeps the current model, except
+  // that a FireRouter selection carried over from an earlier `on` is dropped
+  // to `auto` instead of being kept.
+  const { configPath } = codexPathsFor(ctx);
+  const { doc } = await readCodexTomlIfExists(configPath);
   const current = codexProviderStatus(doc) === "fireworks" ? codexCurrentModelId(doc) : "";
-  if (current && !isFirerouterModel(current)) {
-    return isFirerouterModelPattern(current) ? { ...ctx, main: current, modelImplied: true } : ctx;
+  if (current && !isRetiredModelId(current)) {
+    return ctx;
   }
   return { ...ctx, main: CODEX_DEFAULT_MODEL, modelImplied: true };
 }
@@ -135,23 +137,13 @@ export default defineHarnessProfile({
     return codexProviderStatus(doc) === "fireworks" ? codexStoredAuthRef(doc) : "";
   },
   servedOutsideCatalog: (modelId) => isCodexOpenaiModelSlug(modelId),
-  precheck: ({ keyType }) => {
-    if (keyType === "firepass") {
-      throw new Error(
-        "The /responses endpoint is not supported for Fire Pass keys yet. " +
-        "Use a standard Fireworks API key (fw_...).",
-      );
-    }
-  },
   enable: async ({
     ctx,
     paths,
     apiKeyRef,
     effectiveKey,
-    keyType,
     modelId,
     telemetryHeaders,
-    includeFirerouter,
   }) => {
     await ensureCodexStopped(ctx);
     const exclusionReason = codexModelExclusionReason(modelId);
@@ -159,7 +151,6 @@ export default defineHarnessProfile({
       throw new Error(exclusionReason);
     }
     const { codexCatalog, snapshot, catalogAvailable } = await loadCodexCatalogBundle(effectiveKey, {
-      includeFirerouter,
       modelId,
     });
     return enableCodexFireworks({
@@ -168,7 +159,6 @@ export default defineHarnessProfile({
       apiKey: apiKeyRef,
       effectiveApiKey: effectiveKey,
       modelId,
-      keyType,
       catalogPath: paths.catalogPath,
       catalog: codexCatalog,
       catalogSnapshot: snapshot,
@@ -178,9 +168,8 @@ export default defineHarnessProfile({
     });
   },
   envHookOn: (ctx) => finishEnvHarnessOn(ctx.home, { harnessId: "codex" }),
-  displayModelId: codexDisplayModelId,
   printConnected: ({ result }) => {
-    printHarnessConnected("Codex", { model: codexDisplayModelId(result.model) });
+    printHarnessConnected("Codex", { model: result.model });
     printNote(
       "Codex keeps its own sign-in: sign in with ChatGPT and GPT turns use your plan. "
         + "Run `codex login` if Codex asks you to sign in.",
@@ -192,7 +181,7 @@ export default defineHarnessProfile({
       printNote(
         `Signing Codex in with only your Fireworks key? ${result.model} then needs an OpenAI `
           + `Provider Key on your Fireworks account: ${PROVIDER_KEYS_DOCS_URL}. Without one, use `
-          + "`firerouter`, which falls back to open models.",
+          + "`auto`, which falls back to open models.",
       );
     }
     if (firerouterNamesAnthropicModel(result.model)) {
@@ -258,9 +247,6 @@ export default defineHarnessProfile({
     const storedAuth = codexStoredAuthRef(doc);
     const chatgptLogin = provider === "fireworks"
       && Boolean(codexChatgptLoginFireworksKey(doc.tables[CODEX_PROVIDER_TABLE]));
-    const statusKeyType = detectApiKeyType(
-      effectiveCodexApiKey(storedAuth) || process.env.FIREWORKS_API_KEY || "",
-    );
     const payload = {
       harness: HARNESS.CODEX,
       provider,
@@ -269,7 +255,7 @@ export default defineHarnessProfile({
       hasAuthToken: Boolean(storedAuth || process.env.FIREWORKS_API_KEY),
       chatgptLogin,
       ...(chatgptLogin ? { fireworksKeyHeader: CODEX_CHATGPT_FIREWORKS_KEY_HEADER } : {}),
-      defaults: { main: statusKeyType === "firepass" ? defaultMainModel(statusKeyType) : CODEX_DEFAULT_MODEL },
+      defaults: { main: CODEX_DEFAULT_MODEL },
       current: { main: model },
       modelCatalog: {
         set: Boolean(doc.root.model_catalog_json),
@@ -287,7 +273,7 @@ export default defineHarnessProfile({
       provider: payload.provider,
       keyConfigured: payload.hasAuthToken,
       authMode: codexAuthKeyMode(storedAuth),
-      model: codexDisplayModelId(payload.current.main),
+      model: payload.current.main,
       keySource: chatgptLogin
         ? `Codex sign-in; Fireworks key in ${CODEX_CHATGPT_FIREWORKS_KEY_HEADER} header in config.toml`
         : harnessStatusKeySource(HARNESS.CODEX, provider),

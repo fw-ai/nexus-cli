@@ -5,13 +5,14 @@ import { chmod, mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import {
-  DEFAULT_FIREPASS_MAIN_MODEL,
   defaultMainModel,
+  dropRetiredModelId,
+  isAutoInstantModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
+import { isFirerouterModelPattern } from "../../fireworks/model-specs.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import {
-  detectApiKeyType,
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
@@ -26,18 +27,15 @@ import {
 import {
   addCodexSelectedModel,
   buildCodexCatalogFromSnapshot,
-  CODEX_FIREROUTER_ROUTE,
   codexCatalogContainsModel,
   codexModelExclusionReason,
+  isCodexStaleFirerouterRow,
   pruneCodexCatalogRows,
   refreshCodexCatalogRows,
   withCodexConstantFields,
   withCodexSignInRows,
 } from "./catalog.mjs";
 import {
-  filterCatalogForKeyType,
-  firerouterCatalogEntry,
-  FIREPASS_FALLBACK_ROUTERS,
   loadServerlessCatalog,
   preferLatestAliases,
 } from "../../fireworks/models.mjs";
@@ -48,6 +46,7 @@ import { AZURE_API_KEY_ENV } from "../../fireworks/azure-core.mjs";
 import { mergeFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
 import {
   ANTHROPIC_BYOK_HEADER,
+  NEXUS_PROVIDERS_HEADER,
   omitHeaders,
   OPENAI_BYOK_HEADER,
   withoutHeaders,
@@ -55,7 +54,7 @@ import {
 export { printCodexRestartHint } from "../../cli/messages.mjs";
 
 export const CODEX_CONFIG_RELATIVE_PATH = ".codex/config.toml";
-export const CODEX_DATA_RELATIVE_DIR = ".fireconnect/codex";
+export const CODEX_DATA_RELATIVE_DIR = ".nexus/codex";
 export const CODEX_CATALOG_RELATIVE_PATH = ".codex/fireworks-model-catalog.json";
 export const CODEX_CATALOG_TOML_REF = `~/${CODEX_CATALOG_RELATIVE_PATH}`;
 export const CODEX_FIREWORKS_PROVIDER_ID = "fireworks-ai";
@@ -63,8 +62,8 @@ export const CODEX_FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1";
 export const CODEX_API_KEY_ENV_REF = "{env:FIREWORKS_API_KEY}";
 export const CODEX_PROVIDER_TABLE = `model_providers.${CODEX_FIREWORKS_PROVIDER_ID}`;
 // Foundry routing written by releases before Codex CLI 0.160 removed
-// `wire_api = "chat"`. FireConnect no longer writes it, but still owns it so
-// `status` reports it and `off`/`uninstall` restore the pre-FireConnect config.
+// `wire_api = "chat"`. Nexus no longer writes it, but still owns it so
+// `status` reports it and `off`/`uninstall` restore the pre-Nexus config.
 export const CODEX_AZURE_PROVIDER_ID = "fireworks-azure";
 export const CODEX_AZURE_PROVIDER_TABLE = `model_providers.${CODEX_AZURE_PROVIDER_ID}`;
 export const CODEX_AZURE_API_KEY_ENV_REF = `{env:${AZURE_API_KEY_ENV}}`;
@@ -72,12 +71,15 @@ export const CODEX_AZURE_API_KEY_ENV_REF = `{env:${AZURE_API_KEY_ENV}}`;
 // Authorization, so the Fireworks key moves to this header. FireRouter can use
 // the ChatGPT login for GPT turns.
 export const CODEX_CHATGPT_FIREWORKS_KEY_HEADER = "x-fireworks-api-key";
-// What a first `codex on` selects: GPT Astra for hard turns, paid by Codex's
-// sign-in, and open models for the rest.
-export const CODEX_DEFAULT_MODEL = CODEX_FIREROUTER_ROUTE;
+// What a first `codex on` selects: the `auto` mix. FireRouter selections
+// are rejected at admission; stored ones are migrated off on re-`on`.
+export const CODEX_DEFAULT_MODEL = defaultMainModel();
 // Provider-key headers earlier releases wrote into the gateway provider. Codex's
 // own sign-in pays for GPT turns now, so `on` removes them.
 const CODEX_PROVIDER_KEY_HEADERS = Object.freeze([ANTHROPIC_BYOK_HEADER, OPENAI_BYOK_HEADER]);
+// Headers `on` rebuilds from the current Nexus settings on every run, so a
+// stale value (e.g. after `nexus auto --reset`) must not survive a re-`on`.
+const CODEX_REBUILT_HEADERS = Object.freeze([...CODEX_PROVIDER_KEY_HEADERS, NEXUS_PROVIDERS_HEADER]);
 
 export function codexConfigPath(home, configPath = "") {
   return configPath || path.join(home, CODEX_CONFIG_RELATIVE_PATH);
@@ -147,7 +149,7 @@ function withChatgptLoginFireworksKey(headers, key) {
 }
 
 /**
- * Which FireConnect-managed provider, if any, owns routing in this doc. The
+ * Which Nexus-managed provider, if any, owns routing in this doc. The
  * `firerouter` model is served on the normal Fireworks gateway provider, so it
  * reports "fireworks" with model `firerouter` — not a distinct variant.
  * "azure" is only ever a legacy Foundry routing (see CODEX_AZURE_PROVIDER_ID).
@@ -169,7 +171,7 @@ export function fireconnectManagedVariant(doc) {
 }
 
 /**
- * FireConnect owns routing when root model_provider points at one of our
+ * Nexus owns routing when root model_provider points at one of our
  * provider tables (Fireworks gateway or legacy Azure/Foundry).
  * @param {{ root: Record<string, unknown>, tables: Record<string, Record<string, unknown>> }} doc
  */
@@ -194,6 +196,31 @@ export function codexCurrentModelId(doc) {
     return model;
   }
   return shortFireworksModelRef(model);
+}
+
+/**
+ * The rows of the catalog config.toml points Codex at, or [] when it points at none.
+ * @param {{ root: Record<string, unknown> }} doc
+ * @param {string} catalogPath
+ * @returns {Promise<Array<{ slug?: string, display_name?: string }>>}
+ */
+export async function readCodexManagedCatalogRows(doc, catalogPath) {
+  if (!doc.root.model_catalog_json) {
+    return [];
+  }
+  const catalog = await readCodexCatalogIfValid(catalogPath);
+  return Array.isArray(catalog?.models) ? catalog.models : [];
+}
+
+/**
+ * Whether the saved model is a stale FireRouter row of the catalog, which a
+ * re-`on` moves to bare `firerouter`.
+ * @param {{ root: Record<string, unknown>, tables: Record<string, Record<string, unknown>> }} doc
+ * @param {Array<{ slug?: string, display_name?: string }>} rows
+ */
+export function codexSavesStaleFirerouterRow(doc, rows) {
+  const current = codexCurrentModelId(doc);
+  return Boolean(current) && rows.some((row) => isCodexStaleFirerouterRow(row) && row.slug === current);
 }
 
 /**
@@ -392,42 +419,26 @@ async function readCodexCatalogIfValid(catalogPath) {
 
 function codexCatalogFetchWarning(error) {
   console.log(`Warning: could not generate model catalog: ${error.message}`);
-  console.log("Codex will use default model metadata. Re-run 'fireconnect codex on' to retry.");
+  console.log("Codex will use default model metadata. Re-run 'nexus codex on' to retry.");
 }
 
 /**
  * Single API fetch for Codex provider registration and metadata catalog.
  * @param {string} apiKey
- * @returns {Promise<{ pickerCatalog: import("../../fireworks/models.mjs").CatalogEntry[] | null, codexCatalog: { models: unknown[] } | null, snapshot: import("../../fireworks/serverless-catalog-cache.mjs").ServerlessCatalogSnapshot | null, catalogAvailable: boolean, keyType: string }>}
+ * @returns {Promise<{ pickerCatalog: import("../../fireworks/models.mjs").CatalogEntry[] | null, codexCatalog: { models: unknown[] } | null, snapshot: import("../../fireworks/serverless-catalog-cache.mjs").ServerlessCatalogSnapshot | null, catalogAvailable: boolean }>}
  */
-export async function loadCodexCatalogBundle(apiKey, { includeFirerouter = false, modelId = "" } = {}) {
+export async function loadCodexCatalogBundle(apiKey, { modelId = "" } = {}) {
   if (!apiKey) {
-    return { pickerCatalog: null, codexCatalog: null, snapshot: null, catalogAvailable: false, keyType: "" };
-  }
-
-  const keyType = detectApiKeyType(apiKey);
-  if (keyType === "firepass") {
-    return {
-      pickerCatalog: preferLatestAliases(
-        filterCatalogForKeyType(FIREPASS_FALLBACK_ROUTERS, "firepass"),
-      ),
-      codexCatalog: null,
-      snapshot: null,
-      catalogAvailable: true,
-      keyType,
-    };
+    return { pickerCatalog: null, codexCatalog: null, snapshot: null, catalogAvailable: false };
   }
 
   try {
-    const loaded = await loadServerlessCatalog({ apiKey, keyType, refresh: true });
+    const loaded = await loadServerlessCatalog({ apiKey, refresh: true });
     const snapshot = getServerlessCatalogSnapshot();
     if (!snapshot) {
       throw new Error("Serverless catalog snapshot is unavailable.");
     }
     const entries = preferLatestAliases(loaded.catalog);
-    if (includeFirerouter && !entries.some((entry) => entry.shortId === "firerouter")) {
-      entries.unshift(firerouterCatalogEntry());
-    }
     const selectedRef = shortFireworksModelRef(modelId);
     const selected = snapshot.entries.find((entry) => entry.shortId === selectedRef);
     if (selected && !entries.some((entry) => entry.id === selected.id)) {
@@ -439,11 +450,10 @@ export async function loadCodexCatalogBundle(apiKey, { includeFirerouter = false
       codexCatalog: buildCodexCatalogFromSnapshot(preferredSnapshot, loaded.rawModels),
       snapshot,
       catalogAvailable: loaded.source !== "stale",
-      keyType,
     };
   } catch (error) {
     codexCatalogFetchWarning(error);
-    return { pickerCatalog: null, codexCatalog: null, snapshot: null, catalogAvailable: false, keyType };
+    return { pickerCatalog: null, codexCatalog: null, snapshot: null, catalogAvailable: false };
   }
 }
 
@@ -454,7 +464,6 @@ export async function enableCodexFireworks({
   effectiveApiKey = "",
   apiKeyFromFlag = false,
   modelId,
-  keyType = "fireworks",
   catalogPath = "",
   catalog = null,
   catalogSnapshot = null,
@@ -473,21 +482,17 @@ export async function enableCodexFireworks({
     ? readTomlDoc(snapshot.raw)
     : emptyTomlDoc();
 
-  const resolvedKeyType = keyType === "fireworks" ? detectApiKeyType(resolvedEffective) : keyType;
-
-  let effectiveModelId = modelId;
-  if (resolvedKeyType === "firepass" && !modelId) {
-    effectiveModelId = DEFAULT_FIREPASS_MAIN_MODEL;
-  }
-
   // Only reuse the current model when the gateway provider is already active —
   // switching from Foundry must not carry over a Foundry deployment name and
   // mangle it into accounts/fireworks/models/<deployment>.
   const currentGatewayModel = fireconnectManagedVariant(doc) === "fireworks"
     ? codexCurrentModelId(doc)
     : "";
+  // A plain re-`on` (no explicit model) drops a carried-over FireRouter
+  // selection to `auto`. A FireRouter `--model` is rejected at admission, so
+  // `modelId` is never a FireRouter route from the CLI.
   const storedModel = shortFireworksModelRef(
-    effectiveModelId || currentGatewayModel || defaultMainModel(),
+    modelId || dropRetiredModelId(currentGatewayModel || "") || defaultMainModel(),
   );
   const exclusionReason = codexModelExclusionReason(storedModel);
   if (exclusionReason) {
@@ -515,6 +520,15 @@ export async function enableCodexFireworks({
     await chmod(backupPath, 0o600);
   }
 
+  // FireRouter rows only survive when the selection itself is a FireRouter
+  // route (an explicit `--model firerouter...`); every other `on` drops them,
+  // stale labelled rows included.
+  const withoutStaleFirerouterRows = (rows = []) => rows.filter(
+    (row) => !isCodexStaleFirerouterRow(row)
+      && !isAutoInstantModelId(row?.slug ?? "")
+      && (isFirerouterModelPattern(storedModel) || !isFirerouterModelPattern(row?.slug ?? "")),
+  );
+
   let effectiveCatalogPath = "";
   let catalogWritten = false;
   let catalogModelsWritten = [];
@@ -523,14 +537,15 @@ export async function enableCodexFireworks({
     const managedCatalog = snapshotReferencesFireworksCatalog(snapshot.raw)
       ? existingCatalog
       : null;
+    const managedModels = withoutStaleFirerouterRows(managedCatalog?.models);
     // An explicit --model keeps the existing rows; `refreshCatalog` marks a
-    // model FireConnect chose itself (re-`on` or the FireRouter default).
+    // model Nexus chose itself (re-`on` or the FireRouter default).
     const models = managedCatalog
       ? (modelId && !refreshCatalog
-          ? managedCatalog.models
+          ? managedModels
           : catalogAvailable
-            ? refreshCodexCatalogRows(managedCatalog.models, catalogSnapshot, catalog.models ?? [])
-            : managedCatalog.models)
+            ? refreshCodexCatalogRows(managedModels, catalogSnapshot, catalog.models ?? [])
+            : managedModels)
       // Fresh installs seed the whole fetched catalog even when --model pins
       // one row: the catalog file drives the ChatGPT app model dropdown, so a
       // single-row file leaves no menu to pick from. The selected model is
@@ -559,9 +574,10 @@ export async function enableCodexFireworks({
   ) {
     const existingCatalog = await readCodexCatalogIfValid(catalogPath);
     const models = existingCatalog?.models ?? [];
+    const keptModels = withoutStaleFirerouterRows(models);
     const nextModels = withCodexConstantFields(withCodexSignInRows(modelId
-      ? addCodexSelectedModel(models, null, storedModel)
-      : models));
+      ? addCodexSelectedModel(keptModels, null, storedModel)
+      : keptModels));
     const catalogToWrite = {
       ...(existingCatalog ?? {}),
       models: nextModels,
@@ -580,10 +596,10 @@ export async function enableCodexFireworks({
       || omitHeaders(providerTable.env_http_headers, CODEX_PROVIDER_KEY_HEADERS),
   );
   const httpHeaders = mergeFireconnectTelemetryHeaders(
-    withoutHeaders(providerTable.http_headers, CODEX_PROVIDER_KEY_HEADERS),
+    withoutHeaders(providerTable.http_headers, CODEX_REBUILT_HEADERS),
     telemetryHeaders,
   );
-  const envHttpHeaders = withoutHeaders(providerTable.env_http_headers, CODEX_PROVIDER_KEY_HEADERS);
+  const envHttpHeaders = withoutHeaders(providerTable.env_http_headers, CODEX_REBUILT_HEADERS);
   const nextRaw = patchFireconnectRoutingRaw(snapshot.raw, {
     providerId: CODEX_FIREWORKS_PROVIDER_ID,
     baseUrl: CODEX_FIREWORKS_BASE_URL,
@@ -605,7 +621,6 @@ export async function enableCodexFireworks({
     modelsAdded: catalogWritten
       ? catalogModelsWritten
       : [storedModel],
-    keyType: resolvedKeyType,
     apiKeyMode: "literal",
     catalogWritten,
     removedProviderKeys,

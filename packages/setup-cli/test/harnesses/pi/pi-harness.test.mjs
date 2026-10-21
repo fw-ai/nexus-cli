@@ -1,10 +1,9 @@
-import { mkdtemp, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, mkdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { piSettingsPath, piAuthPath, piModelsPath, PI_API_KEY_ENV_REF, PI_DATA_RELATIVE_DIR, PI_AZURE_PROVIDER } from "../../../lib/harnesses/pi/core.mjs";
-import { resolvePiEffectiveFireworksModel } from "../../../lib/harnesses/pi/fireworks-models.mjs";
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
 import {
   cacheServerlessCatalogSnapshot,
@@ -103,12 +102,12 @@ describe("pi harness integration", () => {
     assert.equal(after, canonical);
   });
 
-  it("status reports Fireworks as provider and firerouter as model", async () => {
+  it("status reports Fireworks as provider and auto as model", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-firerouter-status-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
 
     const on = await runFireconnect(
-      ["pi", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"],
+      ["pi", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(on.code, 0, on.stderr);
@@ -120,10 +119,10 @@ describe("pi harness integration", () => {
     assert.equal(status.code, 0, status.stderr);
     const payload = JSON.parse(status.stdout);
     assert.equal(payload.provider, "fireworks");
-    assert.equal(payload.current.main, "firerouter");
+    assert.equal(payload.current.main, "auto");
   });
 
-  it("persists --anthropic-api-key in models.json headers for firerouter", async () => {
+  it("rejects --anthropic-api-key with a firerouter model", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-firerouter-byok-flag-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     const anthropicKey = "sk-ant-pi-firerouter-12345";
@@ -137,16 +136,11 @@ describe("pi harness integration", () => {
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
-    assert.equal(on.code, 0, on.stderr);
-
-    const models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-    assert.equal(
-      models.providers.fireworks.headers["x-anthropic-api-key"],
-      anthropicKey,
-    );
+    assert.notEqual(on.code, 0);
+    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
   });
 
-  it("persists --openai-api-key in models.json headers for firerouter", async () => {
+  it("rejects --openai-api-key with a firerouter model", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-firerouter-openai-flag-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     const openaiKey = "sk-proj-pi-firerouter-12345";
@@ -160,25 +154,28 @@ describe("pi harness integration", () => {
       ],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
-    assert.equal(on.code, 0, on.stderr);
-
-    const models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-    assert.equal(
-      models.providers.fireworks.headers["x-openai-api-key"],
-      openaiKey,
-    );
+    assert.notEqual(on.code, 0);
+    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
   });
 
-  it("registers the preferred latest/newest catalog in models.json", async () => {
+  it("registers only Nexus-only rows, leaving catalog models to Pi's own catalog", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-catalog-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     const originalModels = JSON.stringify({ providers: { ollama: { models: [{ id: "llama3" }] } } }, null, 2) + "\n";
     await writeFile(piModelsPath(home), originalModels);
 
-    // A Fire Pass key resolves an offline catalog (no network), so the full set
-    // registers deterministically.
+    // A seeded catalog resolves offline, so the full set registers
+    // deterministically.
+    seedFlatCatalogCache(home, [
+      ...GLM_ALIAS_CATALOG_ROWS,
+      mockServerlessModel({
+        id: "accounts/fireworks/models/kimi-k3",
+        display_name: "Kimi K3",
+        aliases: ["accounts/fireworks/routers/kimi-fast-latest"],
+      }),
+    ]);
     const onResult = await runFireconnect(
-      ["pi", "on", "--api-key", "fpk_test_firepass_key"],
+      ["pi", "on", "--api-key", "fw_test_key_12345"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(onResult.code, 0, onResult.stderr);
@@ -189,23 +186,10 @@ describe("pi harness integration", () => {
       ...(fw.models ?? []).map((m) => m.id),
       ...Object.keys(fw.modelOverrides ?? {}),
     ];
-    // Every catalog model is registered for Pi's /model picker (canonical ids
-    // override Pi's built-in rows in place)...
-    assert.ok(ids.includes("accounts/fireworks/routers/glm-fast-latest"));
-    assert.ok(ids.includes("accounts/fireworks/routers/glm-latest"));
-    assert.ok(ids.includes("accounts/fireworks/routers/kimi-fast-latest"));
-    // ...with latest aliases preferred over the pinned versions they cover.
-    assert.ok(!ids.includes("accounts/fireworks/routers/glm-5p2-fast"));
-    assert.ok(ids.every((id) => id.startsWith("accounts/fireworks/")));
+    // A catalog-id row would replace Pi's tuned row (api, compat,
+    // thinkingLevelMap), so only the auto mix is registered.
+    assert.deepEqual(ids, ["auto"]);
 
-    // The registered ids are recorded in the global config (harnesses.pi
-    // .profiles.managedModelIds) — not a Pi-private state.json.
-    const config = JSON.parse(
-      await readFile(path.join(home, ".fireconnect", "config.json"), "utf8"),
-    );
-    const managed = config.harnesses?.pi?.profiles?.managedModelIds ?? [];
-    assert.ok(managed.length > 0);
-    assert.ok(managed.every((id) => id.startsWith("accounts/fireworks/")));
 
     const offResult = await runFireconnect(["pi", "off"], { HOME: home });
     assert.equal(offResult.code, 0);
@@ -237,26 +221,13 @@ describe("pi harness integration", () => {
     const enabledSettings = JSON.parse(await readFile(settingsPath, "utf8"));
     assert.equal(enabledSettings.defaultProvider, "fireworks");
     assert.equal(enabledSettings.defaultModel, "auto");
-    assert.deepEqual(
-      enabledSettings.enabledModels,
-      ["fireworks/accounts/fireworks/routers/*", "fireworks/auto"],
-      "picker scoped to FireConnect routers (plus bare auto), hiding Pi built-ins",
-    );
+    assert.equal(enabledSettings.enabledModels, undefined, "no picker scope");
 
     const enabledModels = JSON.parse(await readFile(modelsPath, "utf8"));
     const fireworksModels = enabledModels.providers.fireworks.models;
-    assert.ok(fireworksModels.some((model) => model.id === "accounts/fireworks/routers/glm-latest"));
-    const glmFast = fireworksModels.find((model) => model.id === "accounts/fireworks/routers/glm-fast-latest");
-    assert.ok(glmFast);
-    assert.equal(glmFast.contextWindow, 1_048_575);
-    assert.equal(glmFast.cost.input, 2.1);
-    assert.ok(fireworksModels.every(
-      (model) => model.id.startsWith("accounts/fireworks/") || model.id === "auto",
-    ));
-    assert.ok(Object.keys(
-      enabledModels.providers.fireworks.modelOverrides ?? {},
-    ).every((id) => id.startsWith("accounts/fireworks/")));
-    assert.equal(enabledModels.providers.fireworks.compat.sendSessionAffinityHeaders, true);
+    assert.deepEqual(fireworksModels.map((model) => model.id), ["auto"]);
+    assert.equal(enabledModels.providers.fireworks.modelOverrides, undefined);
+    assert.equal(enabledModels.providers.fireworks.compat, undefined);
 
     const enabledAuth = JSON.parse(await readFile(authPath, "utf8"));
     assert.equal(enabledAuth.fireworks.managedBy, "fireconnect");
@@ -273,27 +244,29 @@ describe("pi harness integration", () => {
     assert.equal(restoredModels, originalModels);
   });
 
-  it("explicit router on still scopes the picker at auto (never for Fire Pass)", async () => {
+  it("keeps the user's own picker scope, adding only the fireworks provider", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-scope-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
+    const settingsPath = piSettingsPath(home);
+    await writeFile(settingsPath, `${JSON.stringify({ enabledModels: ["ollama/*"] }, null, 2)}\n`);
     const onResult = await runFireconnect(
       ["pi", "on", "--api-key", "fw_cataloged_v1_adversarial000000", "--model", "kimi-latest"],
       { HOME: home, FIREWORKS_API_KEY: "" },
     );
     assert.equal(onResult.code, 0, onResult.stderr);
-    const settings = JSON.parse(await readFile(piSettingsPath(home), "utf8"));
+    const settings = JSON.parse(await readFile(settingsPath, "utf8"));
     assert.equal(settings.defaultModel, "accounts/fireworks/routers/kimi-latest");
-    assert.ok(settings.enabledModels.includes("fireworks/auto"));
+    assert.deepEqual(settings.enabledModels, ["ollama/*", "fireworks/**"]);
 
-    const fpHome = await mkdtemp(path.join(os.tmpdir(), "fc-pi-scope-fp-"));
-    await mkdir(path.join(fpHome, ".pi/agent"), { recursive: true });
-    const fpOn = await runFireconnect(
-      ["pi", "on", "--api-key", "fpk_test_firepass_key"],
-      { HOME: fpHome, FIREWORKS_API_KEY: "" },
+    const repeat = await runFireconnect(["pi", "on"], { HOME: home, FIREWORKS_API_KEY: "" });
+    assert.equal(repeat.code, 0, repeat.stderr);
+    assert.deepEqual(
+      JSON.parse(await readFile(settingsPath, "utf8")).enabledModels,
+      ["ollama/*", "fireworks/**"],
     );
-    assert.equal(fpOn.code, 0, fpOn.stderr);
-    const fpSettings = JSON.parse(await readFile(piSettingsPath(fpHome), "utf8"));
-    assert.ok(!fpSettings.enabledModels.includes("fireworks/auto"));
+
+    await runFireconnect(["pi", "off"], { HOME: home, FIREWORKS_API_KEY: "" });
+    assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), { enabledModels: ["ollama/*"] });
   });
 
   it("writes a literal key into auth.json", async () => {
@@ -311,80 +284,6 @@ describe("pi harness integration", () => {
     const auth = JSON.parse(await readFile(authPath, "utf8"));
     assert.equal(auth.fireworks.key, "fw_test_key_12345");
     assert.equal(auth.fireworks.managedBy, "fireconnect");
-  });
-
-  it("adds telemetry without replacing user headers and restores them on off", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-headers-"));
-    const dir = path.join(home, ".pi/agent");
-    await mkdir(dir, { recursive: true });
-    const settingsPath = piSettingsPath(home);
-    const authPath = piAuthPath(home);
-    const modelsPath = piModelsPath(home);
-    const originalSettings = '{"defaultProvider":"user"}\n';
-    const originalAuth = '{"user":{"key":"keep"}}\n';
-    const originalModels = `${JSON.stringify({
-      providers: {
-        fireworks: {
-          headers: {
-            "X-User-Trace": "keep",
-            "User-Agent": "custom-pi/1.0",
-          },
-        },
-      },
-    })}\n`;
-    await writeFile(settingsPath, originalSettings);
-    await writeFile(authPath, originalAuth);
-    await writeFile(modelsPath, originalModels);
-
-    const first = await runFireconnect(
-      ["pi", "on", "--api-key", "fw_test_key_12345"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.equal(first.code, 0, first.stderr);
-    let models = JSON.parse(await readFile(modelsPath, "utf8"));
-    let headers = models.providers.fireworks.headers;
-    assert.equal(headers["X-User-Trace"], "keep");
-    assert.equal(headers["User-Agent"], "custom-pi/1.0");
-    assert.equal(headers["X-Title"], "Pi");
-    assert.equal(
-      headers["HTTP-Referer"],
-      FIRECONNECT_REFERER,
-    );
-    assert.equal(headers["X-FireRouter-Harness"], undefined);
-    assert.equal(headers["Fireworks-Use-Case"], undefined);
-
-    headers["User-Agent"] = "fireconnect/0.7.0";
-    headers["X-User-After-On"] = "also-keep";
-    headers["X-FireRouter-Harness"] = "pi";
-    headers["Fireworks-Use-Case"] = "coding";
-    headers["HTTP-Referer"] = "fireconnect/v0.7.0";
-    await writeFile(modelsPath, `${JSON.stringify(models, null, 2)}\n`);
-    const repeat = await runFireconnect(
-      ["pi", "on"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.equal(repeat.code, 0, repeat.stderr);
-    models = JSON.parse(await readFile(modelsPath, "utf8"));
-    headers = models.providers.fireworks.headers;
-    assert.equal(headers["X-User-Trace"], "keep");
-    assert.equal(headers["X-User-After-On"], "also-keep");
-    assert.equal(headers["User-Agent"], undefined);
-    assert.equal(headers["X-Title"], "Pi");
-    assert.equal(
-      headers["HTTP-Referer"],
-      FIRECONNECT_REFERER,
-    );
-    assert.equal(headers["X-FireRouter-Harness"], undefined);
-    assert.equal(headers["Fireworks-Use-Case"], undefined);
-
-    const off = await runFireconnect(
-      ["pi", "off"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.equal(off.code, 0, off.stderr);
-    assert.equal(await readFile(settingsPath, "utf8"), originalSettings);
-    assert.equal(await readFile(authPath, "utf8"), originalAuth);
-    assert.equal(await readFile(modelsPath, "utf8"), originalModels);
   });
 
   it("second off after on/off round-trip leaves settings unchanged", async () => {
@@ -414,33 +313,13 @@ describe("pi harness integration", () => {
   it("off removes models.json when it did not exist before on", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-no-models-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
-    seedFlatCatalogCache(home, GLM_ALIAS_CATALOG_ROWS);
-    const settingsPath = piSettingsPath(home);
-    const modelsPath = piModelsPath(home);
-    await writeFile(settingsPath, `${JSON.stringify({ defaultProvider: "openai" }, null, 2)}\n`);
-
-    await runFireconnect(
-      ["pi", "on", "--api-key", "fw_test_key_12345"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.ok((await readFile(modelsPath, "utf8")).includes("glm-latest"));
-
+    await writeFile(piSettingsPath(home), `${JSON.stringify({ defaultProvider: "openai" }, null, 2)}\n`);
+    await runFireconnect(["pi", "on", "--api-key", "fw_test_key_12345"], { HOME: home, FIREWORKS_API_KEY: "" });
     await runFireconnect(["pi", "off"], { HOME: home });
-
-    let modelsMissing = false;
-    try {
-      await readFile(modelsPath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        modelsMissing = true;
-      } else {
-        throw error;
-      }
-    }
-    assert.ok(modelsMissing);
+    await assert.rejects(readFile(piModelsPath(home), "utf8"), { code: "ENOENT" });
   });
 
-  it("on enables x-session-affinity via provider compat on direct Fireworks path", async () => {
+  it("on enables x-session-affinity on the rows Nexus registers, not provider-wide", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-session-affinity-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     const env = { HOME: home, FIREWORKS_API_KEY: "fw_test_key_12345" };
@@ -449,261 +328,48 @@ describe("pi harness integration", () => {
     assert.equal(result.code, 0, result.stderr);
 
     const models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-    assert.equal(models.providers.fireworks.compat.sendSessionAffinityHeaders, true);
+    assert.equal(models.providers.fireworks.compat, undefined);
+    assert.deepEqual(models.providers.fireworks.models[0].compat, { sendSessionAffinityHeaders: true });
   });
 
-  it("switching from Fireworks gateway to Azure strips managed compat from a remaining user fireworks provider", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-azure-compat-"));
-    const modelsPath = piModelsPath(home);
+  it("owns providers.fireworks while on; off restores the original models.json", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-own-provider-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
-    await writeFile(modelsPath, `${JSON.stringify({
-      providers: { fireworks: { models: [USER_FIREWORKS_MODEL] } },
+    const ollama = { baseUrl: "http://localhost:11434/v1", api: "openai-completions", apiKey: "ollama", models: [{ id: "llama3" }] };
+    await writeFile(piModelsPath(home), `${JSON.stringify({
+      providers: {
+        ollama,
+        fireworks: {
+          compat: { sendSessionAffinityHeaders: true },
+          headers: { "x-routing-preference": "3", "User-Agent": "fireconnect/0.7.0" },
+          models: [{ id: "accounts/fireworks/routers/retired-code-fast" }],
+        },
+      },
     }, null, 2)}\n`);
-    const env = {
-      HOME: home,
-      FIREWORKS_API_KEY: "fw_test_key_12345",
-      AZURE_API_KEY: AZURE_KEY,
-    };
+    const original = await readFile(piModelsPath(home), "utf8");
+    const env = { HOME: home, FIREWORKS_API_KEY: "" };
 
-    assert.equal((await runFireconnect(["pi", "on"], env)).code, 0);
-    assert.equal(
-      (await runFireconnect(
-        ["pi", "on", "--azure", "--base-url", AZURE_ENDPOINT, "--api-key", AZURE_KEY],
-        env,
-      )).code,
-      0,
-    );
-
-    const models = JSON.parse(await readFile(modelsPath, "utf8"));
-    assert.ok(models.providers[PI_AZURE_PROVIDER]);
-    assert.equal(models.providers.fireworks.compat?.sendSessionAffinityHeaders, undefined);
-    assert.ok(models.providers.fireworks.models.some(
-      (model) => model.id === USER_FIREWORKS_MODEL.id,
-    ));
-  });
-
-  it("switching to Azure clears the recorded managed ids in config.json", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-azure-state-"));
-    await mkdir(path.join(home, ".pi/agent"), { recursive: true });
-    const configPath = path.join(home, ".fireconnect", "config.json");
-
-    // A Fire Pass key resolves an offline catalog (no network), so the direct
-    // on records a deterministic managed-id list.
-    const direct = await runFireconnect(
-      ["pi", "on", "--api-key", "fpk_test_firepass_key"],
-      { HOME: home, FIREWORKS_API_KEY: "" },
-    );
-    assert.equal(direct.code, 0, direct.stderr);
-    const afterDirect = JSON.parse(await readFile(configPath, "utf8"));
-    assert.ok(afterDirect.harnesses?.pi?.profiles?.managedModelIds?.length > 0);
+    const on = await runFireconnect(["pi", "on", "--api-key", "fw_test_key_12345"], env);
+    assert.equal(on.code, 0, on.stderr);
+    let models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
+    assert.deepEqual(models.providers.ollama, ollama);
+    assert.deepEqual(models.providers.fireworks.models.map((model) => model.id), ["auto"]);
+    assert.equal(models.providers.fireworks.compat, undefined);
+    assert.equal(models.providers.fireworks.headers["X-Title"], "Pi");
+    assert.equal(models.providers.fireworks.headers["x-routing-preference"], undefined);
 
     const azure = await runFireconnect(
       ["pi", "on", "--azure", "--base-url", AZURE_ENDPOINT, "--api-key", AZURE_KEY],
-      { HOME: home, FIREWORKS_API_KEY: "", AZURE_API_KEY: "" },
+      env,
     );
     assert.equal(azure.code, 0, azure.stderr);
-    const afterAzure = JSON.parse(await readFile(configPath, "utf8"));
-    assert.equal(afterAzure.harnesses?.pi?.profiles?.managedModelIds, undefined);
-  });
+    models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
+    assert.equal(models.providers.fireworks, undefined, "one Nexus provider at a time");
+    assert.ok(models.providers[PI_AZURE_PROVIDER]);
 
-  it("off without backups strips session-affinity compat when managed models are already gone", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-strip-compat-"));
-    const agentDir = path.join(home, ".pi/agent");
-    await mkdir(agentDir, { recursive: true });
-    await mkdir(path.join(home, PI_DATA_RELATIVE_DIR), { recursive: true });
-    const settingsPath = piSettingsPath(home);
-    const authPath = piAuthPath(home);
-    const modelsPath = piModelsPath(home);
-
-    await writeFile(settingsPath, `${JSON.stringify({
-      defaultProvider: "fireworks",
-      defaultModel: USER_FIREWORKS_MODEL.id,
-      enabledModels: ["fireworks/accounts/fireworks/routers/*"],
-    }, null, 2)}\n`);
-    await writeFile(authPath, `${JSON.stringify({
-      fireworks: { type: "api_key", key: PI_API_KEY_ENV_REF, managedBy: "fireconnect" },
-    }, null, 2)}\n`);
-    await writeFile(modelsPath, `${JSON.stringify({
-      providers: {
-        fireworks: {
-          compat: { sendSessionAffinityHeaders: true, supportsCacheControlOnTools: true },
-          models: [USER_FIREWORKS_MODEL],
-          headers: {
-            "User-Agent": "fireconnect/0.8.0",
-            "X-FireRouter-Harness": "pi",
-            "X-Title": "FireConnect/0.8.0",
-            "Fireworks-Use-Case": "coding",
-            "HTTP-Referer": "fireconnect/v0.8.0",
-            "x-routing-preference": "3",
-            "X-User-Trace": "keep",
-          },
-        },
-      },
-    }, null, 2)}\n`);
-
-    const offResult = await runFireconnect(["pi", "off"], { HOME: home });
-    assert.equal(offResult.code, 0);
-
-    const settings = JSON.parse(await readFile(settingsPath, "utf8"));
-    assert.equal(settings.enabledModels, undefined, "enabledModels cleared on off");
-    const models = JSON.parse(await readFile(modelsPath, "utf8"));
-    assert.equal(models.providers.fireworks.compat.sendSessionAffinityHeaders, undefined);
-    assert.equal(models.providers.fireworks.compat.supportsCacheControlOnTools, true);
-    assert.deepEqual(models.providers.fireworks.models, [USER_FIREWORKS_MODEL]);
-    assert.deepEqual(models.providers.fireworks.headers, {
-      "X-User-Trace": "keep",
-    });
-  });
-
-  it("off without backups strips managed models.json entries", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-strip-models-"));
-    const agentDir = path.join(home, ".pi/agent");
-    await mkdir(agentDir, { recursive: true });
-    await mkdir(path.join(home, PI_DATA_RELATIVE_DIR), { recursive: true });
-    // A prior catalog load left glm-latest in the on-disk cache, which is the
-    // new source for identifying FireConnect-managed models when state lacks
-    // the recorded list.
-    seedFlatCatalogCache(home, GLM_ALIAS_CATALOG_ROWS);
-    const settingsPath = piSettingsPath(home);
-    const authPath = piAuthPath(home);
-    const modelsPath = piModelsPath(home);
-
-    await writeFile(settingsPath, `${JSON.stringify({
-      defaultProvider: "fireworks",
-      defaultModel: "accounts/fireworks/routers/glm-latest",
-    }, null, 2)}\n`);
-    await writeFile(authPath, `${JSON.stringify({
-      fireworks: { type: "api_key", key: PI_API_KEY_ENV_REF, managedBy: "fireconnect" },
-    }, null, 2)}\n`);
-    await writeFile(modelsPath, `${JSON.stringify({
-      providers: {
-        fireworks: {
-          compat: { sendSessionAffinityHeaders: true },
-          models: [{ id: "accounts/fireworks/routers/glm-latest", name: "GLM Latest" }],
-        },
-      },
-    }, null, 2)}\n`);
-
-    const offResult = await runFireconnect(["pi", "off"], { HOME: home });
-    assert.equal(offResult.code, 0);
-
-    let modelsMissing = false;
-    try {
-      await readFile(modelsPath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        modelsMissing = true;
-      } else {
-        throw error;
-      }
-    }
-    assert.ok(modelsMissing);
-    assert.equal(JSON.parse(await readFile(settingsPath, "utf8")).defaultProvider, undefined);
-  });
-
-  it("off without backups strips managed modelOverrides entries", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-strip-overrides-"));
-    const agentDir = path.join(home, ".pi/agent");
-    await mkdir(agentDir, { recursive: true });
-    await mkdir(path.join(home, ".fireconnect"), { recursive: true });
-    const settingsPath = piSettingsPath(home);
-    const authPath = piAuthPath(home);
-    const modelsPath = piModelsPath(home);
-
-    await writeFile(settingsPath, `${JSON.stringify({
-      defaultProvider: "fireworks",
-      defaultModel: "accounts/fireworks/routers/glm-5p2-fast",
-    }, null, 2)}\n`);
-    await writeFile(authPath, `${JSON.stringify({
-      fireworks: { type: "api_key", key: PI_API_KEY_ENV_REF, managedBy: "fireconnect" },
-    }, null, 2)}\n`);
-    await writeFile(modelsPath, `${JSON.stringify({
-      providers: {
-        fireworks: {
-          compat: { sendSessionAffinityHeaders: true },
-          modelOverrides: {
-            "accounts/fireworks/routers/glm-5p2-fast": {
-              name: "GLM 5.2 Fast",
-              reasoning: true,
-            },
-          },
-        },
-      },
-    }, null, 2)}\n`);
-    // The recorded managed-id list lives in the global config's profiles bag.
-    await writeFile(path.join(home, ".fireconnect", "config.json"), `${JSON.stringify({
-      harnesses: {
-        pi: {
-          enabled: true,
-          profiles: { managedModelIds: ["accounts/fireworks/routers/glm-5p2-fast"] },
-        },
-      },
-    }, null, 2)}\n`);
-
-    const offResult = await runFireconnect(["pi", "off"], { HOME: home });
-    assert.equal(offResult.code, 0);
-
-    let modelsMissing = false;
-    try {
-      await readFile(modelsPath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        modelsMissing = true;
-      } else {
-        throw error;
-      }
-    }
-    assert.ok(modelsMissing);
-  });
-
-  it("off reads legacy state.json managedModelIds and migrates (deletes) it", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-legacy-state-"));
-    const agentDir = path.join(home, ".pi/agent");
-    await mkdir(agentDir, { recursive: true });
-    await mkdir(path.join(home, PI_DATA_RELATIVE_DIR), { recursive: true });
-    const settingsPath = piSettingsPath(home);
-    const authPath = piAuthPath(home);
-    const modelsPath = piModelsPath(home);
-    const legacyStatePath = path.join(home, PI_DATA_RELATIVE_DIR, "state.json");
-
-    await writeFile(settingsPath, `${JSON.stringify({
-      defaultProvider: "fireworks",
-      defaultModel: "accounts/fireworks/routers/glm-5p2-fast",
-    }, null, 2)}\n`);
-    await writeFile(authPath, `${JSON.stringify({
-      fireworks: { type: "api_key", key: PI_API_KEY_ENV_REF, managedBy: "fireconnect" },
-    }, null, 2)}\n`);
-    await writeFile(modelsPath, `${JSON.stringify({
-      providers: {
-        fireworks: {
-          compat: { sendSessionAffinityHeaders: true },
-          models: [{ id: "accounts/fireworks/routers/glm-5p2-fast", name: "GLM 5.2 Fast" }],
-        },
-      },
-    }, null, 2)}\n`);
-    // Pre-consolidation install: the managed-id list exists only in state.json.
-    await writeFile(legacyStatePath, `${JSON.stringify({
-      enabled: true,
-      managedModelIds: ["accounts/fireworks/routers/glm-5p2-fast"],
-    })}\n`);
-
-    const offResult = await runFireconnect(["pi", "off"], { HOME: home });
-    assert.equal(offResult.code, 0);
-
-    // Managed entries were stripped via the legacy list…
-    let modelsMissing = false;
-    try {
-      await readFile(modelsPath, "utf8");
-    } catch (error) {
-      if (error.code === "ENOENT") {
-        modelsMissing = true;
-      } else {
-        throw error;
-      }
-    }
-    assert.ok(modelsMissing);
-    // …and the legacy state file was migrated away.
-    assert.equal((await readFile(legacyStatePath, "utf8").catch(() => null)), null);
+    const off = await runFireconnect(["pi", "off"], env);
+    assert.equal(off.code, 0, off.stderr);
+    assert.equal(await readFile(piModelsPath(home), "utf8"), original);
   });
 
   it("status reflects fireworks while enabled and default after off", async () => {
@@ -727,7 +393,7 @@ describe("pi harness integration", () => {
     assert.doesNotMatch(offStatus.stdout, /"defaultProvider": "fireworks"/);
   });
 
-  it("re-on after data dir wipe snapshots so off can restore", async () => {
+  it("re-on after data dir wipe still restores the pre-Nexus config", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-wipe-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     const settingsPath = piSettingsPath(home);
@@ -737,69 +403,34 @@ describe("pi harness integration", () => {
     await writeFile(settingsPath, `${JSON.stringify({ defaultProvider: "openai" }, null, 2)}\n`);
     await writeFile(authPath, `${JSON.stringify({ openai: { type: "api_key", key: "sk-test" } }, null, 2)}\n`);
 
+    const originalSettings = await readFile(settingsPath, "utf8");
+    const originalAuth = await readFile(authPath, "utf8");
     await runFireconnect(["pi", "on", "--api-key", "fw_test_key_12345"], env);
-    const beforeReOnSettings = await readFile(settingsPath, "utf8");
-    const beforeReOnAuth = await readFile(authPath, "utf8");
 
     await rm(path.join(home, PI_DATA_RELATIVE_DIR), { recursive: true, force: true });
 
     await runFireconnect(["pi", "on", "--api-key", "fw_test_key_12345"], env);
     await runFireconnect(["pi", "off"], env);
 
-    assert.equal(await readFile(settingsPath, "utf8"), beforeReOnSettings);
-    assert.equal(await readFile(authPath, "utf8"), beforeReOnAuth);
+    assert.equal(await readFile(settingsPath, "utf8"), originalSettings);
+    assert.equal(await readFile(authPath, "utf8"), originalAuth);
   });
 
-  it("on with --model glm-5p2-fast keeps Pi catalog context in a complete canonical row", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-glm-fast-"));
-    await mkdir(path.join(home, ".pi/agent"), { recursive: true });
-    const env = { HOME: home, FIREWORKS_API_KEY: "fw_test_key_12345" };
-    const canonical = "accounts/fireworks/routers/glm-5p2-fast";
-
-    const result = await runFireconnect(["pi", "on", "--model", "glm-5p2-fast"], env);
-    assert.equal(result.code, 0, result.stderr);
-
-    const settings = JSON.parse(await readFile(piSettingsPath(home), "utf8"));
-    assert.equal(settings.defaultModel, canonical);
-
-    const models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-    const fireworks = models.providers.fireworks;
-    const entry = fireworks.models.find((model) => model.id === canonical);
-    assert.equal(entry.name, "GLM 5.2 Fast");
-    assert.equal(entry.input[0], "text");
-    assert.equal(fireworks.modelOverrides?.[canonical], undefined);
-
-    const effective = resolvePiEffectiveFireworksModel(
-      fireworks,
-      "glm-5p2-fast",
-    );
-    assert.ok(effective.contextWindow >= 1_000_000);
-    assert.equal(effective.cost.input, 2.1);
-  });
-
-  it("on with --model glm-latest gives non-catalog router 1M context in models", async () => {
+  it("on with --model of a catalog router selects it without writing a row over Pi's", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-pi-glm-latest-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
-    // Seed the API alias row so glm-latest resolves to its 1M-context base.
     seedFlatCatalogCache(home, GLM_ALIAS_CATALOG_ROWS);
     const env = { HOME: home, FIREWORKS_API_KEY: "fw_test_key_12345" };
 
     const result = await runFireconnect(["pi", "on", "--model", "glm-latest"], env);
     assert.equal(result.code, 0, result.stderr);
 
+    const settings = JSON.parse(await readFile(piSettingsPath(home), "utf8"));
+    assert.equal(settings.defaultModel, "accounts/fireworks/routers/glm-latest");
     const models = JSON.parse(await readFile(piModelsPath(home), "utf8"));
-    const entry = models.providers.fireworks.models.find(
+    assert.ok(!models.providers.fireworks.models.some(
       (model) => model.id === "accounts/fireworks/routers/glm-latest",
-    );
-    assert.ok(entry);
-    assert.ok(entry.contextWindow >= 1_000_000);
-
-    const effective = resolvePiEffectiveFireworksModel(
-      models.providers.fireworks,
-      "glm-latest",
-    );
-    assert.ok(effective.contextWindow >= 1_000_000);
-    assert.equal(effective.cost.input, 1.4);
+    ));
   });
 
 });

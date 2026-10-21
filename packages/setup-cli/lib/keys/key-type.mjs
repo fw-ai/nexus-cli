@@ -1,27 +1,24 @@
 export const MISSING_FIREWORKS_API_KEY_MESSAGE =
   "No Fireworks API key found. No settings were changed.\n\n"
   + "Sign in:\n"
-  + "  fireconnect login\n\n"
+  + "  nexus login\n\n"
   + "Custom SSO:\n"
-  + "  fireconnect login --account <account-id>";
+  + "  nexus login --account <account-id>";
+
+export const FIREPASS_KEY_UNSUPPORTED_MESSAGE =
+  "Fire Pass keys (fpk_...) are no longer supported. Run `nexus login` to sign in.";
+
+/** Fire Pass keys were retired; callers use this only to explain the rejection. */
+export function isFirePassKey(key) {
+  return typeof key === "string" && key.trim().startsWith("fpk_");
+}
 
 export function isFireworksShapedKey(key) {
-  return typeof key === "string" && (key.startsWith("fw_") || key.startsWith("fpk_"));
+  return typeof key === "string" && key.startsWith("fw_");
 }
 
 export const isFireworksKey = isFireworksShapedKey;
 
 export function fireworksKeyOrEmpty(key) {
   return isFireworksShapedKey(key) ? key.trim() : "";
-}
-
-export function detectApiKeyType(key) {
-  return typeof key === "string" && key.trim().startsWith("fpk_")
-    ? "firepass"
-    : "fireworks";
-}
-
-/** Whether a key is a Fire Pass key (anything else counts as standard). */
-export function isFirepassKey(key) {
-  return detectApiKeyType(key) === "firepass";
 }

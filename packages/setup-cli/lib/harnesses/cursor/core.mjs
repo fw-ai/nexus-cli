@@ -9,6 +9,7 @@ import {
   fullFireworksResourceId,
   isAutoModelId,
   isFirerouterModelPattern,
+  isRetiredModelId,
   normalizeModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
@@ -16,11 +17,10 @@ import { isCachedServerlessModelRef } from "../../fireworks/serverless-catalog-c
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import {
-  detectApiKeyType,
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
 } from "../../keys/key-type.mjs";
-import { FIREPASS_ROUTER_ID, prettyModelName } from "../../fireworks/models.mjs";
+import { prettyModelName } from "../../fireworks/models.mjs";
 import {
   AZURE_API_KEY_ENV,
   AZURE_API_KEY_ENV_REF,
@@ -101,19 +101,30 @@ export const CURSOR_MODES = Object.freeze([
 
 export const CURSOR_DEFAULT_MODE = "composer";
 
-/** User-facing note: only Fireworks picker models work while FireConnect routes Cursor. */
-export const CURSOR_FIREWORKS_ONLY_NOTE =
-  "Only Fireworks models work while FireConnect is on; Cursor's built-ins are hidden. "
-  + "Run `fireconnect cursor off` to restore them.";
+/**
+ * Cursor's own Auto router reserves bare `auto` in the IDE, so Nexus
+ * registers and selects Fireworks' `auto` router in Cursor as `nexus/auto`.
+ */
+export const CURSOR_AUTO_MODEL_ID = `nexus/${AUTO_MODEL_ID}`;
 
-/** Field we own on the blob to track which models fireconnect registered. */
+function cursorModelRef(model) {
+  const short = shortFireworksModelRef(model);
+  return short === AUTO_MODEL_ID ? CURSOR_AUTO_MODEL_ID : short;
+}
+
+/** User-facing note: only Fireworks picker models work while Nexus routes Cursor. */
+export const CURSOR_FIREWORKS_ONLY_NOTE =
+  "Only Fireworks models work while Nexus is on; Cursor's built-ins are hidden. "
+  + "Run `nexus cursor off` to restore them.";
+
+/** Field we own on the blob to track which models nexus registered. */
 const FIRECONNECT_ADDED_FIELD = "fireconnectAddedModels";
-/** Field we own to track which modes fireconnect touched (for clean reset). */
+/** Field we own to track which modes nexus touched (for clean reset). */
 const FIRECONNECT_TOUCHED_MODES_FIELD = "fireconnectTouchedModes";
-/** Field we own to track which built-in models fireconnect hid (for clean reset). */
+/** Field we own to track which built-in models nexus hid (for clean reset). */
 const FIRECONNECT_DISABLED_FIELD = "fireconnectDisabledModels";
 /**
- * Field we own to track which models fireconnect removed from
+ * Field we own to track which models nexus removed from
  * modelOverrideEnabled while hiding them. Cursor's picker treats
  * modelOverrideEnabled as overriding modelOverrideDisabled, so a model the
  * user once toggled on stays visible unless it leaves the enabled list too.
@@ -255,7 +266,7 @@ function withAiSettings(blob, fn) {
 export function addUserModel(blob, modelId, { shortenFireworks = true } = {}) {
   return withAiSettings(blob, (ai) => {
     const toStoredRef = shortenFireworks
-      ? shortFireworksModelRef
+      ? cursorModelRef
       : (value) => value;
     const storedModelId = toStoredRef(modelId);
     const uam = dedupe(
@@ -283,7 +294,7 @@ export function addUserModel(blob, modelId, { shortenFireworks = true } = {}) {
 }
 
 /**
- * Remove exactly the models fireconnect registered (tracked in
+ * Remove exactly the models nexus registered (tracked in
  * fireconnectAddedModels) from userAddedModels + modelOverrideEnabled, then
  * clear the tracker. User-added custom models are never touched.
  * @param {object} blob
@@ -292,36 +303,38 @@ export function addUserModel(blob, modelId, { shortenFireworks = true } = {}) {
 export function removeFireconnectModels(blob) {
   const ours = new Set(
     (blob?.aiSettings?.[FIRECONNECT_ADDED_FIELD] ?? [])
-      .map(shortFireworksModelRef),
+      .map(cursorModelRef),
   );
   if (ours.size === 0) {
     return { ...blob };
   }
   return withAiSettings(blob, (ai) => {
     ai.userAddedModels = (ai.userAddedModels ?? []).filter(
-      (model) => !ours.has(shortFireworksModelRef(model)),
+      (model) => !ours.has(cursorModelRef(model)),
     );
     ai.modelOverrideEnabled = (ai.modelOverrideEnabled ?? []).filter(
-      (model) => !ours.has(shortFireworksModelRef(model)),
+      (model) => !ours.has(cursorModelRef(model)),
     );
     ai[FIRECONNECT_ADDED_FIELD] = [];
   });
 }
 
 /**
- * Migrate public Fireworks refs in Cursor's direct-routing fields to short IDs.
+ * Migrate public Fireworks refs in Cursor's direct-routing fields to short IDs,
+ * and rewrite bare `auto` / `auto-*` mixes to `nexus/auto*` so they don't
+ * collide with Cursor's own `auto` router.
  * Azure deployment names and unrelated models pass through unchanged.
  */
 export function shortenCursorFireworksModelRefs(blob) {
   return withAiSettings(blob, (ai) => {
     ai.userAddedModels = dedupe(
-      [...(ai.userAddedModels ?? [])].map(shortFireworksModelRef),
+      [...(ai.userAddedModels ?? [])].map(cursorModelRef),
     );
     ai.modelOverrideEnabled = dedupe(
-      [...(ai.modelOverrideEnabled ?? [])].map(shortFireworksModelRef),
+      [...(ai.modelOverrideEnabled ?? [])].map(cursorModelRef),
     );
     ai[FIRECONNECT_ADDED_FIELD] = dedupe(
-      [...(ai[FIRECONNECT_ADDED_FIELD] ?? [])].map(shortFireworksModelRef),
+      [...(ai[FIRECONNECT_ADDED_FIELD] ?? [])].map(cursorModelRef),
     );
 
     const config = { ...(ai.modelConfig ?? {}) };
@@ -329,13 +342,13 @@ export function shortenCursorFireworksModelRefs(blob) {
       config[mode] = {
         ...value,
         ...(typeof value?.modelName === "string"
-          ? { modelName: shortFireworksModelRef(value.modelName) }
+          ? { modelName: cursorModelRef(value.modelName) }
           : {}),
         ...(Array.isArray(value?.selectedModels)
           ? {
             selectedModels: value.selectedModels.map((selected) => ({
               ...selected,
-              modelId: shortFireworksModelRef(selected.modelId),
+              modelId: cursorModelRef(selected.modelId),
             })),
           }
           : {}),
@@ -357,20 +370,22 @@ export function shortenCursorFireworksModelRefs(blob) {
  * @returns {(id: string) => boolean}
  */
 function servableChecker(servableIds, { includeKnownFireworks = true } = {}) {
+  const toRef = includeKnownFireworks ? cursorModelRef : shortFireworksModelRef;
   const set = new Set(
     servableIds
-      .map((id) => shortFireworksModelRef(String(id ?? "").trim()))
+      .map((id) => toRef(String(id ?? "").trim()))
       .filter(Boolean),
   );
   return (id) => {
     const raw = String(id ?? "").trim();
-    const ref = shortFireworksModelRef(raw);
+    const ref = toRef(raw);
     if (!ref) {
       return false;
     }
     return set.has(ref)
       || (includeKnownFireworks && (
         isCachedServerlessModelRef(raw)
+        || ref === CURSOR_AUTO_MODEL_ID
         || isAutoModelId(ref)
         || isFirerouterModelPattern(ref)
       ));
@@ -469,7 +484,7 @@ export function disableUnservableModels(blob, { servable, extraCandidates = [] }
 }
 
 /**
- * Un-hide exactly the built-in models fireconnect hid (tracked in
+ * Un-hide exactly the built-in models nexus hid (tracked in
  * fireconnectDisabledModels) and restore the enabled-list entries we stripped
  * (fireconnectToggledOffModels), then clear both trackers. Models the user
  * disabled or enabled themselves are never touched. No-backup `off` strip
@@ -510,7 +525,7 @@ export function reenableFireconnectDisabledModels(blob) {
  */
 export function setModeModel(blob, mode, modelId, { shortenFireworks = true } = {}) {
   const storedModelId = shortenFireworks
-    ? shortFireworksModelRef(modelId)
+    ? cursorModelRef(modelId)
     : modelId;
   return withAiSettings(blob, (ai) => {
     const config = { ...(ai.modelConfig ?? {}) };
@@ -530,7 +545,7 @@ export function setModeModel(blob, mode, modelId, { shortenFireworks = true } = 
 }
 
 /**
- * Reset every mode fireconnect touched back to `modelId`, then clear the
+ * Reset every mode nexus touched back to `modelId`, then clear the
  * touched-modes tracker. Modes the user configured themselves are left alone.
  *
  * `modelId` defaults to Cursor's literal `"default"` — used by the `off`
@@ -540,7 +555,7 @@ export function setModeModel(blob, mode, modelId, { shortenFireworks = true } = 
  * @returns {object} new blob
  */
 export function resetFireconnectModelConfig(blob, modelId = "default") {
-  const storedModelId = shortFireworksModelRef(modelId);
+  const storedModelId = cursorModelRef(modelId);
   const touched = blob?.aiSettings?.[FIRECONNECT_TOUCHED_MODES_FIELD] ?? [];
   if (touched.length === 0) {
     return { ...blob };
@@ -571,7 +586,7 @@ export function setUseOpenAiKey(blob, enabled) {
 }
 
 /**
- * Fields only FireConnect writes. Their presence is proof we applied config to
+ * Fields only Nexus writes. Their presence is proof we applied config to
  * this Cursor, independent of whether the API key is still readable.
  * @param {object} blob
  * @returns {boolean}
@@ -633,7 +648,7 @@ export function cursorCurrentModelId(blob, mode) {
   return cfg?.modelName ?? cfg?.selectedModels?.[0]?.modelId ?? "";
 }
 
-/** @param {object} blob @returns {string[]} models fireconnect registered */
+/** @param {object} blob @returns {string[]} models nexus registered */
 export function fireconnectRegisteredModels(blob) {
   return dedupe([...(blob?.aiSettings?.[FIRECONNECT_ADDED_FIELD] ?? [])]);
 }
@@ -660,6 +675,39 @@ export function setAllExistingModes(blob, modelId, options) {
   return next;
 }
 
+/**
+ * Move every mode whose selected model is a FireRouter route to the
+ * `nexus/auto` row, and prune FireRouter rows from the picker lists and the
+ * Nexus tracker (so `off` bookkeeping stays accurate). Pure: returns the
+ * original blob reference when nothing names a FireRouter route.
+ * @param {object} blob
+ * @returns {{ blob: object, changed: boolean }}
+ */
+export function dropCursorFirerouterSelection(blob) {
+  let next = blob;
+  let changed = false;
+  for (const mode of existingModes(blob)) {
+    if (isRetiredModelId(cursorCurrentModelId(blob, mode))) {
+      next = setModeModel(next, mode, CURSOR_AUTO_MODEL_ID);
+      changed = true;
+    }
+  }
+  const pruned = withAiSettings(next, (ai) => {
+    for (const field of ["userAddedModels", "modelOverrideEnabled", FIRECONNECT_ADDED_FIELD]) {
+      const list = ai[field];
+      if (!Array.isArray(list)) {
+        continue;
+      }
+      const kept = list.filter((id) => !isRetiredModelId(shortFireworksModelRef(String(id ?? ""))));
+      if (kept.length !== list.length) {
+        ai[field] = kept;
+        changed = true;
+      }
+    }
+  });
+  return { blob: changed ? pruned : blob, changed };
+}
+
 // prettyModelName is shared across harnesses — see fireworks-models.mjs for the
 // canonical implementation. Re-exported here so existing cursor imports resolve
 // to the single source of truth.
@@ -678,40 +726,31 @@ function dedupe(arr) {
 /* -------------------------------------------------------------------------- */
 
 /**
- * Default model id fireconnect registers for Cursor. Fire Pass keys are
- * restricted to the Fire Pass router; regular keys default to the shared
- * Fireworks main model (`auto`).
- * `on --model` ensures an explicit model is registered and selected.
- * @param {"fireworks" | "firepass"} keyType
+ * Default model id nexus registers for Cursor: the shared Fireworks
+ * main model (`auto`). `on --model` ensures an explicit model is registered
+ * and selected.
  * @returns {string}
  */
-export function defaultModelIdFor(keyType) {
-  return keyType === "firepass"
-    ? FIREPASS_ROUTER_ID
-    : fullFireworksResourceId(defaultMainModel());
+export function defaultModelIdFor() {
+  return fullFireworksResourceId(defaultMainModel());
 }
 
 /**
- * Resolve a user-supplied model id (`--model`) for `on`. Fire Pass keys are
- * restricted to the Fire Pass router regardless of `--model`; otherwise the
- * id is normalized like OpenCode/Codex (e.g. `glm-5p2` ->
- * `accounts/fireworks/models/glm-5p2`), falling back to the key-type default.
+ * Resolve a user-supplied model id (`--model`) for `on`, normalized like
+ * OpenCode/Codex (e.g. `glm-5p2` -> `accounts/fireworks/models/glm-5p2`),
+ * falling back to the default.
  * @param {string | undefined} modelId
- * @param {"fireworks" | "firepass"} keyType
  * @returns {string}
  */
-function resolveCursorModelId(modelId, keyType) {
-  if (keyType === "firepass") {
-    return FIREPASS_ROUTER_ID;
-  }
-  return normalizeModelId(modelId || defaultModelIdFor(keyType));
+function resolveCursorModelId(modelId) {
+  return normalizeModelId(modelId || defaultModelIdFor());
 }
 
-export const CURSOR_DATA_RELATIVE_DIR = ".fireconnect/cursor";
+export const CURSOR_DATA_RELATIVE_DIR = ".nexus/cursor";
 
 /**
- * Cursor's FireConnect data dir (backup + state). Defaults to
- * `~/.fireconnect/cursor` unless overridden via `--data-dir`.
+ * Cursor's Nexus data dir (backup + state). Defaults to
+ * `~/.nexus/cursor` unless overridden via `--data-dir`.
  * @param {string} home
  * @param {string} [dataDir]
  * @returns {string}
@@ -738,7 +777,7 @@ export async function readCursorBackup(dataDir, dbPath) {
 
 /**
  * One-time relocation of Cursor backups from the legacy shared Claude data dir
- * (`~/.fireconnect/claude`, where older releases wrote them because the
+ * (`~/.nexus/claude`, where older releases wrote them because the
  * Cursor harness reused Claude's `resolveDataDir`) into Cursor's own data dir.
  * Idempotent; safe to call on every command. Leaves any claude-owned
  * `provider-*` files untouched.
@@ -746,7 +785,7 @@ export async function readCursorBackup(dataDir, dbPath) {
  */
 export async function relocateLegacyCursorBackups({ home, dataDir }) {
   const newDir = cursorDataDir(home, dataDir);
-  const legacyDir = path.join(home, ".fireconnect/claude");
+  const legacyDir = path.join(home, ".nexus/claude");
   if (path.resolve(newDir) === path.resolve(legacyDir) || !existsSync(legacyDir)) {
     return;
   }
@@ -805,15 +844,13 @@ export async function removeCursorBackup(dataDir, dbPath) {
  * Re-`on` without a prior backup does not overwrite the original snapshot
  * (so `off` can still restore it).
  *
- * @param {{ dbPath: string, dataDir: string, apiKey: string, modelId?: string, keyType?: "fireworks" | "firepass", catalogUnavailable?: boolean }} opts
- * @returns {Promise<{ model: string, keyType: "fireworks" | "firepass" }>}
+ * @param {{ dbPath: string, dataDir: string, apiKey: string, modelId?: string, catalogUnavailable?: boolean }} opts
+ * @returns {Promise<{ model: string }>}
  */
-export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, keyType = "fireworks", extraModels = [], catalogUnavailable = false }) {
+export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, extraModels = [], catalogUnavailable = false }) {
   if (!apiKey) {
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
-
-  const resolvedKeyType = keyType === "fireworks" ? detectApiKeyType(apiKey) : keyType;
 
   const appUserRaw = await readCursorValue(dbPath, APPLICATION_USER_KEY);
   const appUserExisted = Boolean(appUserRaw);
@@ -829,9 +866,6 @@ export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, 
   // is unrecoverable and we must not snapshot the Fireworks config (or `off`
   // would "restore" routing).
   const providerStatus = cursorProviderStatus(blob, priorKey);
-  const previousKeyType = isFireworksShapedKey(priorKey)
-    ? detectApiKeyType(priorKey)
-    : "";
   const alreadyManaged = providerStatus !== "none";
   const shouldSnapshot = !hasBackup && !alreadyManaged;
   if (shouldSnapshot) {
@@ -861,15 +895,14 @@ export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, 
     || !hasBackup;
   const servable = servableChecker([
     ...(includeResolvedModel
-      ? [resolveCursorModelId(requestedModel, resolvedKeyType)]
+      ? [resolveCursorModelId(requestedModel)]
       : []),
     ...extraModels,
     ...(catalogUnavailable
       ? fireconnectRegisteredModels(blob).filter(
         (id) => !cursorBuiltinNames.has(id)
           || isCachedServerlessModelRef(id)
-          || isAutoModelId(id)
-          || isFirerouterModelPattern(id),
+          || cursorModelRef(id) === CURSOR_AUTO_MODEL_ID,
       )
       : []),
   ]);
@@ -882,18 +915,17 @@ export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, 
   // it falls through to the default and is reported as `replacedModel`.
   const preserveModeSelections = !requestedModel
     && providerStatus === "fireworks"
-    && (!previousKeyType || previousKeyType === resolvedKeyType)
     && currentModel
     && currentModel !== "default"
-    && !isFirerouterModelPattern(currentModel)
+    && !isRetiredModelId(currentModel)
     && servable(currentModel);
-  const resolvedModel = shortFireworksModelRef(
+  const resolvedModel = cursorModelRef(
     preserveModeSelections
       ? normalizeModelId(currentModel)
-      : resolveCursorModelId(requestedModel, resolvedKeyType),
+      : resolveCursorModelId(requestedModel),
   );
   // Only unservable picks earn the "isn't on Fireworks" note — explicit
-  // --model switches, firerouter picks, and key-type changes drop a perfectly
+  // --model switches and firerouter picks drop a perfectly
   // valid Fireworks model too, and the note would be wrong for those.
   const replacedModel = !preserveModeSelections
     && providerStatus === "fireworks"
@@ -912,31 +944,31 @@ export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, 
   const staleRegistered = (next.aiSettings?.fireconnectAddedModels ?? [])
     .filter((id) => !keepRegistered(id));
   next = pruneUnservableAddedModels(next, { servable: keepRegistered });
+  // Retired rows (FireRouter, auto-instant) never survive a re-`on`, even
+  // when the catalog is unavailable and registered rows are otherwise
+  // trusted: prune them explicitly, like the upgrade migration does.
+  next = dropCursorFirerouterSelection(next).blob;
   // The `auto` mix has no serverless listing — the gateway serves it without
   // one — so an install from before `auto` became the default would end up
-  // SELECTING auto (the plain-on default) with no picker row for it, and a
-  // re-`on` adds nothing to an already-routed install. Backfill it like
+  // SELECTING nexus/auto (the plain-on default) with no picker row for it, and
+  // a re-`on` adds nothing to an already-routed install. Backfill it like
   // `upgrade`'s ensureCursorAuto so the row always exists on a fireworks key.
   const registeredShortIds = new Set(
     (next.aiSettings?.userAddedModels ?? [])
-      .map((id) => shortFireworksModelRef(String(id ?? "")))
+      .map((id) => cursorModelRef(String(id ?? "")))
       .filter(Boolean),
   );
-  const autoBackfill = resolvedKeyType === "firepass" || registeredShortIds.has(AUTO_MODEL_ID)
-    ? []
-    : [AUTO_MODEL_ID];
+  const autoBackfill = registeredShortIds.has(CURSOR_AUTO_MODEL_ID) ? [] : [CURSOR_AUTO_MODEL_ID];
   // Shared catalog-refresh policy: prune unservable ids (above) AND register
   // newly served ones, so the picker tracks the live catalog instead of going
   // stale until the next fresh setup or upgrade. addUserModel dedupes, so
-  // overlapping ids (auto in both lists) are added once.
-  const missingCatalog = resolvedKeyType === "firepass"
-    ? []
-    : planCatalogRefresh({
-      currentIds: [...registeredShortIds],
-      freshIds: extraModels
-        .map((id) => shortFireworksModelRef(String(id ?? "")))
-        .filter(Boolean),
-    }).added;
+  // overlapping ids (nexus/auto in both lists) are added once.
+  const missingCatalog = planCatalogRefresh({
+    currentIds: [...registeredShortIds],
+    freshIds: extraModels
+      .map((id) => cursorModelRef(String(id ?? "")))
+      .filter(Boolean),
+  }).added;
   const modelsToAdd = !(hasBackup && providerStatus === "fireworks")
     // Shared fresh-install policy (see lib/harness/catalog-refresh.mjs).
     // addUserModel dedupes, so the overlap between extraModels and
@@ -965,7 +997,6 @@ export async function enableCursorFireworks({ dbPath, dataDir, apiKey, modelId, 
     model: resolvedModel,
     replacedModel,
     modelsAdded: fireconnectRegisteredModels(next),
-    keyType: resolvedKeyType,
     encrypted: isSecretEncryptionAvailable({ variant: "cursor", localStatePath: cursorLocalStatePath(dbPath) }),
     obfuscatedKey,
   };
@@ -1043,7 +1074,7 @@ export async function enableCursorAzure({ dbPath, dataDir, apiKey, baseUrl, mode
     await writeCursorBackup(dataDir, dbPath, { appUserExisted, appUserRaw, openAIKey: priorKey });
   }
 
-  // Drop any previously registered fireconnect models (e.g. a prior Fireworks
+  // Drop any previously registered nexus models (e.g. a prior Fireworks
   // gateway catalog) so only the Foundry deployment remains in the picker.
   const servable = servableChecker([resolvedModel], { includeKnownFireworks: false });
   let next = removeFireconnectModels(blob);
@@ -1066,7 +1097,7 @@ export async function enableCursorAzure({ dbPath, dataDir, apiKey, baseUrl, mode
 /**
  * Disable Fireworks routing for Cursor. If a pre-`on` snapshot exists, restore
  * the applicationUser blob + OpenAI key cell byte-for-byte; otherwise strip
- * only what fireconnect owns (legacy/no-backup case).
+ * only what nexus owns (legacy/no-backup case).
  *
  * The strip path is gated on our ownership markers alone. It deliberately does
  * not also require Cursor to look "active": a teardown that cleared the key cell
@@ -1117,7 +1148,7 @@ export async function disableCursorFireworks({ dbPath, dataDir }) {
     return "restored";
   }
 
-  // Only strip what fireconnect owns. If the user set up Fireworks routing
+  // Only strip what nexus owns. If the user set up Fireworks routing
   // manually (no fireconnectAddedModels / fireconnectTouchedModes markers),
   // there's nothing for us to clean up — touching their config would destroy
   // a setup we didn't create.

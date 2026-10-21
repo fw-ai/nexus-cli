@@ -1,5 +1,5 @@
 /**
- * Pre-flight readiness checks and interactive gate for `fireconnect claude demo`.
+ * Pre-flight readiness checks and interactive gate for `nexus claude demo`.
  */
 
 import { spawnSync } from "node:child_process";
@@ -16,7 +16,7 @@ import {
   CLEAR_SCREEN, HOME_CURSOR, CLEAR_LINE, HIDE_CURSOR, SHOW_CURSOR, moveTo,
 } from "./ansi.mjs";
 export const FIRECONNECT_REQUIRED_MSG =
-  "Run `fireconnect claude` first (check with `fireconnect claude status`).";
+  "Run `nexus claude` first (check with `nexus claude status`).";
 
 export const DEMO_CANCELLED_MSG = "Demo cancelled.";
 
@@ -61,10 +61,10 @@ function statusMark(ok) {
 function renderReadinessLines(readiness) {
   const lines = [
     "",
-    `  ${BOLD}${CYAN}FireConnect Demo — get ready${RESET}`,
-    `  ${DIM}Both sides use your FireConnect Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`,
+    `  ${BOLD}${CYAN}Nexus Demo — get ready${RESET}`,
+    `  ${DIM}Both sides use your Nexus Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`,
     "",
-    `  ${statusMark(readiness.claudeOn)}  ${BOLD}fireconnect claude${RESET}  ${DIM}(Fireworks routing)${RESET}`,
+    `  ${statusMark(readiness.claudeOn)}  ${BOLD}nexus claude${RESET}  ${DIM}(Fireworks routing)${RESET}`,
     `  ${statusMark(readiness.fireworksKey)}  ${BOLD}Fireworks API key${RESET}  ${DIM}(login or FIREWORKS_API_KEY)${RESET}`,
     `  ${statusMark(readiness.claudeBinary)}  ${BOLD}claude${RESET} on PATH  ${DIM}(Claude Code CLI)${RESET}`,
     "",
@@ -74,10 +74,10 @@ function renderReadinessLines(readiness) {
   } else {
     lines.push(`  ${YELLOW}Fix the items above, then press ${BOLD}r${RESET} to refresh.${RESET}`);
     if (!readiness.claudeOn) {
-      lines.push(`  ${DIM}Tip: press ${BOLD}o${RESET}${DIM} to run \`fireconnect claude\`${RESET}`);
+      lines.push(`  ${DIM}Tip: press ${BOLD}o${RESET}${DIM} to run \`nexus claude\`${RESET}`);
     }
     if (!readiness.fireworksKey) {
-      lines.push(`  ${DIM}Tip: run \`fireconnect login\` in another terminal${RESET}`);
+      lines.push(`  ${DIM}Tip: run \`nexus login\` in another terminal${RESET}`);
     }
   }
   lines.push("");
@@ -86,7 +86,7 @@ function renderReadinessLines(readiness) {
 }
 
 function runFireconnectClaudeOn(home) {
-  const bin = path.join(resolveSetupCliDir(), "bin/fireconnect.mjs");
+  const bin = path.join(resolveSetupCliDir(), "bin/nexus.mjs");
   spawnSync(process.execPath, [bin, "claude", "on"], {
     env: { ...process.env, HOME: home || process.env.HOME || "" },
     stdio: "inherit",
@@ -228,7 +228,7 @@ export function formatReadinessError(readiness) {
     parts.push(FIRECONNECT_REQUIRED_MSG);
   }
   if (!readiness.fireworksKey) {
-    parts.push("No Fireworks API key found — run `fireconnect login`, export FIREWORKS_API_KEY, or pass --api-key.");
+    parts.push("No Fireworks API key found — run `nexus login`, export FIREWORKS_API_KEY, or pass --api-key.");
   }
   if (!readiness.claudeBinary) {
     parts.push("Claude Code CLI (`claude`) not found on PATH.");

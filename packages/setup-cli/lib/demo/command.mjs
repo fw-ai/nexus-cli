@@ -1,5 +1,5 @@
 /**
- * `fireconnect demo` — races two models on the same prompt via Claude Code,
+ * `nexus demo` — races two models on the same prompt via Claude Code,
  * streams both live in a split-pane terminal UI, then opens a browser comparison.
  */
 
@@ -28,7 +28,7 @@ import { normalizeOptions, prepareDemoRun } from "./demo-prep.mjs";
 import { DEMO_CANCELLED_MSG } from "./demo-readiness.mjs";
 import { demoSystemPrompt } from "./presets.mjs";
 
-const DEFAULT_OUT_DIR = "./fireconnect-demo";
+const DEFAULT_OUT_DIR = "./nexus-demo";
 
 // Files the demo writes at the root of its output dir. `demo clean` treats a
 // directory as demo output ONLY if it holds one of these, so it can never delete
@@ -39,7 +39,7 @@ const DEMO_OUTPUT_MARKERS = ["result.json", "compare.html", "rates.json", "promp
 // crash can leave them behind, so `demo clean` sweeps any stragglers.
 const DEMO_TMP_PREFIXES = ["fc-demo-inc-", "fc-demo-fw-", "fireconnect-demo-"];
 
-// ── `fireconnect demo clean` ──────────────────────────────────────────────────
+// ── `nexus demo clean` ──────────────────────────────────────────────────
 
 /** @param {string} p @returns {Promise<boolean>} */
 async function pathExists(p) {
@@ -604,7 +604,7 @@ function sideHeader(proto, rates, costLabel) {
 
 function printFraming(leftLabel, rightLabel) {
   console.log("");
-  console.log("  FireConnect Demo");
+  console.log("  Nexus Demo");
   console.log("  Same prompt, two models. Let's build something and race.");
   console.log("");
   console.log(`  Left:   ${leftLabel}`);
@@ -699,7 +699,7 @@ function buildCopySummary(result, leftLabel, rightLabel) {
   const right = shortLabel(rightLabel);
   const bothOk = result.incumbent.ok && result.fireworks.ok;
   if (!bothOk) {
-    return `Raced ${left} vs ${right} on the ${result.promptTitle} prompt — one side didn't finish, so no comparison. Built with \`fireconnect claude demo\`.`;
+    return `Raced ${left} vs ${right} on the ${result.promptTitle} prompt — one side didn't finish, so no comparison. Built with \`nexus claude demo\`.`;
   }
   const speedPart = verdictSpeedText(result, left, right);
   const cf = result.summary.costSavedFraction;
@@ -708,7 +708,7 @@ function buildCopySummary(result, leftLabel, rightLabel) {
     const appPart = bothRunnable ? ", working app" : ", one build didn't run";
     return (
       `Raced ${left} vs ${right} on the same ${result.promptTitle} prompt. `
-      + `${speedPart}, cost not comparable${appPart}. Built with \`fireconnect claude demo\`.`
+      + `${speedPart}, cost not comparable${appPart}. Built with \`nexus claude demo\`.`
     );
   }
   // Rebase to match the compare.html strip and terminal verdict (same race,
@@ -736,7 +736,7 @@ function buildCopySummary(result, leftLabel, rightLabel) {
   const appPart = bothRunnable ? ", working app" : ", one build didn't run";
   return (
     `Raced ${left} vs ${right} on the same ${result.promptTitle} prompt. `
-    + `${speedPart}, ${costPart}${appPart}. Built with \`fireconnect claude demo\`.`
+    + `${speedPart}, ${costPart}${appPart}. Built with \`nexus claude demo\`.`
   );
 }
 

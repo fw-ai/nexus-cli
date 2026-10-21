@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,22 +10,18 @@ import {
   FIREWORKS_INFERENCE_URL,
   FPK_KEY,
   FW_CLAUDE_KEY,
-  FIREPASS_ROUTER,
-  GLM_LATEST,
   GLM_FAST_LATEST,
-  KIMI_FAST_LATEST,
   NO_ENV_KEY,
-  expectedOpencodeLatestRouterEntry,
   readClaudeSettings,
   readOpencodeConfig,
   runCli,
   runCliJson,
+  seedKeychainConfig,
   seedServerlessCatalogCache,
   SK_ANT_KEY,
   withTempHome,
   writeClaudeSettings,
   writeNativeAnthropicSettings,
-  assertClaudeMainModel,
   assertClaudeNativeTierSlots,
   assertClaudeRegisterablePicker,
   writeOpencodeConfig,
@@ -92,7 +89,23 @@ function seedOnCatalog(home) {
   }
 }
 
-const CLAUDE_STORED_MAIN_MODEL = `${KIMI_FAST_LATEST}[1m]`;
+const ALT_FW_KEY = "fw_alt_test_key_00000000000000000";
+
+/** Gateway stub that records each request's bearer key and answers 500. */
+function startKeyRecordingGateway() {
+  const keys = [];
+  const server = createServer((req, res) => {
+    keys.push((req.headers.authorization ?? "").replace(/^Bearer /, ""));
+    res.writeHead(500);
+    res.end();
+  });
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve({ server, keys, url: `http://127.0.0.1:${server.address().port}` });
+    });
+  });
+}
+
 const CLAUDE_STORED_FABLE_MODEL = "glm-flash-latest[1m]";
 const CLAUDE_STORED_GLM_MODEL = `${GLM_FAST_LATEST}[1m]`;
 const CLAUDE_STORED_DS_FLASH_MODEL = "deepseek-flash-latest[1m]";
@@ -107,9 +120,9 @@ describe("fireconnect bare invocation", () => {
     await withTempHome("bare-help", async (home) => {
       const result = await runCli([], { home });
       assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /FireConnect/);
+      assert.match(result.stdout, /Nexus/);
       assert.match(result.stdout, /Harness commands/);
-      assert.match(result.stdout, /fireconnect <harness> help/);
+      assert.match(result.stdout, /nexus <harness> help/);
     });
   });
 });
@@ -174,15 +187,17 @@ describe("harness help matches supported command features", () => {
     });
   });
 
-  test("documents optional usage and VS Code FireRouter options", async () => {
+  test("documents optional usage and retired VS Code FireRouter options", async () => {
     const root = await runCli(["help"]);
     assert.match(root.stdout, /usage/);
     assert.match(root.stdout, /--refresh/);
 
     const vscode = await runCli(["help", "vscode"]);
-    assert.match(vscode.stdout, /--routing-preference/);
-    assert.match(vscode.stdout, /--anthropic-api-key/);
-    assert.match(vscode.stdout, /--openai-api-key/);
+    assert.doesNotMatch(vscode.stdout, /--routing-preference/);
+    // The BYOK flags only served FireRouter and are rejected on `on` now,
+    // so help no longer advertises them.
+    assert.doesNotMatch(vscode.stdout, /--anthropic-api-key/);
+    assert.doesNotMatch(vscode.stdout, /--openai-api-key/);
   });
 
   test("documents FireRouter caveats per harness", async () => {
@@ -202,14 +217,13 @@ describe("harness help matches supported command features", () => {
     assert.match(claude.stdout, /--home <path>/);
     assert.match(claude.stdout, /--data-dir <path>/);
     assert.match(claude.stdout, /Override HOME/);
-    assert.match(claude.stdout, /max-intelligence, more-intelligence, balanced/);
-    assert.match(claude.stdout, /--model firerouter/);
+    assert.doesNotMatch(claude.stdout, /--routing-preference/);
     assert.doesNotMatch(claude.stdout, /--anthropic-api-key/);
 
     const codex = await runCli(["codex", "help"]);
     assert.equal(codex.code, 0, codex.stderr);
     assert.match(codex.stdout, /Options for on/);
-    assert.match(codex.stdout, /default: firerouter/);
+    assert.match(codex.stdout, /default: auto/);
     assert.doesNotMatch(codex.stdout, /--anthropic-api-key/);
     assert.doesNotMatch(codex.stdout, /ANTHROPIC_API_KEY/);
     assert.doesNotMatch(codex.stdout, /--openai-api-key/);
@@ -224,12 +238,12 @@ describe("harness help matches supported command features", () => {
     const cursor = await runCli(["cursor", "help"]);
     assert.equal(cursor.code, 0, cursor.stderr);
     assert.match(cursor.stdout, /Quit Cursor before on\/off/);
-    assert.match(cursor.stdout, /Only Fireworks models work while FireConnect is on/);
+    assert.match(cursor.stdout, /Only Fireworks models work while Nexus is on/);
     assert.match(cursor.stdout, /built-ins are hidden/);
 
     const deepseek = await runCli(["deepseek", "help"]);
     assert.equal(deepseek.code, 0, deepseek.stderr);
-    assert.match(deepseek.stdout, /use firerouter for FireRouter/);
+    assert.match(deepseek.stdout, /default: auto/);
   });
 
   test("fireconnect <harness> help matches fireconnect help <harness>", async () => {
@@ -284,19 +298,19 @@ describe("unexpected input guidance", () => {
     const result = await runCli(["claude", "on", "--not-a-flag"]);
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /Unknown argument: --not-a-flag/);
-    assert.match(result.stderr, /Run: fireconnect claude help/);
+    assert.match(result.stderr, /Run: nexus claude help/);
 
     const wrongContext = await runCli(["pi", "on", "--force"]);
     assert.notEqual(wrongContext.code, 0);
     assert.match(wrongContext.stderr, /--force is only supported/);
-    assert.match(wrongContext.stderr, /Run: fireconnect pi help/);
+    assert.match(wrongContext.stderr, /Run: nexus pi help/);
   });
 
   test("global errors point to global help", async () => {
     const result = await runCli(["not-a-command"]);
     assert.notEqual(result.code, 0);
     assert.match(result.stderr, /Unknown command: not-a-command/);
-    assert.match(result.stderr, /Run: fireconnect help/);
+    assert.match(result.stderr, /Run: nexus help/);
   });
 });
 
@@ -312,11 +326,12 @@ describe("fireconnect claude on", () => {
 
       const settings = await readClaudeSettings(home);
       // Main is native (unpinned): no top-level model and no legacy main env.
-      assert.equal(settings.model, "firerouter[1m]");
+      assert.equal(settings.model, "auto[1m]");
       assert.equal(settings.env?.ANTHROPIC_MODEL, undefined);
       assertClaudeNativeTierSlots(settings);
       assertClaudeRegisterablePicker(settings, {
-        includes: ["auto[1m]", "firerouter[1m]", "glm-latest[1m]"],
+        includes: ["auto[1m]", "glm-latest[1m]"],
+        excludes: ["firerouter[1m]"],
       });
       assert.equal(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION, undefined);
       assert.equal(settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER, undefined);
@@ -329,28 +344,34 @@ describe("fireconnect claude on", () => {
     });
   });
 
-  test("fpk_ routes Claude Code to auto", async () => {
+  test("rejects an fpk_ --api-key", async () => {
     await withTempHome("on-fpk", async (home) => {
-      seedOnCatalog(home);
       const result = await runCli(
         ["claude", "on", "--api-key", FPK_KEY],
-        { home, env: { ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" } },
+        { home, env: { ...NO_ENV_KEY, ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" } },
       );
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /Model picker/);
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /Fire Pass keys \(fpk_\.\.\.\) are no longer supported\. Run `nexus login` to sign in\./);
+    });
+  });
 
-      const settings = await readClaudeSettings(home);
-      assertClaudeMainModel(settings, CLAUDE_STORED_MAIN_MODEL);
-      for (const key of [
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_FABLE_MODEL",
-      ]) {
-        assert.equal(settings.env[key], CLAUDE_STORED_MAIN_MODEL);
-      }
-      assert.equal(settings.env.CLAUDE_CODE_SUBAGENT_MODEL, CLAUDE_STORED_MAIN_MODEL);
-      assert.equal(Object.hasOwn(settings.env, "CLAUDE_CODE_DISABLE_1M_CONTEXT"), false);
+  test("treats a stored fpk_ key as missing and points to login", async () => {
+    await withTempHome("on-fpk-stored", async (home) => {
+      await seedKeychainConfig(home, FPK_KEY);
+      const result = await runCli(["opencode", "on"], { home, env: NO_ENV_KEY });
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /No Fireworks API key found[\s\S]*nexus login/);
+    });
+  });
+
+  test("rejects an fpk_ FIREWORKS_API_KEY with the login hint", async () => {
+    await withTempHome("on-fpk-env", async (home) => {
+      const result = await runCli(
+        ["opencode", "on"],
+        { home, env: { FIREWORKS_API_KEY: FPK_KEY } },
+      );
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /no longer supported\. Run `nexus login`/);
     });
   });
 
@@ -371,22 +392,24 @@ describe("fireconnect claude on", () => {
       const settings = await readClaudeSettings(home);
       assert.equal(settings.apiKeyHelper, undefined);
       assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, new RegExp(`X-Fireworks-Api-Key: ${FW_CLAUDE_KEY}`));
-      assert.equal(settings.model, "firerouter[1m]");
+      assert.equal(settings.model, "auto[1m]");
       assert.equal(settings.env?.ANTHROPIC_MODEL, undefined);
       assertClaudeNativeTierSlots(settings);
-      assertClaudeRegisterablePicker(settings, { includes: ["firerouter[1m]"] });
+      assertClaudeRegisterablePicker(settings, { includes: ["auto[1m]"], excludes: ["firerouter[1m]"] });
       assert.equal(settings.env.ANTHROPIC_API_KEY, SK_ANT_KEY);
       assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);
       assert.equal(settings.env.ANTHROPIC_BASE_URL, FIREWORKS_INFERENCE_URL);
     });
   });
 
-  test("re-run: FIREWORKS_API_KEY env beats stored Fire Pass key", async () => {
-    await withTempHome("reon-fpk", async (home) => {
-      await runCli(
-        ["claude", "on", "--api-key", FPK_KEY],
-        { home, env: { ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" } },
+  test("re-run: FIREWORKS_API_KEY env beats stored key", async () => {
+    await withTempHome("reon-stored", async (home) => {
+      seedOnCatalog(home);
+      const first = await runCli(
+        ["claude", "on", "--api-key", ALT_FW_KEY],
+        { home, env: { ...NO_ENV_KEY, ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" } },
       );
+      assert.equal(first.code, 0, first.stderr);
       const result = await runCli(["claude", "on"], {
         home,
         env: {
@@ -396,7 +419,6 @@ describe("fireconnect claude on", () => {
         },
       });
       assert.equal(result.code, 0, result.stderr);
-      assert.doesNotMatch(result.stdout, /Fire Pass/);
 
       const settings = await readClaudeSettings(home);
       assert.equal(settings.apiKeyHelper, undefined);
@@ -432,60 +454,29 @@ describe("fireconnect opencode on", () => {
     });
   });
 
-  test("fpk_ uses kimi-fast-latest via firepass pin", async () => {
-    await withTempHome("on-fpk-oc", async (home) => {
-      seedOnCatalog(home);
-      const result = await runCli(
-        ["opencode", "on", "--api-key", FPK_KEY],
-        { home },
-      );
-      assert.equal(result.code, 0, result.stderr);
-
-      const config = await readOpencodeConfig(home);
-      assert.equal(config.model, `fireworks-ai/${KIMI_FAST_LATEST}`);
-      assert.deepEqual(
-        config.provider["fireworks-ai"].models[KIMI_FAST_LATEST],
-        {
-          ...expectedOpencodeLatestRouterEntry("Kimi K3 Fast (Latest)", 1_040_000, 131_072),
-          modalities: { input: ["text", "image"] },
-        },
-      );
-    });
-  });
 });
 
 describe("fireconnect model list", () => {
-  test("Fire Pass key shows supported routers", async () => {
-    await withTempHome("ml-fpk", async (home) => {
-      const { json } = await runCliJson(
-        ["model", "list", "--api-key", FPK_KEY, "--json"],
-        { home, env: NO_ENV_KEY },
-      );
-      assert.equal(json.keyType, "firepass");
-      assert.equal(json.source, "firepass");
-      assert.equal(json.updatedAt, null);
-      assert.equal(json.count, 4);
-      assert.deepEqual(
-        json.models.map((entry) => entry.shortId),
-        [GLM_LATEST, GLM_FAST_LATEST, "glm-5p2-fast", KIMI_FAST_LATEST],
-      );
-    });
-  });
-
   test("FIREWORKS_API_KEY env beats globally stored key", async () => {
-    await withTempHome("ml-env", async (home) => {
-      await writeGlobalConfig(home, { apiKey: FW_CLAUDE_KEY });
-      const { json } = await runCliJson(
-        ["model", "list", "--json"],
-        { home, env: { FIREWORKS_API_KEY: FPK_KEY } },
-      );
-      assert.equal(json.keyType, "firepass");
-    });
+    const gateway = await startKeyRecordingGateway();
+    try {
+      await withTempHome("ml-env", async (home) => {
+        await writeGlobalConfig(home, { apiKey: FW_CLAUDE_KEY });
+        await runCli(
+          ["model", "list", "--refresh", "--json"],
+          { home, env: { FIREWORKS_API_KEY: ALT_FW_KEY, NEXUS_GATEWAY_URL: gateway.url } },
+        );
+      });
+      assert.ok(gateway.keys.length > 0, "expected a catalog request");
+      assert.ok(gateway.keys.every((key) => key === ALT_FW_KEY), gateway.keys.join(","));
+    } finally {
+      gateway.server.close();
+    }
   });
 
   test("uses the globally stored key and ignores harness-only keys", async () => {
     await withTempHome("ml-global-key", async (home) => {
-      await writeOpencodeConfig(home, FPK_KEY);
+      await writeOpencodeConfig(home, FW_CLAUDE_KEY);
       const missing = await runCli(
         ["model", "list", "--json"],
         { home, env: NO_ENV_KEY },
@@ -493,37 +484,61 @@ describe("fireconnect model list", () => {
       assert.notEqual(missing.code, 0);
       assert.match(missing.stderr, /No Fireworks API key found/);
 
-      await writeGlobalConfig(home, { apiKey: FPK_KEY });
-      const { json } = await runCliJson(
+      await writeGlobalConfig(home, { apiKey: FW_CLAUDE_KEY });
+      seedServerlessCatalogCache(home, [{
+        id: "accounts/fireworks/models/cached-model",
+        shortId: "cached-model",
+        displayName: "Cached Model",
+        kind: "serverless",
+      }]);
+      const { code, stderr, json } = await runCliJson(
         ["model", "list", "--json"],
         { home, env: NO_ENV_KEY },
       );
-      assert.equal(json.keyType, "firepass");
+      assert.equal(code, 0, stderr);
+      assert.ok(json.models.some((entry) => entry.shortId === "cached-model"));
     });
   });
 
-  test("text output groups preferred Fire Pass routers without pricing columns (subscription)", async () => {
-    await withTempHome("ml-banner", async (home) => {
-      const result = await runCli(
-        ["model", "list", "--api-key", FPK_KEY],
+  test("never lists FireRouter rows, even when the catalog returns them", async () => {
+    await withTempHome("ml-no-firerouter-", async (home) => {
+      await writeGlobalConfig(home, { apiKey: FW_CLAUDE_KEY });
+      seedServerlessCatalogCache(home, [
+        {
+          id: "accounts/fireworks/models/cached-model",
+          shortId: "cached-model",
+          displayName: "Cached Model",
+          kind: "serverless",
+        },
+        {
+          id: "accounts/fireworks/routers/firerouter",
+          shortId: "firerouter",
+          displayName: "FireRouter",
+          kind: "serverless",
+        },
+      ]);
+      const { code, stderr, json } = await runCliJson(
+        ["model", "list", "--json"],
         { home, env: NO_ENV_KEY },
       );
-      assert.equal(result.code, 0, result.stderr);
-      assert.match(result.stdout, /LATEST ROUTERS: recommended, automatically track new versions/);
-      assert.match(result.stdout, /FAST ROUTERS: higher tokens per second/);
-      // Fire Pass is a subscription — no per-model metered pricing columns.
-      assert.doesNotMatch(result.stdout, /INPUT\s+CACHED\s+OUTPUT/);
-      assert.doesNotMatch(result.stdout, /\$/);
-      assert.match(result.stdout, /glm-latest/);
-      assert.match(result.stdout, /glm-fast-latest/);
-      assert.match(result.stdout, /kimi-fast-latest/);
-      assert.match(result.stdout, /\(text-only\)/);
-      assert.doesNotMatch(result.stdout, /glm-5p2-fast/);
-      assert.doesNotMatch(result.stdout, /kimi-k2p6-turbo/);
-      assert.doesNotMatch(result.stdout, /kimi-latest/);
-      assert.doesNotMatch(result.stdout, /\bKIND\b/);
-      assert.match(result.stdout, /Last updated: bundled with FireConnect/);
-      assert.match(result.stdout, /fireconnect model list --refresh/);
+      assert.equal(code, 0, stderr);
+      assert.ok(json.models.some((entry) => entry.shortId === "cached-model"));
+      assert.ok(
+        !json.models.some((entry) => entry.shortId?.startsWith("firerouter") || entry.id?.includes("firerouter")),
+        JSON.stringify(json.models.map((entry) => entry.shortId)),
+      );
+    });
+  });
+
+  test("ignores a globally stored fpk_ key", async () => {
+    await withTempHome("ml-global-fpk", async (home) => {
+      await writeGlobalConfig(home, { apiKey: FPK_KEY });
+      const result = await runCli(
+        ["model", "list", "--json"],
+        { home, env: NO_ENV_KEY },
+      );
+      assert.notEqual(result.code, 0);
+      assert.match(result.stderr, /No Fireworks API key found/);
     });
   });
 
@@ -542,7 +557,7 @@ describe("fireconnect model list", () => {
           home,
           env: {
             ...NO_ENV_KEY,
-            FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:9",
+            NEXUS_GATEWAY_URL: "http://127.0.0.1:9",
           },
         },
       );
@@ -557,25 +572,7 @@ describe("fireconnect model list", () => {
 });
 
 describe("fireconnect <harness> status", () => {
-  test("Claude Fire Pass key shows correct defaults and message", async () => {
-    await withTempHome("status-cc-fpk", async (home) => {
-      await writeClaudeSettings(home, FPK_KEY);
-      const { json } = await runCliJson(["claude", "status", "--json"], { home, env: NO_ENV_KEY });
-      assert.equal(json.defaults.main, KIMI_FAST_LATEST);
-      assert.equal(json.defaults.opus, KIMI_FAST_LATEST);
-
-      // The text view reports connection/provider/auth; the per-slot defaults are
-      // asserted through --json above, which is the machine-readable contract.
-      const text = await runCli(["claude", "status"], { home, env: NO_ENV_KEY });
-      assert.equal(text.code, 0, text.stderr);
-      assert.match(text.stdout, /Connection: on/);
-      assert.match(text.stdout, /Provider: Fireworks/);
-      // Guard against a stale legacy default resurfacing in either view.
-      assert.doesNotMatch(text.stdout, /kimi-k2p6-turbo/);
-    });
-  });
-
-  test("fw_ key gets non-Fire-Pass defaults", async () => {
+  test("fw_ key gets Claude defaults", async () => {
     await withTempHome("status-fw", async (home) => {
       await writeClaudeSettings(home, FW_CLAUDE_KEY);
       const { json } = await runCliJson(["claude", "status", "--json"], { home, env: NO_ENV_KEY });
@@ -595,25 +592,15 @@ describe("fireconnect <harness> status", () => {
     });
   });
 
-  test("opencode with Fire Pass key shows the firepass default", async () => {
-    await withTempHome("status-oc-fpk", async (home) => {
-      await writeOpencodeConfig(home, FPK_KEY);
-      const { json } = await runCliJson(
-        ["opencode", "status", "--json"],
-        { home, env: NO_ENV_KEY },
-      );
-      assert.equal(json.defaults.main, KIMI_FAST_LATEST);
-    });
-  });
-
-  test("opencode resolves env-ref Fire Pass key", async () => {
+  test("opencode resolves env-ref key", async () => {
     await withTempHome("status-envref", async (home) => {
       await writeOpencodeConfig(home, OPENCODE_API_KEY_ENV_REF);
       const { json } = await runCliJson(
         ["opencode", "status", "--json"],
-        { home, env: { FIREWORKS_API_KEY: FPK_KEY } },
+        { home, env: { FIREWORKS_API_KEY: FW_CLAUDE_KEY } },
       );
-      assert.equal(json.defaults.main, KIMI_FAST_LATEST);
+      assert.equal(json.hasAuthToken, true);
+      assert.equal(json.defaults.main, "auto");
     });
   });
 });
@@ -625,7 +612,7 @@ describe("unsupported model mutation commands", () => {
         const result = await runCli(["opencode", "model", subcommand], { home });
         assert.notEqual(result.code, 0);
         assert.match(result.stderr, new RegExp(`Unknown harness command: model ${subcommand}`));
-        assert.match(result.stderr, /Run: fireconnect opencode help/);
+        assert.match(result.stderr, /Run: nexus opencode help/);
       });
     });
   }
@@ -638,7 +625,7 @@ describe("unsupported model mutation commands", () => {
       );
       assert.notEqual(result.code, 0);
       assert.match(result.stderr, /Unknown argument: --slot/);
-      assert.match(result.stderr, /Run: fireconnect claude help/);
+      assert.match(result.stderr, /Run: nexus claude help/);
     });
   });
 });

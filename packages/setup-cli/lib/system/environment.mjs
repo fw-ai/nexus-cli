@@ -9,7 +9,7 @@ import { shouldPreferFileBackendOnLinux, remoteSecretStorageDetail } from "../co
 
 /**
  * Detect the host environment (OS, distro/WSL, Node, shell, secret-storage
- * backend) in a cross-platform way. Used by `fireconnect status` for live
+ * backend) in a cross-platform way. Used by `nexus status` for live
  * machine diagnostics. Every probe is best-effort and never throws, so a weird
  * host degrades to partial info instead of failing.
  */
@@ -90,15 +90,15 @@ export function isWsl() {
 }
 
 /**
- * Which secret-storage backend FireConnect will use here, and whether it's the
- * strong tier. `FIRECONNECT_KEY_STORAGE=file` forces the encrypted-file backend;
+ * Which secret-storage backend Nexus will use here, and whether it's the
+ * strong tier. `NEXUS_KEY_STORAGE=file` forces the encrypted-file backend;
  * macOS/Windows always have a native store; Linux needs a Secret Service
  * (probed via `secret-tool`), else it falls back to the encrypted file.
  * @returns {{ backend: string, strong: boolean, detail?: string }}
  */
 export function detectSecretStorage() {
-  if (process.env.FIRECONNECT_KEY_STORAGE === "file") {
-    return { backend: "file", strong: true, detail: "forced via FIRECONNECT_KEY_STORAGE=file" };
+  if (process.env.NEXUS_KEY_STORAGE === "file") {
+    return { backend: "file", strong: true, detail: "forced via NEXUS_KEY_STORAGE=file" };
   }
   const platform = process.platform;
   if (platform === "darwin") {
@@ -146,7 +146,7 @@ export function detectEnvironment({ home = "" } = {}) {
   const resolvedHome = resolveHome(home);
   const platform = process.platform;
   const wsl = isWsl();
-  const installDir = path.join(resolvedHome, ".fireconnect", "cli");
+  const installDir = path.join(resolvedHome, ".nexus", "cli");
 
   return {
     schemaVersion: ENVIRONMENT_SCHEMA_VERSION,
@@ -170,7 +170,7 @@ export function detectEnvironment({ home = "" } = {}) {
     secretStorage: detectSecretStorage(),
     fireconnect: {
       home: resolvedHome,
-      dir: path.join(resolvedHome, ".fireconnect"),
+      dir: path.join(resolvedHome, ".nexus"),
       installDir: existsSync(installDir) ? installDir : null,
       isGitInstall: existsSync(path.join(installDir, ".git")),
     },

@@ -1,13 +1,14 @@
 import {
+  AUTO_MODEL_ID,
   CLAUDE_NATIVE_MODEL_ID,
   CLAUDE_NATIVE_SLOT_ALIAS,
-  DEFAULT_FIREPASS_MAIN_MODEL,
   firerouterRequiresOpenaiKey,
   fireworksModelSlug,
   isClaudeNativeModel,
   isClaudeNativeSlotAlias,
   isFirerouterModel,
   isFirerouterModelPattern,
+  isRetiredModelId,
   normalizeModelId,
   validateModelId,
 } from "../../fireworks/model-id.mjs";
@@ -22,14 +23,11 @@ export const CLAUDE_MODEL_SLOTS = Object.freeze([
 ]);
 
 const PROFILE_VERSION = 1;
-const KEY_TYPES = ["fireworks", "firepass"];
+// Saved profiles live under a key-type envelope; entries written for other key
+// types by older releases are ignored.
+const PROFILE_KEY = "fireworks";
 
-export function defaultClaudeModelMapping(keyType = "fireworks") {
-  if (keyType === "firepass") {
-    return Object.fromEntries(
-      CLAUDE_MODEL_SLOTS.map((slot) => [slot, DEFAULT_FIREPASS_MAIN_MODEL]),
-    );
-  }
+export function defaultClaudeModelMapping() {
   // Main is never pinned: Claude Code resolves an unset main through the
   // account-default alias (Opus/Sonnet), which the slots below already remap.
   // Pinning it would write settings.model and shadow the `/model` picker.
@@ -51,10 +49,10 @@ const LEGACY_CLAUDE_MODEL_MIGRATIONS = Object.freeze({
 
 /**
  * Rewrite any slot whose model slug is a legacy pinned default to its `-latest`
- * router alias. Used on the persisted (saved profile / live settings) mapping
- * during activation so an existing `claude on` install is migrated to the
- * current default routing; explicit per-run CLI overrides are merged afterward
- * and are not migrated.
+ * router alias, and any FireRouter pin to the `auto` mix. Used on the persisted
+ * (saved profile / live settings) mapping during activation so an existing
+ * `claude on` install is migrated to the current routing; explicit per-run CLI
+ * overrides are merged afterward and are not migrated.
  * @param {Record<string, string>} mapping
  * @returns {{ mapping: Record<string, string>, changed: boolean }}
  */
@@ -66,7 +64,12 @@ export function migrateLegacyClaudeModelMapping(mapping = {}) {
       next[slot] = modelId;
       continue;
     }
-    const target = LEGACY_CLAUDE_MODEL_MIGRATIONS[fireworksModelSlug(modelId)];
+    // Retired pins carried over from an earlier `on` (FireRouter routes,
+    // `auto-instant`) drop to the `auto` mix; explicit slot flags are
+    // merged after this and win.
+    const target = isRetiredModelId(modelId)
+      ? AUTO_MODEL_ID
+      : LEGACY_CLAUDE_MODEL_MIGRATIONS[fireworksModelSlug(modelId)];
     if (target) {
       next[slot] = target;
       changed = true;
@@ -100,9 +103,9 @@ const CLAUDE_SLOT_FLAGS = Object.freeze({
 });
 
 /**
- * Reject FireConnect's internal unpinned-slot sentinel when it arrives as a
+ * Reject Nexus's internal unpinned-slot sentinel when it arrives as a
  * user-supplied slot value. `claude-default` names nothing Claude Code or the
- * gateway can serve — inside FireConnect it only means "write no pin" — so
+ * gateway can serve — inside Nexus it only means "write no pin" — so
  * accepting it as input is how it ends up back in settings.json as a model id.
  * `native` is the spelling users are given for that intent.
  *
@@ -135,9 +138,9 @@ export function assertClaudeModelOverrides(ctx) {
   }
 }
 
-export function resolveClaudeModelMapping(overrides = {}, keyType = "fireworks") {
+export function resolveClaudeModelMapping(overrides = {}) {
   const selected = mergeClaudeModelMappings(
-    defaultClaudeModelMapping(keyType),
+    defaultClaudeModelMapping(),
     overrides,
   );
   for (const [slot, flag] of Object.entries(CLAUDE_SLOT_FLAGS)) {
@@ -154,19 +157,6 @@ export function resolveClaudeModelMapping(overrides = {}, keyType = "fireworks")
  */
 export function mappingUsesBareFirerouter(mapping) {
   return Object.values(mapping).some((modelId) => isFirerouterModel(modelId));
-}
-
-/**
- * Whether any FireRouter route — bare `firerouter` or a `firerouter/*`
- * compound — is the `--model` pick or pinned to any slot. Fire Pass keys
- * cannot use FireRouter at all, so `on` rejects every such route there.
- * Mirrors `firePassRejectsRouter` in `SlotMapping.lean`.
- * @param {Record<string, string>} mapping resolved Claude slot mapping
- * @param {string|null} extraPickerModel normalized `--model` pick, if any
- */
-export function claudeMappingUsesAnyFirerouter(mapping, extraPickerModel = null) {
-  return [extraPickerModel, ...Object.values(mapping)]
-    .some((modelId) => isFirerouterModelPattern(modelId ?? ""));
 }
 
 /**
@@ -200,21 +190,15 @@ export function normalizeClaudeProfiles(raw) {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {};
   }
-  const profiles = {};
-  for (const keyType of KEY_TYPES) {
-    const profile = raw[keyType];
-    const models = profile?.version === PROFILE_VERSION
-      ? completeMapping(profile.models)
-      : null;
-    if (models) {
-      profiles[keyType] = { version: PROFILE_VERSION, models };
-    }
-  }
-  return profiles;
+  const profile = raw[PROFILE_KEY];
+  const models = profile?.version === PROFILE_VERSION
+    ? completeMapping(profile.models)
+    : null;
+  return models ? { [PROFILE_KEY]: { version: PROFILE_VERSION, models } } : {};
 }
 
-export function savedClaudeModelMapping(profiles, keyType) {
-  return normalizeClaudeProfiles(profiles)[keyType]?.models ?? {};
+export function savedClaudeModelMapping(profiles) {
+  return normalizeClaudeProfiles(profiles)[PROFILE_KEY]?.models ?? {};
 }
 
 // A native-Claude slot is persisted as the sentinel but read live as null/unset.
@@ -224,54 +208,38 @@ function claudeSlotValuesMatch(left, right) {
   return norm(left) === norm(right);
 }
 
-export function inferClaudeActiveKeyType({
-  tokenKeyType = "",
+/**
+ * Whether the live settings mapping was written for the current Fireworks key
+ * and may be carried into the next `on`. A legacy Fire Pass setup never is; a
+ * Fireworks token or recorded key type settles it; otherwise the live mapping
+ * must match most of the saved profile. Installs with no saved profile predate
+ * scope metadata and are trusted.
+ */
+export function claudeActiveMappingIsCurrent({
+  legacyFirePass = false,
+  tokenIsFireworks = false,
   recordedKeyType = "",
   profiles = {},
   activeMapping = {},
-  currentKeyType,
 }) {
-  if (KEY_TYPES.includes(tokenKeyType)) return tokenKeyType;
-  if (KEY_TYPES.includes(recordedKeyType)) return recordedKeyType;
-
-  const normalized = normalizeClaudeProfiles(profiles);
-  const entries = Object.entries(normalized);
-  const exactMatches = entries.filter(([, profile]) => (
-    CLAUDE_MODEL_SLOTS.every(
-      (slot) => claudeSlotValuesMatch(profile.models[slot], activeMapping[slot]),
-    )
-  ));
-  if (exactMatches.length === 1) return exactMatches[0][0];
-  const scored = entries
-    .map(([keyType, profile]) => ({
-      keyType,
-      matches: CLAUDE_MODEL_SLOTS.filter(
-        (slot) => claudeSlotValuesMatch(profile.models[slot], activeMapping[slot]),
-      ).length,
-    }))
-    .sort((left, right) => right.matches - left.matches);
-  const strongMatch = scored[0]?.matches >= Math.ceil(CLAUDE_MODEL_SLOTS.length * 2 / 3);
-  if (strongMatch && scored[0].matches > (scored[1]?.matches ?? 0)) {
-    return scored[0].keyType;
-  }
-
-  // Only pre-profile installs lack durable scope metadata. Once any profile
-  // exists, ambiguous evidence must stay unknown or a key switch could import
-  // the old live mapping into the newly selected profile.
-  return entries.length === 0 && KEY_TYPES.includes(currentKeyType)
-    ? currentKeyType
-    : "";
+  if (legacyFirePass) return false;
+  if (tokenIsFireworks || recordedKeyType === PROFILE_KEY) return true;
+  const saved = normalizeClaudeProfiles(profiles)[PROFILE_KEY]?.models;
+  if (!saved) return true;
+  const matches = CLAUDE_MODEL_SLOTS.filter(
+    (slot) => claudeSlotValuesMatch(saved[slot], activeMapping[slot]),
+  ).length;
+  return matches >= Math.ceil(CLAUDE_MODEL_SLOTS.length * 2 / 3);
 }
 
-export function withSavedClaudeModelMapping(profiles, keyType, mapping) {
-  const normalized = normalizeClaudeProfiles(profiles);
+export function withSavedClaudeModelMapping(profiles, mapping) {
   const models = completeMapping(mapping);
-  if (!KEY_TYPES.includes(keyType) || !models) {
-    throw new Error(`Cannot persist an incomplete Claude ${keyType} model profile`);
+  if (!models) {
+    throw new Error("Cannot persist an incomplete Claude model profile");
   }
   return {
-    ...normalized,
-    [keyType]: {
+    ...normalizeClaudeProfiles(profiles),
+    [PROFILE_KEY]: {
       version: PROFILE_VERSION,
       models,
     },

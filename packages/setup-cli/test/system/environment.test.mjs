@@ -39,22 +39,22 @@ describe("environment detection", () => {
     assert.equal(typeof isWsl(), "boolean");
   });
 
-  it("detectSecretStorage honors FIRECONNECT_KEY_STORAGE=file", () => {
-    const prev = process.env.FIRECONNECT_KEY_STORAGE;
-    process.env.FIRECONNECT_KEY_STORAGE = "file";
+  it("detectSecretStorage honors NEXUS_KEY_STORAGE=file", () => {
+    const prev = process.env.NEXUS_KEY_STORAGE;
+    process.env.NEXUS_KEY_STORAGE = "file";
     try {
       const s = detectSecretStorage();
       assert.equal(s.backend, "file");
       assert.equal(s.strong, true);
     } finally {
-      if (prev === undefined) delete process.env.FIRECONNECT_KEY_STORAGE;
-      else process.env.FIRECONNECT_KEY_STORAGE = prev;
+      if (prev === undefined) delete process.env.NEXUS_KEY_STORAGE;
+      else process.env.NEXUS_KEY_STORAGE = prev;
     }
   });
 
   it("names a platform-appropriate secret backend without the override", () => {
-    const prev = process.env.FIRECONNECT_KEY_STORAGE;
-    delete process.env.FIRECONNECT_KEY_STORAGE;
+    const prev = process.env.NEXUS_KEY_STORAGE;
+    delete process.env.NEXUS_KEY_STORAGE;
     try {
       const s = detectSecretStorage();
       const expected = {
@@ -68,7 +68,7 @@ describe("environment detection", () => {
         assert.ok(["secret-service", "file"].includes(s.backend));
       }
     } finally {
-      if (prev !== undefined) process.env.FIRECONNECT_KEY_STORAGE = prev;
+      if (prev !== undefined) process.env.NEXUS_KEY_STORAGE = prev;
     }
   });
 

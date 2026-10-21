@@ -99,7 +99,7 @@ describe("claude harness integration", () => {
     const auth = resolveClaudeAuthState({
       apiKeyHelper: "/usr/local/bin/user-helper",
       env: {
-        ANTHROPIC_API_KEY: "fpk_stale_firepass_key",
+        ANTHROPIC_API_KEY: "fw_stale_env_key",
         ANTHROPIC_CUSTOM_HEADERS: "X-Fireworks-Api-Key: fw_active_header_key",
       },
     }, {
@@ -110,6 +110,37 @@ describe("claude harness integration", () => {
       keyConfigured: true,
       token: "fw_active_header_key",
     });
+  });
+
+  it("never keeps a legacy fpk_ key as Claude's Anthropic credential", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-legacy-fpk-"));
+    seedCatalogFor(home);
+    await mkdir(path.join(home, ".claude"), { recursive: true });
+    const settingsPath = userSettingsPath(home);
+    await writeFile(
+      settingsPath,
+      JSON.stringify({
+        env: {
+          ANTHROPIC_BASE_URL: "https://api.fireworks.ai/inference",
+          ANTHROPIC_API_KEY: "fpk_legacy_test_key_000000000000",
+        },
+      }),
+    );
+
+    const onResult = await runFireconnect(
+      ["claude", "on", "--api-key", "fw_test_key_12345"],
+      {
+        HOME: home,
+        FIREWORKS_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      },
+    );
+    assert.equal(onResult.code, 0, onResult.stderr);
+
+    const enabled = JSON.parse(await readFile(settingsPath, "utf8"));
+    assert.match(enabled.env.ANTHROPIC_CUSTOM_HEADERS, /X-Fireworks-Api-Key: fw_test_key_12345/);
+    assert.equal(enabled.env.ANTHROPIC_API_KEY, undefined);
   });
 
   it("on/off round-trip restores settings", async () => {
@@ -155,7 +186,7 @@ describe("claude harness integration", () => {
     assert.doesNotMatch(enabled.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);
     assert.equal(enabled.env.ANTHROPIC_API_KEY, "sk-ant-original");
     assert.equal(enabled.env.ANTHROPIC_AUTH_TOKEN, undefined);
-    assert.equal(enabled.model, "firerouter[1m]");
+    assert.equal(enabled.model, "auto[1m]");
     assert.equal(enabled.env?.ANTHROPIC_MODEL, undefined);
     assert.equal(enabled.env.ANTHROPIC_DEFAULT_OPUS_MODEL, undefined);
     assert.equal(enabled.env.ANTHROPIC_DEFAULT_FABLE_MODEL, undefined);
@@ -163,7 +194,7 @@ describe("claude harness integration", () => {
     assert.equal(enabled.modelPicker?.replaceBuiltInOptions, false);
     const pickerModels = enabled.modelPicker?.options?.map((row) => row.model) ?? [];
     assert.ok(pickerModels.includes("auto[1m]"), pickerModels.join(", "));
-    assert.ok(pickerModels.includes("firerouter[1m]"), pickerModels.join(", "));
+    assert.ok(!pickerModels.includes("firerouter[1m]"), pickerModels.join(", "));
     assert.ok(pickerModels.includes("glm-latest[1m]"), pickerModels.join(", "));
     assert.equal(enabled.env.DISABLE_TELEMETRY, "1");
     assert.equal(enabled.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
@@ -241,7 +272,7 @@ describe("claude harness integration", () => {
     });
   });
 
-  it("adds a firerouter compound picker row with a distinct label", async () => {
+  it("rejects a firerouter compound model instead of adding a picker row", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-firerouter-compound-"));
     seedCatalogFor(home);
     const settingsPath = userSettingsPath(home);
@@ -256,19 +287,9 @@ describe("claude harness integration", () => {
         ANTHROPIC_AUTH_TOKEN: "",
       },
     );
-    assert.equal(onResult.code, 0, onResult.stderr);
-
-    const enabled = JSON.parse(await readFile(settingsPath, "utf8"));
-    const options = enabled.modelPicker?.options ?? [];
-    const astra = options.find((row) => row.model === "firerouter/astra[1m]");
-    assert.ok(astra, options.map((row) => row.model).join(", "));
-    assert.equal(enabled.model, "firerouter/astra[1m]");
-    assert.equal(astra.label, "FireRouter · Astra");
-    assert.match(astra.description, /across Claude and open models/);
-    // The compound row must not duplicate the bare firerouter row's label.
-    const bare = options.find((row) => row.model === "firerouter[1m]");
-    assert.ok(bare, options.map((row) => row.model).join(", "));
-    assert.notEqual(astra.label, bare.label);
+    assert.notEqual(onResult.code, 0);
+    assert.match(onResult.stderr, /--model firerouter\/astra is a FireRouter route, which is no longer supported/);
+    assert.equal(existsSync(settingsPath), false);
   });
 
   it("preserves native ANTHROPIC_AUTH_TOKEN and a user-owned apiKeyHelper", async () => {
@@ -297,7 +318,7 @@ describe("claude harness integration", () => {
     assert.equal(enabled.apiKeyHelper, "/usr/local/bin/user-anthropic-key-helper");
     assert.equal(enabled.env.ANTHROPIC_AUTH_TOKEN, "sk-ant-native-auth-token");
     assert.equal(enabled.env.ANTHROPIC_API_KEY, undefined);
-    assert.equal(enabled.model, "firerouter[1m]");
+    assert.equal(enabled.model, "auto[1m]");
     assert.equal(enabled.env?.ANTHROPIC_MODEL, undefined);
     assert.doesNotMatch(enabled.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);
   });
@@ -323,7 +344,7 @@ describe("claude harness integration", () => {
 
     const enabled = JSON.parse(await readFile(settingsPath, "utf8"));
     assert.equal(enabled.apiKeyHelper, "/usr/local/bin/user-anthropic-key-helper");
-    assert.equal(enabled.model, "firerouter[1m]");
+    assert.equal(enabled.model, "auto[1m]");
     assert.equal(enabled.env?.ANTHROPIC_MODEL, undefined);
     assert.equal(enabled.env.ANTHROPIC_API_KEY, undefined);
     assert.equal(enabled.env.ANTHROPIC_AUTH_TOKEN, undefined);
@@ -356,7 +377,7 @@ describe("claude harness integration", () => {
     assert.equal(result.code, 0, result.stderr);
     const raw = await readFile(userSettingsPath(home), "utf8");
     assert.doesNotMatch(raw, /sk-ant-saved-0000|sk-ant-exported-0000/);
-    assert.equal(JSON.parse(raw).model, "firerouter[1m]");
+    assert.equal(JSON.parse(raw).model, "auto[1m]");
   });
 
   it("a re-on removes an Anthropic key an earlier on wrote, says so once, and off restores the original", async () => {
@@ -374,7 +395,7 @@ describe("claude harness integration", () => {
 
     const reOn = await runFireconnect(["claude", "on"], env);
     assert.equal(reOn.code, 0, reOn.stderr);
-    assert.match(reOn.stdout, /removed the one an earlier `fireconnect claude` saved/);
+    assert.match(reOn.stdout, /removed the one an earlier `nexus claude` saved/);
     assert.match(reOn.stdout, /claude login/);
     assert.doesNotMatch(await readFile(settingsPath, "utf8"), /sk-ant-written-by-old-on/);
 
@@ -405,8 +426,8 @@ describe("claude harness integration", () => {
     );
 
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /fireconnect login/);
-    assert.match(result.stderr, /fireconnect login --account <account-id>/);
+    assert.match(result.stderr, /nexus login/);
+    assert.match(result.stderr, /nexus login --account <account-id>/);
     assert.equal(await readFile(settingsPath, "utf8"), original);
     assert.equal((await readGlobalConfig(home)).anthropicApiKey, "");
     await assert.rejects(
@@ -434,7 +455,7 @@ describe("claude harness integration", () => {
       ["claude", "on", "--api-key", "fw_test_key_12345"],
       [
         "claude", "on",
-        "--model", "firerouter",
+        "--model", "glm-latest",
         "--api-key", "fw_test_key_12345",
       ],
     ]) {
@@ -520,7 +541,7 @@ describe("claude harness integration", () => {
     await mkdir(path.join(home, ".claude"), { recursive: true });
     const settingsPath = userSettingsPath(home);
     // Idiosyncratic formatting (4-space indent, trailing newline) + user-only
-    // keys FireConnect doesn't manage. A surgical/key-level backup would reformat
+    // keys Nexus doesn't manage. A surgical/key-level backup would reformat
     // this; a raw snapshot restores it exactly.
     const original = `{
     "permissions": { "allow": ["Bash(ls:*)"] },
@@ -534,7 +555,7 @@ describe("claude harness integration", () => {
 `;
     await writeFile(settingsPath, original);
 
-    for (const args of [["claude", "on", "--api-key", "fw_test_key_12345"], ["claude", "on", "--model", "firerouter", "--api-key", "fw_test_key_12345"]]) {
+    for (const args of [["claude", "on", "--api-key", "fw_test_key_12345"], ["claude", "on", "--model", "glm-latest", "--api-key", "fw_test_key_12345"]]) {
       const on = await runFireconnect(args, { HOME: home, FIREWORKS_API_KEY: "" });
       assert.equal(on.code, 0, on.stderr);
       const enabled = JSON.parse(await readFile(settingsPath, "utf8"));

@@ -1,10 +1,10 @@
 {
-  "name": "@fireconnect/cli",
-  "version": "0.9.9",
-  "description": "FireConnect CLIs for using Fireworks models with Claude Code",
+  "name": "@nexus/cli",
+  "version": "0.10.0",
+  "description": "Nexus CLI for using Fireworks models in AI coding tools",
   "type": "module",
   "bin": {
-    "fireconnect": "./bin/fireconnect.mjs"
+    "nexus": "./bin/nexus.mjs"
   },
   "files": [
     "bin",

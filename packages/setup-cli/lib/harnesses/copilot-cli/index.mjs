@@ -5,7 +5,7 @@ import {
 } from "../../cli/messages.mjs";
 import { printStructuredHarnessStatus } from "../../harness/status-display.mjs";
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
-import { detectApiKeyType, isFireworksKey } from "../../keys/key-type.mjs";
+import { isFireworksKey } from "../../keys/key-type.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import { ensureHomeForHarness, copilotCliPathsFor as copilotCliPathsForShared } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
@@ -13,8 +13,9 @@ import { isHarnessEnabled } from "../../config/global-config.mjs";
 import { harnessStatusKeySource } from "../../keys/api-key.mjs";
 import { loadRegisterableModels } from "../../fireworks/models.mjs";
 import {
+  dropRetiredModelId,
   isAutoModelId,
-  isFirerouterModelPattern,
+  isAutoInstantModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
 import {
@@ -66,15 +67,17 @@ export default defineHarnessProfile({
     autoCatalog: true,
   },
   telemetryHeaders: true,
-  enable: async ({ ctx, paths, effectiveKey, keyType, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
+  enable: async ({ ctx, paths, effectiveKey, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
     const { ids: extraModels, available: catalogAvailable } = await loadRegisterableModels({
       apiKey: effectiveKey,
       includeFirerouter,
     });
     const existing = await readCopilotCliState(paths.providersPath, paths.settingsPath);
     const existingSelection = copilotCliModelIdFromSelection(existing.selectedModel);
-    const requestedModel = modelId?.trim() || existingSelection;
-    const resolvedModel = shortFireworksModelRef(resolveCopilotModelId(requestedModel, keyType));
+    // A plain re-`on` drops a carried-over FireRouter selection to `auto`;
+    // (a FireRouter `--model` is rejected at admission, so `modelId` is never one from the CLI).
+    const requestedModel = modelId?.trim() || dropRetiredModelId(existingSelection);
+    const resolvedModel = shortFireworksModelRef(resolveCopilotModelId(requestedModel));
     const initialized = await isHarnessEnabled(ctx.home, HARNESS.COPILOT_CLI);
     const catalogModels = copilotModelIds(extraModels);
     let toRegister;
@@ -90,9 +93,8 @@ export default defineHarnessProfile({
         currentIds: [...existing.models, existingSelection].filter(Boolean),
         freshIds: catalogModels,
         keepUnserved: (id) => (
-          id === existingSelection
-          || isAutoModelId(id)
-          || isFirerouterModelPattern(id)
+          id === resolvedModel
+          || (isAutoModelId(id) && !isAutoInstantModelId(id))
         ),
       });
       toRegister = [...plan.kept, ...plan.added];
@@ -118,7 +120,6 @@ export default defineHarnessProfile({
     return {
       model: resolvedModel,
       modelsAdded: toRegister,
-      keyType,
       selectionId: copilotCliSelectionId(resolvedModel),
     };
   },
@@ -165,7 +166,7 @@ export default defineHarnessProfile({
       baseUrl: state.configured ? COPILOT_FIREWORKS_BASE_URL : null,
       providersPath: paths.providersPath,
       hasKey: Boolean(state.apiKey),
-      keyType: provider === "none" ? "none" : detectApiKeyType(state.apiKey),
+      keyType: provider === "none" ? "none" : "fireworks",
       selectedModel: state.selectedModel,
       registeredModels: state.models,
     };

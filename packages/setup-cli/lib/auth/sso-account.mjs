@@ -69,7 +69,7 @@ export async function getOAuthArgumentsForAccount(accountId, { baseUrl = GATEWAY
     // The server answers PERMISSION_DENIED for unknown accounts — don't
     // leak-guess; the recovery is the same either way.
     return failedArgs(
-      `Couldn't find SSO sign-in configuration for account "${id}". Check the account ID with your admin, or use fireconnect login --paste.`,
+      `Couldn't find SSO sign-in configuration for account "${id}". Check the account ID with your admin, or use nexus login --paste.`,
     );
   }
   const fields = pbDecode(result.message);
@@ -77,7 +77,7 @@ export async function getOAuthArgumentsForAccount(accountId, { baseUrl = GATEWAY
   const cognitoDomain = normalizeCognitoDomain(pbStringAt(fields, 3));
   if (!clientId || !cognitoDomain) {
     return failedArgs(
-      `Account "${id}" has no SSO sign-in configured. Check the account ID with your admin, or use fireconnect login --paste.`,
+      `Account "${id}" has no SSO sign-in configured. Check the account ID with your admin, or use nexus login --paste.`,
     );
   }
   return { ok: true, issuerUrl: pbStringAt(fields, 1), clientId, cognitoDomain, failure: "" };

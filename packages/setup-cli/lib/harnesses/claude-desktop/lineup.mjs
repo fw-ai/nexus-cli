@@ -5,13 +5,42 @@
  * pull the CLI's full module graph (a missing runtime package would
  * crash-loop the launchd agent instead of self-healing).
  */
+import os from "node:os";
 import path from "node:path";
-import { AUTO_MODEL_ID } from "../../fireworks/model-specs.mjs";
+import process from "node:process";
+import { AUTO_MODEL_ID, canonicalAutoModelId, AUTO_INSTANT_MODEL_ID } from "../../fireworks/model-specs.mjs";
 import { autoCatalogEntryId } from "../../fireworks/models.mjs";
 
-/** The 3p deployment's app-support directory. */
-export function thirdPartyDir(home) {
-  return path.join(home, "Library", "Application Support", "Claude-3p");
+/**
+ * Claude Desktop's per-deployment data directory (Electron `userData`):
+ * - macOS: ~/Library/Application Support/<name>
+ * - Linux: $XDG_CONFIG_HOME/<name>, else ~/.config/<name>
+ * The app derives the 3p directory as the first-party one plus "-3p", so
+ * both deployments share one layout. XDG_CONFIG_HOME is honored only for the
+ * real home: `--home <dir>` redirects everything under that dir (tests,
+ * sandboxes), and an inherited XDG value would escape it.
+ * Other platforms keep the macOS layout; `on` refuses them before any write.
+ */
+export function desktopDataDir(home, name, {
+  platform = process.platform, env = process.env, realHome = os.homedir(),
+} = {}) {
+  if (platform === "linux") {
+    const xdg = env.XDG_CONFIG_HOME;
+    const base = xdg && path.isAbsolute(xdg) && path.resolve(home) === path.resolve(realHome)
+      ? xdg : path.join(home, ".config");
+    return path.join(base, name);
+  }
+  return path.join(home, "Library", "Application Support", name);
+}
+
+/** The first-party (claude.ai) deployment's data directory. */
+export function firstPartyDir(home, options) {
+  return desktopDataDir(home, "Claude", options);
+}
+
+/** The 3p deployment's data directory. */
+export function thirdPartyDir(home, options) {
+  return desktopDataDir(home, "Claude-3p", options);
 }
 
 export const DEFAULT_MODEL_MAP = {
@@ -58,6 +87,7 @@ export const PICKER_MODELS = [
 
 export function serverlessLineup(entries, catalog) {
   const routers = (entries ?? []).filter((e) => typeof e?.shortId === "string"
+    && canonicalAutoModelId(e.shortId) !== AUTO_INSTANT_MODEL_ID
     && (/-latest$/.test(e.shortId) || autoCatalogEntryId(e)));
   const rows = (catalog?.surfaces?.chat?.model_selector_config ?? [])
     .flatMap((c) => c?.models ?? [])

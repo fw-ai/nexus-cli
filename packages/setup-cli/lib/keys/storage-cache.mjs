@@ -3,11 +3,11 @@ import path from "node:path";
 
 /** @typedef {"keychain" | "file" | "plaintext"} CachedKeyStorage */
 
-const CACHE_RELATIVE_PATH = ".fireconnect/key-storage.json";
-const LEGACY_CACHE_RELATIVE_PATH = ".fireconnect/secret-backend.json";
+const CACHE_RELATIVE_PATH = ".nexus/key-storage.json";
+const LEGACY_CACHE_RELATIVE_PATH = ".nexus/secret-backend.json";
 
-/** When set, ignore ~/.fireconnect/key-storage.json and re-probe secure storage. */
-export const REPROBE_KEY_STORAGE_ENV = "FIRECONNECT_REPROBE_KEY_STORAGE";
+/** When set, ignore ~/.nexus/key-storage.json and re-probe secure storage. */
+export const REPROBE_KEY_STORAGE_ENV = "NEXUS_REPROBE_KEY_STORAGE";
 const LEGACY_REPROBE_KEY_STORAGE_ENV = "FIRECONNECT_REPROBE_SECRET_BACKEND";
 
 /**

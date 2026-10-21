@@ -3,12 +3,13 @@ import { keyStatusSummary, resolveFireworksKeyWithSource } from "../../keys/api-
 import { identityLabel, verifyFireworksApiKey } from "../../keys/verify-api-key.mjs";
 import { detectEnvironment } from "../../system/environment.mjs";
 import { accent } from "../../ui/term.mjs";
-import { bold, cyan, muted, symbols } from "../../ui.mjs";
-import { formatOnOff, printBoolField, printField, printSectionHeader } from "../../harness/status-display.mjs";
+import { cyan, muted, symbols } from "../../ui.mjs";
+import { printBoolField, printField, printSectionHeader } from "../../harness/status-display.mjs";
 import { listHarnesses } from "../../harness/registry.mjs";
+import { harnessRows, printHarnessRows } from "./harnesses.mjs";
 
 /**
- * `fireconnect status`: report sign-in state, machine environment, and where
+ * `nexus status`: report sign-in state, machine environment, and where
  * the key is stored.
  *
  * Combines a LIVE auth check (the active key validated against the gateway,
@@ -26,25 +27,18 @@ export async function runStatusCommand(ctx) {
   }
 
   const summary = await keyStatusSummary(home);
-  // The global `harnesses[*].enabled` flag in ~/.fireconnect/config.json is not
+  // The global `harnesses[*].enabled` flag in ~/.nexus/config.json is not
   // reliably maintained (only Claude writes it; older CLI versions and several
   // adapters never flip it), so it drifts from ground truth. Override each
   // entry's `enabled` from the adapter's real config — the same source
   // `<harness> status` reports — so the summary reflects what's actually routed.
-  const adapters = listHarnesses();
-  const adapterById = new Map(adapters.map((a) => [a.id, a]));
-  await Promise.all(summary.perHarness.map(async (h) => {
-    const adapter = adapterById.get(h.id);
-    if (!adapter || typeof adapter.providerStatus !== "function") return;
-    try {
-      const provider = await adapter.providerStatus({ ...ctx, home });
-      h.enabled = provider === "fireworks" || provider === "azure";
-    } catch {
-      // A harness whose config can't be read (e.g. IDE SQLite locked) keeps the
-      // flag-based value rather than failing the whole status command.
-    }
-  }));
+  const rows = await harnessRows(ctx, home);
+  const routed = new Set(rows.filter((row) => row.connected).map((row) => row.id));
+  for (const h of summary.perHarness) {
+    h.enabled = routed.has(h.id);
+  }
   // Present harnesses in stable registry order (claude, opencode, …).
+  const adapters = listHarnesses();
   const byId = new Map(summary.perHarness.map((h) => [h.id, h]));
   summary.perHarness = adapters.map((a) => byId.get(a.id)).filter(Boolean);
   const environment = detectEnvironment({ home });
@@ -89,7 +83,9 @@ export async function runStatusCommand(ctx) {
     printEnvironment(environment);
     console.log("");
     printStorage(summary, source);
-    printHarnesses(summary.perHarness);
+    console.log("");
+    printSectionHeader("Harnesses");
+    printHarnessRows(rows);
   }
 
   if (auth.signedIn === false) {
@@ -126,7 +122,7 @@ function printAuthLine(auth, fromEnv) {
     return;
   }
   if (auth.reason === "no-key") {
-    console.log(`Not signed in. Run ${accent("fireconnect login")} to sign in.`);
+    console.log(`Not signed in. Run ${accent("nexus login")} to sign in.`);
     return;
   }
   if (auth.reason === "rejected") {
@@ -135,7 +131,7 @@ function printAuthLine(auth, fromEnv) {
     console.log(
       fromEnv
         ? `The Fireworks API rejected the FIREWORKS_API_KEY from your environment. Check or unset it to use a stored key instead.`
-        : `A stored key was found, but the Fireworks API rejected it. Run ${accent("fireconnect login")} to replace it.`,
+        : `A stored key was found, but the Fireworks API rejected it. Run ${accent("nexus login")} to replace it.`,
     );
     return;
   }
@@ -169,7 +165,7 @@ function printEnvironment(environment) {
   printField("Platform", `${environment.kind} (${environment.os.platform}/${environment.os.arch})${distro}`);
   printField("Node", environment.node.version);
   printField("Shell", environment.shell || "(unknown)");
-  printField("FireConnect", `v${version}${gitInstall}`);
+  printField("Nexus", `v${version}${gitInstall}`);
 }
 
 /**
@@ -185,7 +181,7 @@ function printStorage(summary, source) {
     printField("Secret backend", summary.backendLabel);
     console.log(muted(
       "Your shell's FIREWORKS_API_KEY is in use; nothing is saved to disk. "
-        + `Run ${accent("fireconnect login")} to store a key in ${summary.backendLabel}.`,
+        + `Run ${accent("nexus login")} to store a key in ${summary.backendLabel}.`,
     ));
     return;
   }
@@ -207,20 +203,5 @@ function printStorage(summary, source) {
         + "In non-interactive shells you can still export "
         + "FIREWORKS_API_KEY directly (the key is in the encrypted file above).",
     ));
-  }
-}
-
-/**
- * @param {Array<{ id: string, enabled: boolean, readsFrom: string, storage: string }>} perHarness
- */
-function printHarnesses(perHarness) {
-  console.log("");
-  printSectionHeader("Harnesses");
-  const width = perHarness.reduce((m, h) => Math.max(m, h.id.length), 0);
-  for (const h of perHarness) {
-    // Reuse the shared on/off formatter so the summary matches the coloring
-    // every `<harness> status` uses (cyan "on" / dim "off") — one
-    // semantic, not a per-command palette.
-    console.log(`  ${bold(h.id.padEnd(width))}  ${formatOnOff(h.enabled)}`);
   }
 }

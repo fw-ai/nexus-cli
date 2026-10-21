@@ -1,7 +1,7 @@
 /**
- * Right-hand pane for `fireconnect claude live`.
+ * Right-hand pane for `nexus claude live`.
  * Waits for the left pane's new Claude session, then execs
- * `fireconnect claude usage --session`.
+ * `nexus claude usage --session`.
  */
 
 import { spawn } from "node:child_process";
@@ -70,11 +70,11 @@ function attachQuitDuringWait(signal) {
 }
 
 /**
- * @param {string} fireconnectBin absolute path to fireconnect.mjs
+ * @param {string} fireconnectBin absolute path to nexus.mjs
  */
 export async function runLiveUsagePane(fireconnectBin) {
   if (!fireconnectBin) {
-    throw new Error("fireconnect binary path is required.");
+    throw new Error("nexus binary path is required.");
   }
 
   const home = process.env.HOME?.trim() ?? "";
@@ -164,7 +164,7 @@ export async function runLiveUsagePane(fireconnectBin) {
     child.on("error", reject);
     child.on("exit", (exitCode, signal) => {
       if (signal) {
-        reject(new Error(`fireconnect claude usage exited on ${signal}`));
+        reject(new Error(`nexus claude usage exited on ${signal}`));
         return;
       }
       resolve(exitCode ?? 0);

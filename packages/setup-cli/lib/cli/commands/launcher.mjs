@@ -107,22 +107,22 @@ async function dispatchKeyAction(subcommand, ctx) {
     case "status": {
       const { runStatusCommand } = await import("./status.mjs");
       await runStatusCommand(ctx);
-      return "fireconnect status";
+      return "nexus status";
     }
     case "set": {
       const { runLoginCommand } = await import("./login.mjs");
       await runLoginCommand(ctx);
-      return "fireconnect login";
+      return "nexus login";
     }
     case "export": {
       const { runKeyCommand } = await import("./key.mjs");
       await runKeyCommand(ctx, "export");
-      return "fireconnect key export";
+      return "nexus key export";
     }
     case "delete": {
       const { runLogoutCommand } = await import("./login.mjs");
       await runLogoutCommand(ctx);
-      return "fireconnect logout";
+      return "nexus logout";
     }
     default:
       throw new Error(`Unknown key operation: ${subcommand}`);
@@ -157,7 +157,7 @@ export async function runLauncherCommand(ctx, overrides = {}) {
   const adapters = listHarnesses();
 
   const version = readLocalVersion();
-  output.write(`${bold(accent("fireconnect", output))}${version ? dim(` v${version}`) : ""}  ${dim("Fireworks routing for your coding harnesses")}\n\n`);
+  output.write(`${bold(accent("nexus", output))}${version ? dim(` v${version}`) : ""}  ${dim("Fireworks routing for your coding harnesses")}\n\n`);
 
   const dispatchHarness = overrides.dispatchHarness ?? runHarnessCommand;
   const runConfigure = overrides.runConfigure ?? (async () => {
@@ -190,7 +190,7 @@ export async function runLauncherCommand(ctx, overrides = {}) {
 
     if (picked.kind === "configure") {
       await runConfigure();
-      teachFastPath(output, "fireconnect configure");
+      teachFastPath(output, "nexus configure");
       return;
     }
 
@@ -225,8 +225,8 @@ export async function runLauncherCommand(ctx, overrides = {}) {
     const route = { harnessId: picked.id, verb: action.verb, noun: action.noun };
     await dispatchHarness(route, ctx);
     const directCommand = action.verb === "on" && !action.noun
-      ? `fireconnect ${picked.id}`
-      : `fireconnect ${picked.id}${action.noun ? ` ${action.noun}` : ""} ${action.verb}`;
+      ? `nexus ${picked.id}`
+      : `nexus ${picked.id}${action.noun ? ` ${action.noun}` : ""} ${action.verb}`;
     teachFastPath(output, directCommand);
     return;
   }

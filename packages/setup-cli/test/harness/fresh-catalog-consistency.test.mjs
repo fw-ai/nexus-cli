@@ -115,7 +115,7 @@ describe("fresh on --model seeds the full catalog in every harness", () => {
     assert.ok(ids.includes("beta-latest"), `got ${ids.join(",")}`);
   });
 
-  it("pi registers both routers and pins the selection", async () => {
+  it("pi pins the selection and leaves catalog rows to Pi's own catalog", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-contract-pi-"));
     await mkdir(path.join(home, ".pi/agent"), { recursive: true });
     seedTwoRouterCatalog(home);
@@ -131,9 +131,8 @@ describe("fresh on --model seeds the full catalog in every harness", () => {
     );
     const ids = JSON.parse(await readFile(piModelsPath(home), "utf8"))
       .providers.fireworks.models.map((model) => model.id);
-    assert.ok(ids.includes("accounts/fireworks/routers/alpha-latest"), `got ${ids.join(",")}`);
-    assert.ok(ids.includes("accounts/fireworks/routers/beta-latest"), `got ${ids.join(",")}`);
-    assert.equal(ids.length, new Set(ids).size, `duplicate rows: ${ids.join(",")}`);
+    // A row with a catalog id would replace Pi's tuned row for it.
+    assert.deepEqual(ids, ["auto"]);
   });
 
   itIfSqlite("vscode registers both routers", async () => {
@@ -145,7 +144,7 @@ describe("fresh on --model seeds the full catalog in every harness", () => {
         ["vscode", ...API_KEY_ARGS, "--vscode-path", vscodePath, "--force"],
         {
           home,
-          env: { FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1", FIREWORKS_API_KEY: "" },
+          env: { NEXUS_VSCODE_SECRET_PLAINTEXT: "1", FIREWORKS_API_KEY: "" },
         },
       );
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);
@@ -266,7 +265,7 @@ describe("fresh on --model seeds the full catalog in every harness", () => {
         ["cursor", ...API_KEY_ARGS, "--db-path", dbPath, "--force"],
         {
           home,
-          env: { FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1", FIREWORKS_API_KEY: "" },
+          env: { NEXUS_VSCODE_SECRET_PLAINTEXT: "1", FIREWORKS_API_KEY: "" },
         },
       );
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);

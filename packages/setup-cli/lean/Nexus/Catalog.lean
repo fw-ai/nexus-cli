@@ -9,7 +9,7 @@ selection-preservation properties against every adapter. This model proves
 those properties for a first-occurrence-preserving normalization equivalent
 to JavaScript's `[...new Set(ids)]` for a candidate id list.
 -/
-namespace FireConnect.Catalog
+namespace Nexus.Catalog
 
 /-- Append one id unless it is already present, matching `Set` insertion order. -/
 def addUnique [DecidableEq α] (xs : List α) (x : α) : List α :=
@@ -175,4 +175,4 @@ ordinary rows and `auto-instant` survive. -/
 example : canonicalAuto [some "auto", none, some "auto", some "auto-instant", none]
     = [some "auto", none, some "auto-instant", none] := by native_decide
 
-end FireConnect.Catalog
+end Nexus.Catalog

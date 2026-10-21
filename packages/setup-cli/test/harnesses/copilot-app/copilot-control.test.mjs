@@ -37,6 +37,20 @@ describe("copilot quit guard targets the desktop app, not the CLI", () => {
     assert.ok(matches(linuxPattern, "/opt/GitHub Copilot/github"));
   });
 
+  it("matches the official Linux .deb, which runs as `github`", () => {
+    assert.ok(matches(linuxPattern, "github"));
+    assert.ok(matches(linuxPattern, "github copilot://open"));
+    assert.ok(matches(linuxPattern, "/usr/bin/github"));
+    assert.ok(matches(linuxPattern, "/tmp/.mount_GitHubX/usr/bin/github --no-sandbox"));
+  });
+
+  it("does not match other commands that mention github", () => {
+    assert.ok(!matches(linuxPattern, "bash -c cd /home/u/src/github && make"));
+    assert.ok(!matches(linuxPattern, "git clone https://github.com/example/repo"));
+    assert.ok(!matches(linuxPattern, "/usr/bin/github-desktop"));
+    assert.ok(!matches(linuxPattern, "gh pr view"));
+  });
+
   it("does not match the Copilot CLI on Linux", () => {
     // A bare `[/]copilot` pattern matched these and blocked on/off waiting
     // for a quit that was never needed.

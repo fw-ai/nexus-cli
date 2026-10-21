@@ -17,7 +17,7 @@ import {
 import { lookupFireworksPricing } from "../../lib/fireworks/pricing.mjs";
 import { setServerlessCatalogSnapshot } from "../../lib/fireworks/serverless-catalog-cache.mjs";
 import { buildOpencodeModelEntry } from "../../lib/harnesses/opencode/core.mjs";
-import { buildPiCustomFireworksModelEntry } from "../../lib/harnesses/pi/fireworks-models.mjs";
+import { buildPiCustomFireworksModelEntry } from "../../lib/harnesses/pi/core.mjs";
 import { buildDeepseekFireworksModelEntry } from "../../lib/harnesses/deepseek/core.mjs";
 import { assumedModelsDevListed } from "../../lib/harnesses/opencode/catalog-policy.mjs";
 

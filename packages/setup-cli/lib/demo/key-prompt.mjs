@@ -1,8 +1,8 @@
 /**
- * Interactive Anthropic-key prompt for `fireconnect demo`.
+ * Interactive Anthropic-key prompt for `nexus demo`.
  *
  * When the detected incumbent is Anthropic/Claude but no usable key was found
- * (e.g. the user routes Claude through Fireworks via `fireconnect`, so
+ * (e.g. the user routes Claude through Fireworks via `nexus`, so
  * `probeClaude` skips it and detection falls back to an estimated Anthropic
  * incumbent), we offer to take a key for a live race instead of silently
  * running a fabricated estimate.
@@ -53,7 +53,7 @@ export function validateFireworksKey(key) {
     return { ok: false, error: "empty" };
   }
   if (!isFireworksKey(trimmed)) {
-    return { ok: false, error: "not a Fireworks key (expected fw_… or fpk_…)" };
+    return { ok: false, error: "not a Fireworks key (expected fw_…)" };
   }
   return { ok: true };
 }
@@ -247,7 +247,7 @@ export function promptFireworksKey({ stdin = process.stdin, stdout = process.std
     label: "Fireworks key:",
     framing: [
       `\n  ${BOLD}No usable Fireworks API key — the challenger can't run live.${RESET}`,
-      `  ${DIM}Paste an fw_… / fpk_… key to race it, or press Enter to cancel.${RESET}`,
+      `  ${DIM}Paste an fw_… key to race it, or press Enter to cancel.${RESET}`,
       `  ${DIM}(Input is masked. Esc or empty Enter skips — no key is sent.)${RESET}`,
     ],
     stdin,

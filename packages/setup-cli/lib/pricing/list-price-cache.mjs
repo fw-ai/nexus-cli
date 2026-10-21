@@ -27,7 +27,7 @@ import { fetchModelsDevApi } from "./models-dev.mjs";
 export const MODELS_DEV_PRICING_SOURCE = "https://models.dev";
 
 // Freshness shares the serverless catalog TTL (1h, overridable for tests via
-// FIRECONNECT_CATALOG_TTL_MS): one knob for every catalog read, so list prices
+// NEXUS_CATALOG_TTL_MS): one knob for every catalog read, so list prices
 // go stale — and refresh — on exactly the same cadence.
 
 /**
@@ -233,7 +233,7 @@ export function clearListPriceCache() {
 
 /**
  * Reset the in-memory rates AND delete the persisted cache file. Test-only:
- * call under a temp HOME (or the shared FIRECONNECT_CACHE_DIR isolation) so a
+ * call under a temp HOME (or the shared NEXUS_CACHE_DIR isolation) so a
  * spec never erases the developer's warmed snapshot.
  */
 export function deletePersistedListPriceCache() {
@@ -265,12 +265,12 @@ export function isListPriceCacheFresh() {
 /**
  * Best-effort refresh of the list-price cache from models.dev. Never throws:
  * failures keep the prior snapshot (or nothing) in place. Skipped entirely
- * under FIRECONNECT_TEST so specs never touch the network.
+ * under NEXUS_TEST so specs never touch the network.
  * @param {{ force?: boolean }} [options]
  * @returns {Promise<boolean>} True when a usable cache exists afterwards.
  */
 export async function refreshListPriceCache({ force = false } = {}) {
-  if (process.env.FIRECONNECT_TEST === "1") {
+  if (process.env.NEXUS_TEST === "1") {
     return isListPriceCacheFresh() || getListPriceRates() !== null;
   }
   if (!force && isListPriceCacheFresh()) {

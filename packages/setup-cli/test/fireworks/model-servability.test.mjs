@@ -90,7 +90,6 @@ describe("model-servability assertRequestedModelsServable", () => {
       await assert.rejects(
         () => assertRequestedModelServable("not-a-real-model", {
           apiKey: "fw_test_key",
-          keyType: "fireworks",
         }),
         /not available on Fireworks/,
       );
@@ -105,7 +104,6 @@ describe("model-servability assertRequestedModelsServable", () => {
         await assert.rejects(
           () => assertRequestedModelServable(id, {
             apiKey: "fw_test_key",
-            keyType: "fireworks",
           }),
           /not available on Fireworks/,
           id,
@@ -129,7 +127,6 @@ describe("model-servability assertRequestedModelsServable", () => {
         await assert.rejects(
           () => assertRequestedModelServable(id, {
             apiKey: "fw_test_key",
-            keyType: "fireworks",
           }),
           /not available on Fireworks/,
           id,
@@ -143,7 +140,6 @@ describe("model-servability assertRequestedModelsServable", () => {
       await assert.doesNotReject(() =>
         assertRequestedModelServable("glm-5p2", {
           apiKey: "fw_test_key",
-          keyType: "fireworks",
         }),
       );
     });
@@ -156,7 +152,6 @@ describe("model-servability assertRequestedModelsServable", () => {
       await assert.doesNotReject(() =>
         assertRequestedModelServable("glm-latest", {
           apiKey: "fw_test_key",
-          keyType: "fireworks",
         }),
       );
     });
@@ -167,7 +162,6 @@ describe("model-servability assertRequestedModelsServable", () => {
       await assert.doesNotReject(() =>
         assertRequestedModelServable("accounts/fireworks/models/glm-5p2", {
           apiKey: "fw_test_key",
-          keyType: "fireworks",
         }),
       );
     });
@@ -179,10 +173,10 @@ describe("model-servability assertRequestedModelsServable", () => {
     const previousFetch = globalThis.fetch;
     globalThis.fetch = async () => { fetched = true; return { ok: true, json: async () => ({ object: "list", data: [] }) }; };
     try {
-      await assertRequestedModelServable("firerouter", { apiKey: "fw_test_key", keyType: "fireworks" });
-      await assertRequestedModelServable("auto", { apiKey: "fw_test_key", keyType: "fireworks" });
-      await assertRequestedModelServable("auto-instant", { apiKey: "fw_test_key", keyType: "fireworks" });
-      await assertRequestedModelServable("accounts/u/deployments/x", { apiKey: "fw_test_key", keyType: "fireworks" });
+      await assertRequestedModelServable("firerouter", { apiKey: "fw_test_key" });
+      await assertRequestedModelServable("auto", { apiKey: "fw_test_key" });
+      await assertRequestedModelServable("auto-instant", { apiKey: "fw_test_key" });
+      await assertRequestedModelServable("accounts/u/deployments/x", { apiKey: "fw_test_key" });
       assert.equal(fetched, false);
     } finally {
       globalThis.fetch = previousFetch;
@@ -191,22 +185,8 @@ describe("model-servability assertRequestedModelsServable", () => {
 
   it("skips validation when no model is selected", async () => {
     await assert.doesNotReject(() =>
-      assertRequestedModelsServable(["", undefined], { apiKey: "fw_test_key", keyType: "fireworks" }),
+      assertRequestedModelsServable(["", undefined], { apiKey: "fw_test_key" }),
     );
-  });
-
-  it("skips validation for Fire Pass keys", async () => {
-    clearCatalogCache();
-    let fetched = false;
-    const previousFetch = globalThis.fetch;
-    globalThis.fetch = async () => { fetched = true; return { ok: true, json: async () => ({ object: "list", data: [] }) }; };
-    try {
-      // A bogus model with a Fire Pass key must not throw (can't enumerate).
-      await assertRequestedModelServable("not-a-real-model", { apiKey: "fpk_test", keyType: "firepass" });
-      assert.equal(fetched, false);
-    } finally {
-      globalThis.fetch = previousFetch;
-    }
   });
 
   it("skips validation when the catalog fetch fails (offline)", async () => {
@@ -214,7 +194,7 @@ describe("model-servability assertRequestedModelsServable", () => {
     const previousFetch = globalThis.fetch;
     globalThis.fetch = async () => { throw new Error("offline"); };
     try {
-      await assertRequestedModelServable("not-a-real-model", { apiKey: "fw_test_key", keyType: "fireworks" });
+      await assertRequestedModelServable("not-a-real-model", { apiKey: "fw_test_key" });
     } finally {
       globalThis.fetch = previousFetch;
     }
@@ -233,7 +213,7 @@ describe("model-servability assertRequestedModelsServable", () => {
       await assert.rejects(
         () => assertRequestedModelsServable(
           ["glm-5p2", "glm-latest", "firerouter", "auto", "", "not-a-real-model"],
-          { apiKey: "fw_test_key", keyType: "fireworks" },
+          { apiKey: "fw_test_key" },
         ),
         /not available on Fireworks/,
       );
@@ -248,33 +228,33 @@ describe("model-servability assertRequestedModelsServable", () => {
 describe("model-servability probeModelServable", () => {
   it("404 means retired; 200/429/other-4xx means it serves", async () => {
     const { probeModelServable } = await import("../../lib/fireworks/model-servability.mjs");
-    const prev = process.env.FIRECONNECT_TEST;
-    delete process.env.FIRECONNECT_TEST;
+    const prev = process.env.NEXUS_TEST;
+    delete process.env.NEXUS_TEST;
     try {
       assert.equal(await probeModelServable("retired", "key", { fetchImpl: async () => new Response("Model not found", { status: 404 }) }), false);
       assert.equal(await probeModelServable("live", "key", { fetchImpl: async () => new Response("{}", { status: 200 }) }), true);
       assert.equal(await probeModelServable("limited", "key", { fetchImpl: async () => new Response("{}", { status: 429 }) }), true);
     } finally {
-      if (prev !== undefined) process.env.FIRECONNECT_TEST = prev;
+      if (prev !== undefined) process.env.NEXUS_TEST = prev;
     }
   });
 
-  it("network failure keeps the model (fail-open); FIRECONNECT_TEST gates real calls", async () => {
+  it("network failure keeps the model (fail-open); NEXUS_TEST gates real calls", async () => {
     const { probeModelServable } = await import("../../lib/fireworks/model-servability.mjs");
     assert.equal(await probeModelServable("anything", "key", { fetchImpl: () => { throw new Error("must not be called"); } }), true);
-    const prev = process.env.FIRECONNECT_TEST;
-    delete process.env.FIRECONNECT_TEST;
+    const prev = process.env.NEXUS_TEST;
+    delete process.env.NEXUS_TEST;
     try {
       assert.equal(await probeModelServable("m", "key", { fetchImpl: async () => { throw new Error("offline"); } }), true);
     } finally {
-      if (prev !== undefined) process.env.FIRECONNECT_TEST = prev;
+      if (prev !== undefined) process.env.NEXUS_TEST = prev;
     }
   });
 
   it("servableModels filters in parallel, order-preserving", async () => {
     const { servableModels } = await import("../../lib/fireworks/model-servability.mjs");
-    const prev = process.env.FIRECONNECT_TEST;
-    delete process.env.FIRECONNECT_TEST;
+    const prev = process.env.NEXUS_TEST;
+    delete process.env.NEXUS_TEST;
     try {
       const statuses = { a: 200, b: 404, c: 200 };
       const out = await servableModels(["a", "b", "c"], "key", {
@@ -282,7 +262,7 @@ describe("model-servability probeModelServable", () => {
       });
       assert.deepEqual(out, ["a", "c"]);
     } finally {
-      if (prev !== undefined) process.env.FIRECONNECT_TEST = prev;
+      if (prev !== undefined) process.env.NEXUS_TEST = prev;
     }
   });
 });

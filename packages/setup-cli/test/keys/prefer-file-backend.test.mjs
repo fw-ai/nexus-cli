@@ -27,18 +27,18 @@ describe("secret storage policy", () => {
     });
   });
 
-  it("returns false when FIRECONNECT_KEY_STORAGE is explicitly set", async () => {
+  it("returns false when NEXUS_KEY_STORAGE is explicitly set", async () => {
     await withLinuxSshEnv((isLinux) => {
       if (!isLinux) {
         return;
       }
-      const prev = process.env.FIRECONNECT_KEY_STORAGE;
-      process.env.FIRECONNECT_KEY_STORAGE = "keychain";
+      const prev = process.env.NEXUS_KEY_STORAGE;
+      process.env.NEXUS_KEY_STORAGE = "keychain";
       try {
         assert.equal(shouldPreferFileBackendOnLinux(), false);
       } finally {
-        if (prev === undefined) delete process.env.FIRECONNECT_KEY_STORAGE;
-        else process.env.FIRECONNECT_KEY_STORAGE = prev;
+        if (prev === undefined) delete process.env.NEXUS_KEY_STORAGE;
+        else process.env.NEXUS_KEY_STORAGE = prev;
       }
     });
   });

@@ -9,7 +9,11 @@ import {
   FIRECONNECT_PROVIDER_NAME,
   makeFireconnectSecretId,
 } from "../../../lib/harnesses/vscode/core.mjs";
-import { migrateVscodeResponsesApiType } from "../../../lib/harnesses/vscode/upgrade-migrations.mjs";
+import { writeGlobalConfig } from "../../../lib/config/global-config.mjs";
+import {
+  migrateVscodeFirerouterOnUpgrade,
+  migrateVscodeResponsesApiType,
+} from "../../../lib/harnesses/vscode/upgrade-migrations.mjs";
 import { withTempHome } from "../../helpers.mjs";
 
 /** A non-fireconnect provider (user-managed) to prove ownership scoping. */
@@ -78,6 +82,54 @@ describe("migrateVscodeResponsesApiType", () => {
 
       assert.equal(await migrateVscodeResponsesApiType(home, { vscodePath, isRunning: () => true }), false);
       assert.equal(await readFile(vscodePath, "utf8"), original);
+    });
+  });
+});
+
+describe("migrateVscodeFirerouterOnUpgrade", () => {
+  const providerWith = (models) => ({
+    name: FIRECONNECT_PROVIDER_NAME,
+    vendor: "customendpoint",
+    apiType: "chat-completions",
+    apiKey: `\${input:${makeFireconnectSecretId()}}`,
+    models,
+  });
+
+  async function seed(home, vscodePath, models, { enabled = true } = {}) {
+    await writeGlobalConfig(home, {
+      harnesses: { vscode: { enabled, provider: "fireworks" } },
+    });
+    await writeFile(vscodePath, `${JSON.stringify([userProvider(), providerWith(models)])}\n`);
+  }
+
+  it("drops FireRouter rows and keeps everything else, then no-ops", async () => {
+    await withTempHome("vscode-firerouter-migrate-", async (home) => {
+      const vscodePath = path.join(home, "chatLanguageModels.json");
+      await seed(home, vscodePath, [
+        buildModelEntry("firerouter"),
+        buildModelEntry("accounts/fireworks/routers/glm-latest"),
+        buildModelEntry("firerouter/opus"),
+      ]);
+
+      assert.equal(await migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => false }), true);
+      const arr = await readJson(vscodePath);
+      assert.deepEqual(arr[0], userProvider());
+      assert.deepEqual(arr[1].models.map((m) => m.id), ["glm-latest"]);
+
+      assert.equal(await migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => false }), false);
+    });
+  });
+
+  it("skips while running and when the harness is off", async () => {
+    await withTempHome("vscode-firerouter-migrate-off-", async (home) => {
+      const vscodePath = path.join(home, "chatLanguageModels.json");
+      await seed(home, vscodePath, [buildModelEntry("firerouter")]);
+      const original = await readFile(vscodePath, "utf8");
+      assert.equal(await migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => true }), false);
+      assert.equal(await readFile(vscodePath, "utf8"), original);
+
+      await seed(home, vscodePath, [buildModelEntry("firerouter")], { enabled: false });
+      assert.equal(await migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => false }), false);
     });
   });
 });

@@ -70,7 +70,7 @@ test("demoMatchupOptionIds: lists presets then custom", () => {
 test("demoMatchupPreset: resolves known preset", () => {
   const preset = demoMatchupPreset("router-vs-direct");
   assert.ok(preset);
-  assert.equal(preset.leftModel, "firerouter");
+  assert.equal(preset.leftModel, "auto");
   assert.equal(preset.rightModel, "glm-fast-latest");
 });
 
@@ -104,7 +104,7 @@ test("resolveDemoWizardDefaults: saved matchup applies when no CLI models", () =
       matchupPresetId: "router-vs-direct",
     },
   });
-  assert.equal(resolved.leftModel, "firerouter");
+  assert.equal(resolved.leftModel, "auto");
   assert.equal(resolved.rightModel, "glm-fast-latest");
 });
 
@@ -117,7 +117,8 @@ test("resolveDemoWizardDefaults: restores saved custom matchup models", () => {
     },
   });
   assert.equal(resolved.leftModel, "sonnet");
-  assert.equal(resolved.rightModel, "firerouter");
+  // A saved FireRouter model is retired: the pair sanitizer falls back.
+  assert.equal(resolved.rightModel, "glm-fast-latest");
   assert.equal(resolved.matchupPresetId, "custom");
 });
 
@@ -141,7 +142,7 @@ test("resolveDemoWizardDefaults: saved custom ignores stale catalog ids", () => 
     },
   });
   assert.equal(resolved.leftModel, defaultLeftModel());
-  assert.equal(resolved.rightModel, "firerouter");
+  assert.equal(resolved.rightModel, "glm-fast-latest");
 });
 
 test("resolveDemoWizardDefaults: dedupes identical left/right", () => {
@@ -218,7 +219,7 @@ test("resolveDemoWizardDefaults: keeps curated id when models still match", () =
   assert.equal(resolved.matchupPresetId, "subscription-vs-fireworks");
 });
 
-test("demo preferences: round-trip under ~/.fireconnect/demo.json", async () => {
+test("demo preferences: round-trip under ~/.nexus/demo.json", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "fc-demo-prefs-"));
   try {
     const prefsPath = demoPreferencesPath(home);

@@ -4,9 +4,9 @@ import { getHarness } from "../../harness/registry.mjs";
 import { persistGlobalAnthropicApiKey, persistGlobalOpenaiApiKey } from "../../config/global-config.mjs";
 import { FILE_CONFIG_HARNESS_SET, HARNESS } from "../../harness/id.mjs";
 import { PROVIDER_KEYS_DOCS_URL } from "../messages.mjs";
-import { isFirerouterModelPattern } from "../../fireworks/model-id.mjs";
+import { assertNotFirerouterModelId, isFirerouterModelPattern } from "../../fireworks/model-id.mjs";
 import { isAnthropicShapedKey, isOpenAIShapedKey } from "../../firerouter/core.mjs";
-import { supportsAnthropicApiKeyFlag, supportsOpenaiApiKeyFlag, supportsRoutingPreference } from "../../firerouter/flag.mjs";
+import { supportsAnthropicApiKeyFlag, supportsOpenaiApiKeyFlag } from "../../firerouter/flag.mjs";
 import {
   assertFireworksKeyUsable,
   assertFireworksKeyShape,
@@ -25,12 +25,12 @@ const REFUSED_KEY_FLAGS = Object.freeze({
   [HARNESS.CLAUDE]: {
     anthropic: "Claude Code pays for Claude turns with its own sign-in. Run `claude login`, or export "
       + "ANTHROPIC_API_KEY to pay with an Anthropic key. For Claude on other harnesses, run "
-      + `\`fireconnect configure --anthropic-api-key <key>\` or add a Provider Key: ${PROVIDER_KEYS_DOCS_URL}.`,
+      + `\`nexus configure --anthropic-api-key <key>\` or add a Provider Key: ${PROVIDER_KEYS_DOCS_URL}.`,
   },
   [HARNESS.CODEX]: {
     anthropic: "Codex doesn't send an Anthropic key. For Claude in a FireRouter route, add an Anthropic "
       + `Provider Key on your Fireworks account: ${PROVIDER_KEYS_DOCS_URL}. To save the key for other `
-      + "harnesses, run `fireconnect configure --anthropic-api-key <key>`.",
+      + "harnesses, run `nexus configure --anthropic-api-key <key>`.",
     openai: "Codex pays for GPT turns with its own sign-in. To pay with an OpenAI key, sign Codex in "
       + "with it: `codex login --with-api-key`.",
   },
@@ -53,6 +53,26 @@ function validateHarnessOptions(route, ctx) {
     ? claudeModels.some((modelId) => isFirerouterModelPattern(modelId))
     : isFirerouterModelPattern(ctx.main);
 
+  if (isOn) {
+    // FireRouter routes are retired as a selection: reject any `firerouter*`
+    // pattern the user is asking to store, on every harness, before keys are
+    // persisted or any config is written. Stored FireRouter selections from
+    // earlier releases are handled by the upgrade/re-`on` migration instead.
+    const supplied = harnessId === HARNESS.CLAUDE
+      ? [
+        ["--model", ctx.main],
+        ["--opus", ctx.opus],
+        ["--sonnet", ctx.sonnet],
+        ["--haiku", ctx.haiku],
+        ["--fable", ctx.fable],
+        ["--subagent", ctx.subagent],
+      ]
+      : [["--model", ctx.main]];
+    for (const [flag, modelId] of supplied) {
+      assertNotFirerouterModelId(modelId ?? "", flag);
+    }
+  }
+
   if (isOn && harnessId !== HARNESS.CLAUDE && /\[1m\]$/i.test(ctx.main?.trim() ?? "")) {
     throw new Error("[1m] model suffixes are only supported by Claude Code.");
   }
@@ -60,7 +80,7 @@ function validateHarnessOptions(route, ctx) {
   if (ctx.provider && !ctx.azure) {
     throw new Error(
       "--provider is configure-only. For a one-off harness switch, use --azure; "
-        + "to change the default, run: fireconnect configure --provider <fireworks|azure>",
+        + "to change the default, run: nexus configure --provider <fireworks|azure>",
     );
   }
   if (ctx.azure && harnessId === HARNESS.CLAUDE) {
@@ -80,33 +100,33 @@ function validateHarnessOptions(route, ctx) {
   }
   if (onboardingMode !== "auto" && !(harnessId === HARNESS.CLAUDE && isOn)) {
     const flag = onboardingMode === "prompt" ? "--interactive" : "--non-interactive";
-    throw new Error(`${flag} applies only to \`fireconnect claude on\`.`);
+    throw new Error(`${flag} applies only to \`nexus claude on\`.`);
   }
   if (claudeAliases.some(Boolean) && !(harnessId === HARNESS.CLAUDE && isOn)) {
-    throw new Error("--opus/--sonnet/--haiku/--fable/--subagent apply only to `fireconnect claude on`.");
+    throw new Error("--opus/--sonnet/--haiku/--fable/--subagent apply only to `nexus claude on`.");
   }
   if (ctx.main && !isOn) {
     throw new Error("--model applies only to `<harness> on`.");
   }
   if (ctx.search) {
-    throw new Error("--search applies only to `fireconnect model list`.");
+    throw new Error("--search applies only to `nexus model list`.");
   }
   if (ctx.refresh) {
-    throw new Error("--refresh applies only to `fireconnect model list`.");
+    throw new Error("--refresh applies only to `nexus model list`.");
   }
   // `--session` is shared by `claude usage` (report) and `claude live` (resume +
   // meter that session in the split); the report-only flags stay usage-only.
   const sessionAllowed = harnessId === HARNESS.CLAUDE && !noun
     && (verb === "usage" || verb === "live");
   if (ctx.session && !sessionAllowed) {
-    throw new Error("--session applies only to `fireconnect claude usage` or `fireconnect claude live`.");
+    throw new Error("--session applies only to `nexus claude usage` or `nexus claude live`.");
   }
   const hasUsageOption = Boolean(ctx.days || ctx.lastN || ctx.verbose || ctx.plain);
   if (hasUsageOption && !(harnessId === HARNESS.CLAUDE && verb === "usage" && !noun)) {
-    throw new Error("--days/--last-n/--verbose/--plain apply only to `fireconnect claude usage`.");
+    throw new Error("--days/--last-n/--verbose/--plain apply only to `nexus claude usage`.");
   }
   if (verb === "live" && harnessId !== HARNESS.CLAUDE) {
-    throw new Error("`fireconnect <harness> live` is supported only for Claude Code.");
+    throw new Error("`nexus <harness> live` is supported only for Claude Code.");
   }
   const jsonSupported = verb === "status"
     || verb === "usage";
@@ -130,24 +150,12 @@ function validateHarnessOptions(route, ctx) {
     throw new Error("--providers-path is supported only by the Copilot CLI.");
   }
   if (ctx.unsetAnthropicKey || ctx.unsetOpenaiKey) {
-    throw new Error("To clear a saved provider key, run `fireconnect configure --unset openai-api-key` (or `--unset anthropic-api-key`).");
+    throw new Error("To clear a saved provider key, run `nexus configure --unset openai-api-key` (or `--unset anthropic-api-key`).");
   }
   if (ctx.anthropic || ctx.openai || ctx.storedOnly || ctx.withToken || ctx.revoke || ctx.paste || ctx.account) {
     throw new Error("This option belongs to a global login/logout/key command, not a harness command.");
   }
 
-  if (ctx.routingPreference !== null) {
-    if (!isOn || (harnessId !== HARNESS.CLAUDE && !firerouterRequested)) {
-      throw new Error(
-        harnessId === HARNESS.CLAUDE
-          ? "--routing-preference requires `fireconnect claude on` (bare, or with `--model firerouter`)."
-          : "--routing-preference requires `<harness> on --model firerouter`.",
-      );
-    }
-    if (!supportsRoutingPreference(getHarness(harnessId).firerouter)) {
-      throw new Error("--routing-preference is not supported by this harness.");
-    }
-  }
   const refusedKeyFlags = REFUSED_KEY_FLAGS[harnessId];
   if (ctx.anthropicKeyFromFlag && refusedKeyFlags?.anthropic) {
     throw new Error(refusedKeyFlags.anthropic);
@@ -156,8 +164,12 @@ function validateHarnessOptions(route, ctx) {
     throw new Error(refusedKeyFlags.openai);
   }
   if (ctx.anthropicKeyFromFlag) {
+    // The flag only ever served FireRouter routes, which are retired.
     if (!isOn || !firerouterRequested) {
-      throw new Error("--anthropic-api-key requires `<harness> on --model firerouter`.");
+      throw new Error(
+        "--anthropic-api-key was for FireRouter routes, which are no longer supported. "
+        + "Drop the flag and use --model auto instead.",
+      );
     }
     if (!supportsAnthropicApiKeyFlag(getHarness(harnessId).firerouter)) {
       throw new Error("--anthropic-api-key is not supported by this harness.");
@@ -168,8 +180,9 @@ function validateHarnessOptions(route, ctx) {
     if (!validClaudeOn && (!isOn || !firerouterRequested)) {
       throw new Error(
         harnessId === HARNESS.CLAUDE
-          ? "--openai-api-key applies only to `fireconnect claude on`."
-          : "--openai-api-key requires `<harness> on --model firerouter`.",
+          ? "--openai-api-key applies only to `nexus claude on`."
+          : "--openai-api-key was for FireRouter routes, which are no longer supported. "
+            + "Drop the flag and use --model auto instead.",
       );
     }
     if (!supportsOpenaiApiKeyFlag(getHarness(harnessId).firerouter)) {
@@ -236,9 +249,9 @@ export async function runHarnessCommand(route, ctx) {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(
-      message.includes("Run: fireconnect")
+      message.includes("Run: nexus")
         ? message
-        : `${message} Run: fireconnect ${route.harnessId} help`,
+        : `${message} Run: nexus ${route.harnessId} help`,
     );
   }
   const home = ctx.home || process.env.HOME || "";

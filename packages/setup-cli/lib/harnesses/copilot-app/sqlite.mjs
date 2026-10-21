@@ -34,7 +34,7 @@ async function loadNodeSqlite() {
   nodeSqliteChecked = true;
   try {
     // ExperimentalWarning is filtered by the persistent handler in
-    // bin/fireconnect.mjs (see vscdb-sqlite.mjs for why local suppression
+    // bin/nexus.mjs (see vscdb-sqlite.mjs for why local suppression
     // doesn't work).
     const mod = await import("node:sqlite");
     NodeSqlite = mod.DatabaseSync;
@@ -186,7 +186,7 @@ export const COPILOT_PROVIDER_ID_PREFIX = "fc-";
 /** Provider name shown in Copilot's model picker. */
 export const COPILOT_PROVIDER_NAME = "Fireworks";
 
-/** The fireconnect BYOK provider type (OpenAI-compatible custom endpoint). */
+/** The nexus BYOK provider type (OpenAI-compatible custom endpoint). */
 export const COPILOT_PROVIDER_TYPE = "openai";
 
 /** Fireworks OpenAI-compatible inference base URL. */
@@ -273,9 +273,9 @@ export async function upsertFireconnectProvider(dbPath, {
   //
   // The app spawns a fresh CLI subprocess per session and hands it the key via
   // COPILOT_PROVIDER_API_KEY, re-reading the keychain item on every spawn. An
-  // item FireConnect creates via `security` is not on the app's keychain
+  // item Nexus creates via `security` is not on the app's keychain
   // partition list, and adding it there needs the user's login password — which
-  // a non-interactive `fireconnect copilot on` cannot supply. The result was a
+  // a non-interactive `nexus copilot on` cannot supply. The result was a
   // per-session macOS auth prompt and an HTTP 401 whenever it was dismissed.
   //
   // `authKind: "none"` keeps the app out of the keychain entirely and the
@@ -327,6 +327,24 @@ export async function insertCopilotProviderModel(dbPath, { providerId, model }) 
 }
 
 /**
+ * Delete specific model rows from a provider (upgrade migrations pruning
+ * retired rows). No-op for an empty id list.
+ * @param {string} dbPath
+ * @param {string} providerId
+ * @param {string[]} modelIds
+ */
+export async function deleteCopilotProviderModels(dbPath, providerId, modelIds) {
+  const ids = [...new Set(modelIds.filter(Boolean))];
+  if (!ids.length) {
+    return;
+  }
+  const list = ids.map((id) => `'${sqlStringLiteral(id)}'`).join(", ");
+  await execCopilotSql(dbPath, [
+    `DELETE FROM provider_models WHERE provider_id = '${sqlStringLiteral(providerId)}' AND model_id IN (${list});`,
+  ]);
+}
+
+/**
  * Make the DB and its sidecar WAL/SHM files owner-only. Best-effort: chmod is
  * a no-op on Windows, and a DB owned by another user is the app's to manage.
  * @param {string} dbPath
@@ -344,7 +362,7 @@ function restrictDbPermissions(dbPath) {
 }
 
 /**
- * Remove the fireconnect provider row + its registered models.
+ * Remove the nexus provider row + its registered models.
  * @param {string} dbPath
  * @param {string} providerId
  */
@@ -441,6 +459,28 @@ export async function refreshCopilotAppGatewayKey({ dbPath, fireworksKey }) {
   return true;
 }
 
+/**
+ * Apply `rewrite` to the provider row's settings JSON in place, so upgrades can
+ * update baked headers without a re-`on`.
+ * @param {string} dbPath
+ * @param {(settingsJson: string) => string} rewrite
+ * @returns {Promise<boolean>} true when the row changed
+ */
+export async function rewriteCopilotAppProviderSettings(dbPath, rewrite) {
+  const provider = await findFireconnectProvider(dbPath);
+  if (!provider) {
+    return false;
+  }
+  const next = rewrite(provider.settings_json);
+  if (next === provider.settings_json) {
+    return false;
+  }
+  await execCopilotSql(dbPath, [
+    `UPDATE model_providers SET settings_json = '${sqlStringLiteral(next)}' WHERE id = '${sqlStringLiteral(provider.id)}';`,
+  ]);
+  return true;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Running-app guard — same rationale as Cursor/VS Code: writes while the app  */
 /* is open can be clobbered by its WAL/in-memory state.                        */
@@ -457,13 +497,14 @@ export async function refreshCopilotAppGatewayKey({ dbPath, fireworksKey }) {
 export const COPILOT_PROCESS_SPEC = {
   // Bundle is "GitHub Copilot.app", executable "github".
   darwinPattern: "Copilot.app/Contents/MacOS/github",
-  // Matches either Linux layout — a `github-copilot*` binary, or the macOS
-  // executable name (`github`) inside a `GitHub Copilot/` install dir — since
-  // the app ships only `github-copilot-app` and `GitHub Copilot.desktop` as
-  // packaging hints. A bare `[/]copilot` would also match the CLI
-  // (`/usr/local/bin/copilot`), blocking on/off for a quit never required;
-  // verified against real pgrep that this does not.
-  linuxPattern: "[/](github-copilot|GitHub Copilot)",
+  // The official .deb installs the app as `/usr/bin/github` and its desktop
+  // entry runs `github %u`, so the process is just `github`; match that as the
+  // command itself, never as a path argument. The other alternatives cover a
+  // `github-copilot*` binary or a `GitHub Copilot/` install dir. A bare
+  // `[/]copilot` would also match the CLI (`/usr/local/bin/copilot`), blocking
+  // on/off for a quit never required; verified against real pgrep that this
+  // does not.
+  linuxPattern: "^([^ ]*/)?github( |$)|[/](github-copilot|GitHub Copilot)",
   // tasklist reports image names only (no paths), so this must enumerate the
   // plausible desktop executables: a `github-copilot*`/`GitHub Copilot*` app
   // and `copilotd.exe`, the daemon the app's own PowerShell strings reference.

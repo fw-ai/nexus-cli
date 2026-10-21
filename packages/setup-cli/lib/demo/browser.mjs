@@ -1,5 +1,5 @@
 /**
- * Browser comparison page + local server for `fireconnect demo` (§7 of the brief).
+ * Browser comparison page + local server for `nexus demo` (§7 of the brief).
  *
  * compare.html is fully self-contained: both generated apps are inlined as
  * sandboxed-iframe srcdoc and the result numbers are inlined as JSON, so the
@@ -104,7 +104,7 @@ export function buildCompareHtml({
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FireConnect Demo — ${escapeHtml(result.promptTitle)}</title>
+<title>Nexus Demo — ${escapeHtml(result.promptTitle)}</title>
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
@@ -159,7 +159,7 @@ export function buildCompareHtml({
 </head>
 <body>
 <header>
-  <h1>FireConnect Demo</h1>
+  <h1>Nexus Demo</h1>
   <span class="sub">${escapeHtml(result.promptTitle)} · same prompt, same seed · ${incModel} vs ${fwModel}</span>
 </header>
 <div class="grid">

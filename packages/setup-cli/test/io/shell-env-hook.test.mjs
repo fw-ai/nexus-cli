@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -25,12 +25,12 @@ describe("shell-env-hook", () => {
       assert.equal(firstPath, secondPath);
 
       const raw = await readFile(path.join(home, ".zshrc"), "utf8");
-      assert.match(raw, /# >>> fireconnect >>>/);
+      assert.match(raw, /# >>> nexus >>>/);
       assert.match(raw, /export FIREWORKS_API_KEY="\$\(/);
-      assert.equal((raw.match(/# >>> fireconnect >>>/g) ?? []).length, 1);
+      assert.equal((raw.match(/# >>> nexus >>>/g) ?? []).length, 1);
 
       assert.equal(await removeShellEnvHook(home), true);
-      assert.doesNotMatch(await readFile(path.join(home, ".zshrc"), "utf8"), /fireconnect/);
+      assert.doesNotMatch(await readFile(path.join(home, ".zshrc"), "utf8"), /nexus/);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
@@ -45,7 +45,48 @@ describe("shell-env-hook", () => {
     const stripped = stripShellHookBlock(raw);
     assert.match(stripped, /export PATH/);
     assert.match(stripped, /alias ll/);
-    assert.doesNotMatch(stripped, /fireconnect/);
+    assert.doesNotMatch(stripped, />>> nexus >>>/);
+  });
+
+  it("strips every block, keeps a stray marker, and tolerates CRLF", () => {
+    const begin = "# >>> nexus >>>";
+    const end = "# <<< nexus <<<";
+    assert.equal(
+      stripShellHookBlock(["a", "", begin, "x", end, "", "b", begin, "y", end, ""].join("\n")),
+      "a\n\nb\n",
+    );
+    assert.equal(stripShellHookBlock(["a", begin, "kept", ""].join("\n")), ["a", begin, "kept", ""].join("\n"));
+    assert.equal(
+      stripShellHookBlock(["echo '# >>> nexus >>> is a marker'", "z", end, ""].join("\n")),
+      ["echo '# >>> nexus >>> is a marker'", "z", end, ""].join("\n"),
+    );
+    assert.equal(stripShellHookBlock(`a\r\n${begin}\r\nx\r\n${end}\r\nb\r\n`), "a\r\nb\r\n");
+  });
+
+  it("replaces a pre-rename fireconnect block instead of adding a second one", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-shell-hook-legacy-"));
+    process.env.HOME = home;
+    process.env.SHELL = "/bin/zsh";
+    try {
+      await writeFile(path.join(home, ".zshrc"), [
+        "export PATH=/usr/bin",
+        "# >>> fireconnect >>>",
+        "export FIREWORKS_API_KEY=\"$(fireconnect key export)\"",
+        "# <<< fireconnect <<<",
+        "",
+      ].join("\n"));
+      await installShellEnvHook(home);
+      const raw = await readFile(path.join(home, ".zshrc"), "utf8");
+      assert.doesNotMatch(raw, /fireconnect >>>/);
+      assert.equal((raw.match(/# >>> nexus >>>/g) ?? []).length, 1);
+      assert.match(raw, /export PATH=\/usr\/bin/);
+
+      await writeFile(path.join(home, ".zshrc"), "# >>> fireconnect >>>\nx\n# <<< fireconnect <<<\n");
+      assert.equal(await removeShellEnvHook(home), true);
+      assert.doesNotMatch(await readFile(path.join(home, ".zshrc"), "utf8"), /fireconnect/);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
   });
 
   it("reconcileShellEnvHook does not install FIREWORKS export for websearch MCP", async () => {

@@ -20,7 +20,7 @@ const LEGACY_CODEX_ANTHROPIC_HOOK = [
   "# <<< fireconnect <<<",
   "",
 ].join("\n");
-const CLI = path.join(__dirname, "../../bin/fireconnect.mjs");
+const CLI = path.join(__dirname, "../../bin/nexus.mjs");
 
 const VALID_KEY = "fw_login_test_key_000000000000000";
 const REJECTED_KEY = "fw_login_rejected_key_00000000000";
@@ -97,8 +97,8 @@ const MINTED_STATE = {
 };
 
 async function seedMintedState(home) {
-  await mkdir(path.join(home, ".fireconnect"), { recursive: true });
-  await writeFile(path.join(home, ".fireconnect", "minted-key.json"), JSON.stringify(MINTED_STATE));
+  await mkdir(path.join(home, ".nexus"), { recursive: true });
+  await writeFile(path.join(home, ".nexus", "minted-key.json"), JSON.stringify(MINTED_STATE));
 }
 
 /** Like helpers.runCli but with a writable stdin (for --with-token). */
@@ -109,8 +109,8 @@ function runCliWithStdin(args, { home, env = {}, input = "" }) {
         ...process.env,
         ...env,
         HOME: home,
-        FIRECONNECT_SECRET_STORE: "memory",
-        FIRECONNECT_TEST: "1",
+        NEXUS_SECRET_STORE: "memory",
+        NEXUS_TEST: "1",
         FIREWORKS_API_KEY: env.FIREWORKS_API_KEY ?? "",
       },
       stdio: ["pipe", "pipe", "pipe"],
@@ -133,7 +133,7 @@ describe("fireconnect login / logout", () => {
 
   before(async () => {
     gateway = await startMockGateway();
-    gatewayEnv = { FIRECONNECT_GATEWAY_URL: gateway.url };
+    gatewayEnv = { NEXUS_GATEWAY_URL: gateway.url };
   });
 
   after(() => {
@@ -142,7 +142,7 @@ describe("fireconnect login / logout", () => {
 
   it("login --with-token validates, stores, and confirms identity", async () => {
     await withTempHome("login-with-token-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       const result = await runCliWithStdin(["login", "--with-token"], {
         home,
         env: gatewayEnv,
@@ -191,7 +191,7 @@ describe("fireconnect login / logout", () => {
 
   it("login --api-key signs in non-interactively", async () => {
     await withTempHome("login-flag-key-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       const result = await runCli(["login", "--api-key", VALID_KEY], { home, env: gatewayEnv });
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);
       assert.match(result.stdout, new RegExp(`Signed in as ${EMAIL}`));
@@ -208,13 +208,13 @@ describe("fireconnect login / logout", () => {
         env: {
           FIREWORKS_API_KEY: VALID_KEY,
           // Conflict detection happens before verification.
-          FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:1",
+          NEXUS_GATEWAY_URL: "http://127.0.0.1:1",
         },
       });
       assert.equal(result.code, 1);
       assert.match(result.stderr, /FIREWORKS_API_KEY is already set/);
       assert.match(result.stderr, /unset FIREWORKS_API_KEY/);
-      await assert.rejects(access(path.join(home, ".fireconnect", ".secret-memory")));
+      await assert.rejects(access(path.join(home, ".nexus", ".secret-memory")));
     });
   });
 
@@ -227,7 +227,7 @@ describe("fireconnect login / logout", () => {
           runInteractiveSignIn(home, { method: "paste" }),
           /FIREWORKS_API_KEY is already set/,
         );
-        await assert.rejects(access(path.join(home, ".fireconnect", ".secret-memory")));
+        await assert.rejects(access(path.join(home, ".nexus", ".secret-memory")));
       } finally {
         if (previous === undefined) {
           delete process.env.FIREWORKS_API_KEY;
@@ -249,7 +249,7 @@ describe("fireconnect login / logout", () => {
       assert.match(result.stdout, /from FIREWORKS_API_KEY/);
       assert.match(result.stdout, /update FIREWORKS_API_KEY/);
       assert.match(result.stdout, /unset FIREWORKS_API_KEY/);
-      await assert.rejects(access(path.join(home, ".fireconnect", ".secret-memory")));
+      await assert.rejects(access(path.join(home, ".nexus", ".secret-memory")));
     });
   });
 
@@ -263,7 +263,7 @@ describe("fireconnect login / logout", () => {
       });
       assert.equal(result.code, 0, result.stderr);
       assert.match(result.stdout, /shell hook exports this from the keychain/);
-      assert.match(result.stdout, /unset FIREWORKS_API_KEY.*fireconnect login/);
+      assert.match(result.stdout, /unset FIREWORKS_API_KEY.*nexus login/);
       assert.doesNotMatch(result.stdout, /update FIREWORKS_API_KEY wherever you export it/);
     });
   });
@@ -343,7 +343,7 @@ describe("fireconnect login / logout", () => {
 
       const settings = JSON.parse(await readFile(settingsPath, "utf8"));
       assert.equal(settings.env.ANTHROPIC_CUSTOM_HEADERS, `X-Fireworks-Api-Key: ${VALID_KEY}`);
-      await assert.rejects(access(path.join(home, ".fireconnect", ".secret-memory")));
+      await assert.rejects(access(path.join(home, ".nexus", ".secret-memory")));
 
       const again = await runCli(["login"], {
         home,
@@ -373,7 +373,7 @@ describe("fireconnect login / logout", () => {
 
       const result = await runCli(["login"], {
         home,
-        env: { FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:1", FIREWORKS_API_KEY: VALID_KEY },
+        env: { NEXUS_GATEWAY_URL: "http://127.0.0.1:1", FIREWORKS_API_KEY: VALID_KEY },
       });
       assert.equal(result.code, 0, result.stderr);
       assert.match(result.stdout, /couldn't verify/);
@@ -388,7 +388,7 @@ describe("fireconnect login / logout", () => {
 
   it("login when already signed in reports identity and rotation hints", async () => {
     await withTempHome("login-already-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       await seedKeychainConfig(home, VALID_KEY);
 
       const result = await runCli(["login"], { home, env: gatewayEnv });
@@ -400,13 +400,13 @@ describe("fireconnect login / logout", () => {
 
   it("login --account is an explicit re-auth: it runs even when already signed in", async () => {
     await withTempHome("login-account-signedin-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       await seedKeychainConfig(home, VALID_KEY);
       const grpc = await startMockGrpcGateway({ status: 7 });
       try {
         const result = await runCli(["login", "--account", "bogus"], {
           home,
-          env: { ...gatewayEnv, FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { ...gatewayEnv, NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         // It attempted the SSO flow (and failed on the bogus account) rather
         // than short-circuiting on the stored key.
@@ -429,7 +429,7 @@ describe("fireconnect login / logout", () => {
 
   it("logout clears stored credentials and confirms", async () => {
     await withTempHome("logout-", async (home) => {
-      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
       await seedKeychainConfig(home, VALID_KEY);
 
       const result = await runCli(["logout"], { home });
@@ -477,7 +477,7 @@ describe("fireconnect login / logout", () => {
       const result = await runCli(["configure", "--unset", "openai-api-key"], { home, env: { OPENAI_API_KEY: "" } });
       assert.equal(result.code, 0, `stderr: ${result.stderr}`);
       assert.match(result.stdout, /Removed the saved OpenAI key\./);
-      assert.match(result.stdout, /Couldn't update OpenCode's settings\. Run fireconnect opencode off/);
+      assert.match(result.stdout, /Couldn't update OpenCode's settings\. Run nexus opencode off/);
       assert.equal(await readFile(configPath, "utf8"), "{ not json");
     });
   });
@@ -503,7 +503,7 @@ describe("fireconnect login / logout", () => {
 
         const result = await runCli(["logout", "--revoke"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Logged out/);
@@ -515,7 +515,7 @@ describe("fireconnect login / logout", () => {
         assert.equal(grpc.calls[0].parent, MINTED_STATE.userName);
         assert.equal(grpc.calls[0].keyId, MINTED_STATE.keyId);
 
-        await assert.rejects(access(path.join(home, ".fireconnect", "minted-key.json")));
+        await assert.rejects(access(path.join(home, ".nexus", "minted-key.json")));
       });
     } finally {
       grpc.server.close();
@@ -533,7 +533,7 @@ describe("fireconnect login / logout", () => {
         // deletion of the minted key — that would target the wrong principal.
         const result = await runCli(["logout", "--revoke"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url, FIREWORKS_API_KEY: REJECTED_KEY },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url, FIREWORKS_API_KEY: REJECTED_KEY },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.equal(grpc.calls.length, 1);
@@ -554,7 +554,7 @@ describe("fireconnect login / logout", () => {
 
         const result = await runCli(["logout"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Logged out/);
@@ -580,13 +580,13 @@ describe("fireconnect login / logout", () => {
         // behalf of a credential it no longer holds.
         const result = await runCli(["logout", "--revoke"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Logged out/);
         assert.doesNotMatch(result.stdout, /fireconnect-testhost/);
         assert.equal(grpc.calls.length, 0, "no revocation for a key another credential minted");
-        await assert.rejects(access(path.join(home, ".fireconnect", "minted-key.json")));
+        await assert.rejects(access(path.join(home, ".nexus", "minted-key.json")));
       });
     } finally {
       grpc.server.close();
@@ -605,11 +605,11 @@ describe("fireconnect login / logout", () => {
         // sign-in) must NOT wipe minted-key.json — the key is still the one
         // this machine minted and should stay revocable.
         await seedKeychainConfig(home, VALID_KEY);
-        await assert.doesNotReject(access(path.join(home, ".fireconnect", "minted-key.json")));
+        await assert.doesNotReject(access(path.join(home, ".nexus", "minted-key.json")));
 
         const result = await runCli(["logout", "--revoke"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Revoked .*fireconnect-testhost.* server-side/);
@@ -630,7 +630,7 @@ describe("fireconnect login / logout", () => {
 
         const result = await runCli(["logout", "--revoke"], {
           home,
-          env: { FIRECONNECT_GATEWAY_GRPC_WEB_URL: grpc.url },
+          env: { NEXUS_GATEWAY_GRPC_WEB_URL: grpc.url },
         });
         assert.equal(result.code, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Logged out/);
@@ -696,7 +696,7 @@ describe("fireconnect login / logout", () => {
       const result = await runMethodPrompt("\n");
       assert.equal(result.code, 0, result.stderr);
       assert.match(result.stdout, /needs a Fireworks API key for this machine/);
-      assert.match(result.stdout, /fireconnect logout/);
+      assert.match(result.stdout, /nexus logout/);
       assert.match(result.stdout, /Create one for me/);
       assert.match(result.stdout, /already have a key/);
       assert.equal(parseMethod(result.stdout), "browser");

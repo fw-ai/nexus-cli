@@ -10,10 +10,10 @@ import { runFireconnect, runCli, seedKeychainConfig, withTempHome } from "../hel
 const FW_KEY = "fw_test_fireworks_key_00000000000000";
 // Plaintext secret seam keeps VS Code storage deterministic and headless.
 const vscodeRouterEnv = () => ({
-  FIRECONNECT_VSCODE_SECRET_PLAINTEXT: "1",
+  NEXUS_VSCODE_SECRET_PLAINTEXT: "1",
   // `status` live-verifies the active key; point at an unreachable gateway so
   // these storage/per-harness assertions stay offline and deterministic.
-  FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:1",
+  NEXUS_GATEWAY_URL: "http://127.0.0.1:1",
 });
 
 describe("fireconnect key", () => {
@@ -35,7 +35,7 @@ describe("fireconnect key", () => {
       FIREWORKS_API_KEY: "",
       // Offline verify: a stored key is present, so status exits 0 once the
       // (unreachable) gateway check comes back as "couldn't verify".
-      FIRECONNECT_GATEWAY_URL: "http://127.0.0.1:1",
+      NEXUS_GATEWAY_URL: "http://127.0.0.1:1",
     });
     assert.equal(result.code, 0);
     const summary = JSON.parse(result.stdout);
@@ -49,7 +49,7 @@ describe("fireconnect key", () => {
       // `on --api-key` strict-verifies the key, so drop the unreachable-gateway
       // override here (inherit the test double from global-setup); `status`
       // below keeps it to stay offline for the verify it does.
-      const { FIRECONNECT_GATEWAY_URL: _drop, ...onEnv } = vscodeRouterEnv();
+      const { NEXUS_GATEWAY_URL: _drop, ...onEnv } = vscodeRouterEnv();
       const on = await runCli(
         ["vscode", "on", "--api-key", FW_KEY, "--vscode-path", vscodePath, "--force"],
         { home, env: onEnv },

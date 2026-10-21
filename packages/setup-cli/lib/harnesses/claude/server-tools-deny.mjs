@@ -8,7 +8,7 @@ function deniedLegacyServerTools(settings) {
 }
 
 /**
- * Determine which server tools were denied before FireConnect managed the file.
+ * Determine which server tools were denied before Nexus managed the file.
  * Repeat `on` calls must consult the original snapshot: the current file may
  * still contain denials added by older FireConnect releases.
  * @param {Record<string, unknown>} settings
@@ -36,7 +36,7 @@ export function originalSettingsDeniedServerTools(settings, backup = {}) {
 }
 
 /**
- * Remove obsolete FireConnect server-tool denials while preserving rules found
+ * Remove obsolete Nexus server-tool denials while preserving rules found
  * in the user's original settings. Returns the same object when unchanged.
  * @param {Record<string, unknown>} settings
  * @returns {Record<string, unknown>}
@@ -74,7 +74,7 @@ export function reconcileGatewayServerToolDenials(settings, { preserveDeniedTool
 }
 
 /**
- * Remove only FireConnect's bare server-tool denies while reconstructing a
+ * Remove only Nexus's bare server-tool denies while reconstructing a
  * pre-v0.9 baseline without a permission-aware legacy backup.
  * @param {Record<string, unknown>} settings
  * @returns {Record<string, unknown>}

@@ -84,6 +84,32 @@ describe("copilot-cli config", () => {
     });
   });
 
+  it("re-on after a lost backup doesn't snapshot Nexus's own config as the user's", async () => {
+    await withCliDir(async ({ providersPath, settingsPath, dataDir }) => {
+      const { writeFile, readFile, rm } = await import("node:fs/promises");
+      await writeFile(providersPath, '{\n  "providers": [ { "name": "mine", "baseUrl": "https://example.test" } ],\n  "models": [ { "id": "m1", "provider": "mine" } ]\n}\n');
+      await writeFile(settingsPath, JSON.stringify({ theme: "dark", model: "mine/m1" }, null, 2));
+      const models = [{ id: "glm-latest", displayName: "GLM Latest" }];
+      await enableCopilotCli({ providersPath, dataDir, apiKey: FW_OPENCODE_KEY, models });
+      await selectCopilotCliModel({ settingsPath, dataDir, selectionId: "fireworks/glm-latest" });
+
+      await rm(dataDir, { recursive: true, force: true });
+      await enableCopilotCli({ providersPath, dataDir, apiKey: FW_OPENCODE_KEY, models });
+      await selectCopilotCliModel({ settingsPath, dataDir, selectionId: "fireworks/glm-latest" });
+
+      assert.equal(await disableCopilotCli({ providersPath, dataDir }), "stripped");
+      const providers = JSON.parse(await readFile(providersPath, "utf8"));
+      assert.deepEqual(providers.providers.map((p) => p.name), ["mine"]);
+      assert.deepEqual(providers.models.map((m) => m.id), ["m1"]);
+      assert.doesNotMatch(await readFile(providersPath, "utf8"), new RegExp(FW_OPENCODE_KEY));
+
+      assert.equal(await deselectCopilotCliModel({ settingsPath, dataDir }), "stripped");
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      assert.equal(settings.model, undefined);
+      assert.equal(settings.theme, "dark");
+    });
+  });
+
   it("declares vision only where the model carries it", async () => {
     await withCliDir(async ({ providersPath, dataDir }) => {
       const { readFile } = await import("node:fs/promises");

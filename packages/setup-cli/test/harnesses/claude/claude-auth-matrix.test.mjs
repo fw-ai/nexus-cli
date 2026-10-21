@@ -77,7 +77,7 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
   for (const scenario of scenarios) {
     const subscriptionLabel = scenario.subscription ? "subscription" : "no subscription";
     const byokLabel = scenario.byok ? "BYOK" : "no BYOK";
-    const modeLabel = scenario.firerouter ? "explicit --model firerouter" : "fresh defaults";
+    const modeLabel = scenario.firerouter ? "explicit --model firerouter (rejected)" : "fresh defaults";
 
     it(`${subscriptionLabel}, ${byokLabel}, ${modeLabel}`, async () => {
       await withTempHome("claude-auth-matrix-", async (home) => {
@@ -109,6 +109,19 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
           ANTHROPIC_AUTH_TOKEN: "",
         };
         const enabled = await runFireconnect(args, env);
+        if (scenario.firerouter) {
+          // A FireRouter selection is rejected in every auth combination,
+          // before any settings are written.
+          assert.notEqual(enabled.code, 0, enabled.stderr);
+          assert.match(enabled.stderr, /is a FireRouter route, which is no longer supported/);
+          if (scenario.subscription) {
+            assert.equal(await readFile(settingsPath, "utf8"), SUBSCRIPTION_SETTINGS);
+            assert.equal(await readFile(credentialsPath, "utf8"), SUBSCRIPTION_CREDENTIALS);
+          } else {
+            assert.equal(await pathExists(settingsPath), false);
+          }
+          return;
+        }
         assert.equal(enabled.code, 0, enabled.stderr);
 
         const settings = JSON.parse(await readFile(settingsPath, "utf8"));
@@ -117,16 +130,12 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
         // A saved Anthropic key is for other harnesses; Claude Code signs in on its own.
         assert.equal(settings.env.ANTHROPIC_API_KEY, undefined);
         assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, undefined);
-        assertClaudeMainModel(settings, FIREROUTER_MODEL);
-        if (scenario.firerouter) {
+        assertClaudeMainModel(settings, "auto[1m]");
+        {
           assertClaudeNativeTierSlots(settings);
           assertClaudeRegisterablePicker(settings, {
-            includes: ["auto[1m]", FIREROUTER_MODEL, "glm-latest[1m]"],
-          });
-        } else {
-          assertClaudeNativeTierSlots(settings);
-          assertClaudeRegisterablePicker(settings, {
-            includes: ["auto[1m]", "firerouter[1m]", "glm-latest[1m]"],
+            includes: ["auto[1m]", "glm-latest[1m]"],
+            excludes: [FIREROUTER_MODEL],
           });
         }
         assert.equal(settings.apiKeyHelper, undefined);
@@ -156,7 +165,7 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
     });
   }
 
-  it("fresh FireRouter default works without any Anthropic key (workspace BYOK removed)", async () => {
+  it("fresh auto default works without any Anthropic key (workspace BYOK removed)", async () => {
     await withTempHome("claude-no-byok-", async (home) => {
       seedCatalogFor(home);
       const result = await runFireconnect(
@@ -173,10 +182,10 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
       const settings = JSON.parse(
         await readFile(path.join(home, USER_SETTINGS_RELATIVE_PATH), "utf8"),
       );
-      assert.equal(settings.model, "firerouter[1m]");
+      assert.equal(settings.model, "auto[1m]");
       assert.equal(settings.env?.ANTHROPIC_MODEL, undefined);
       assertClaudeNativeTierSlots(settings);
-      assertClaudeRegisterablePicker(settings, { includes: ["firerouter[1m]"] });
+      assertClaudeRegisterablePicker(settings, { includes: ["auto[1m]"], excludes: ["firerouter[1m]"] });
       assert.equal(settings.env.ANTHROPIC_API_KEY, undefined);
       assert.equal(settings.env.ANTHROPIC_AUTH_TOKEN, undefined);
       assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-anthropic-api-key/i);

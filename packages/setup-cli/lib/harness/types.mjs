@@ -12,7 +12,6 @@ import { HARNESSES } from "./id.mjs";
  * @property {boolean} apiKeyFromFlag
  * @property {string} baseUrl
  * @property {boolean} [baseUrlFromFlag]
- * @property {number|null} [routingPreference] // x-routing-preference header value (1-5); null = unset (FireRouter default)
  * @property {boolean} [azure]
  * @property {string} [provider]
  * @property {string} anthropicKey
@@ -53,7 +52,7 @@ import { HARNESSES } from "./id.mjs";
  * @property {(ctx: HarnessContext) => Promise<void>} status
  * @property {(ctx: HarnessContext) => Promise<"fireworks"|"azure"|"none"|"custom"|"default">} [providerStatus]
  *   Read the harness's real config and return the active provider, the same
- *   ground truth `status` reports. Used by global `fireconnect status` so the
+ *   ground truth `status` reports. Used by global `nexus status` so the
  *   per-harness summary reflects what's actually routed, not a stale flag.
  * @property {(ctx: HarnessContext) => Promise<void>} [usage]
  * @property {(ctx: HarnessContext) => Promise<void>} [live]
@@ -110,7 +109,7 @@ export async function dispatchHarnessCommand(adapter, route, ctx) {
     case "usage":
       if (typeof adapter.usage !== "function") {
         throw new Error(
-          `usage is not supported for ${adapter.id}. Run: fireconnect ${adapter.id} help`,
+          `usage is not supported for ${adapter.id}. Run: nexus ${adapter.id} help`,
         );
       }
       await adapter.usage(ctx);
@@ -118,7 +117,7 @@ export async function dispatchHarnessCommand(adapter, route, ctx) {
     case "mcp":
       if (typeof adapter.mcp !== "function") {
         throw new Error(
-          `mcp is not supported for ${adapter.id}. Run: fireconnect ${adapter.id} help`,
+          `mcp is not supported for ${adapter.id}. Run: nexus ${adapter.id} help`,
         );
       }
       await adapter.mcp(ctx, route.args ?? []);
@@ -126,14 +125,14 @@ export async function dispatchHarnessCommand(adapter, route, ctx) {
     case "live":
       if (typeof adapter.live !== "function") {
         throw new Error(
-          `live is not supported for ${adapter.id}. Run: fireconnect ${adapter.id} help`,
+          `live is not supported for ${adapter.id}. Run: nexus ${adapter.id} help`,
         );
       }
       await adapter.live(ctx);
       return;
     default:
       throw new Error(
-        `Unknown harness command: ${verb}. Run: fireconnect ${adapter.id} help`,
+        `Unknown harness command: ${verb}. Run: nexus ${adapter.id} help`,
       );
   }
 }

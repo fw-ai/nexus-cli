@@ -191,7 +191,7 @@ export function waitForEnterConfirm({
  * when the IDE is running and stdin is a TTY, it asks the user to quit, then
  * **both** auto-polls for exit **and** lets them press Enter to confirm.
  * After {@link IDE_QUIT_WAIT_MS}, it offers continue-anyway (same as `--force`)
- * instead of looping forever. fireconnect does not close or reopen the IDE —
+ * instead of looping forever. nexus does not close or reopen the IDE —
  * the user does. Ctrl-C cancels the wait.
  *
  * `force` skips the wait (downgrades to a stderr warning, like `assertIdeStopped`).
