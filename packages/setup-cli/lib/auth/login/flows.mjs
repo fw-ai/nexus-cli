@@ -1,6 +1,10 @@
 import process, { stdin } from "node:process";
 
-import { signInViaDeviceFlow, signInViaLocalhostCallback } from "../browser-auth.mjs";
+import {
+  DEVELOPER_IDENTITY_PROVIDERS,
+  signInViaDeviceFlow,
+  signInViaLocalhostCallback,
+} from "../browser-auth.mjs";
 import { readGlobalConfig, writeGlobalConfig } from "../../config/global-config.mjs";
 import {
   assertNoFireworksEnvForStorage,
@@ -87,7 +91,7 @@ async function runBrowserFlow(home, { nextHint = true } = {}) {
   console.log("");
 
   const flows = [
-    () => signInViaLocalhostCallback({ onStatus: say }),
+    () => signInViaLocalhostCallback({ onStatus: say, providers: DEVELOPER_IDENTITY_PROVIDERS }),
     () => signInViaDeviceFlow({ onStatus: say }),
   ];
 

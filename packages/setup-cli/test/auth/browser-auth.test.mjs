@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
+import { createServer, request } from "node:http";
 import { Buffer } from "node:buffer";
 import { after, before, describe, it } from "node:test";
 import { grpcWebCall, pbDecode, pbField, pbString, pbStringAt } from "../../lib/auth/grpc-web.mjs";
-import { jwtClaims, signInViaDeviceFlow, signInViaLocalhostCallback } from "../../lib/auth/browser-auth.mjs";
+import {
+  DEVELOPER_IDENTITY_PROVIDERS,
+  jwtClaims,
+  signInViaDeviceFlow,
+  signInViaLocalhostCallback,
+} from "../../lib/auth/browser-auth.mjs";
 import { listAccountsForIdToken, mintApiKeyForAccount, mintApiKeyFromIdToken, mintedKeyName } from "../../lib/keys/mint-api-key.mjs";
 
 const EMAIL = "dev@example.com";
@@ -309,6 +314,138 @@ describe("localhost callback flow", () => {
     } finally {
       delete process.env.SSH_TTY;
     }
+  });
+
+  describe("branded sign-in page", () => {
+    const PROVIDERS = DEVELOPER_IDENTITY_PROVIDERS;
+    let idp;
+    let idpCalls;
+
+    before(async () => {
+      idpCalls = [];
+      idp = await startServer((req, res, body) => {
+        const params = JSON.parse(body.toString());
+        idpCalls.push({ target: req.headers["x-amz-target"], params });
+        const { USERNAME, PASSWORD } = params.AuthParameters;
+        res.writeHead(USERNAME === EMAIL && PASSWORD === "right" ? 200 : 400, { "Content-Type": "application/x-amz-json-1.1" });
+        if (USERNAME === EMAIL && PASSWORD === "right") {
+          res.end(JSON.stringify({ AuthenticationResult: { IdToken: ID_TOKEN } }));
+        } else if (USERNAME === "new@example.com") {
+          res.end(JSON.stringify({ __type: "UserNotConfirmedException" }));
+        } else {
+          res.end(JSON.stringify({ __type: "NotAuthorizedException", message: "Incorrect username or password." }));
+        }
+      });
+    });
+
+    after(() => {
+      idp.server.close();
+    });
+
+    function start(extra = {}) {
+      const lines = [];
+      const pending = signInViaLocalhostCallback({
+        cognitoDomain: cognito.url,
+        idpUrl: idp.url,
+        providers: PROVIDERS,
+        openBrowser: false,
+        onStatus: (line) => lines.push(line),
+        timeoutMs: 5000,
+        ...extra,
+      });
+      return { lines, pending };
+    }
+
+    async function loadPage() {
+      const response = await fetch("http://localhost:18000/signin");
+      const html = await response.text();
+      const csrf = /name="csrf" value="([^"]+)"/.exec(html)?.[1];
+      const hrefs = [...html.matchAll(/class="btn" href="([^"]+)"/g)].map((m) => new URL(m[1].replace(/&amp;/g, "&")));
+      return { response, html, csrf, hrefs };
+    }
+
+    const postEmail = (fields, headers = {}) => fetch("http://localhost:18000/signin/email", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: "http://localhost:18000", ...headers },
+      body: new URLSearchParams(fields).toString(),
+    });
+
+    it("opens the local page, not the hosted UI, with one direct button per provider", async () => {
+      const { lines, pending } = start();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      assert.match(lines.join("\n"), /http:\/\/localhost:18000\/signin/);
+      assert.doesNotMatch(lines.join("\n"), /oauth2\/authorize/);
+
+      const { response, html, hrefs } = await loadPage();
+      assert.equal(response.status, 200);
+      assert.match(response.headers.get("content-security-policy"), /frame-ancestors 'none'/);
+      assert.match(html, /Welcome to Nexus/);
+      assert.deepEqual(hrefs.map((u) => u.searchParams.get("identity_provider")), ["Google", "GitHub", "LinkedIn"]);
+      for (const href of hrefs) {
+        assert.equal(href.pathname, "/oauth2/authorize");
+        assert.equal(href.searchParams.get("redirect_uri"), "http://localhost:18000");
+        assert.equal(href.searchParams.get("code_challenge_method"), "S256");
+      }
+
+      // A provider button round-trips through the existing "/" redirect + PKCE exchange.
+      const state = hrefs[0].searchParams.get("state");
+      await fetch(`http://localhost:18000/?code=good-code&state=${state}`);
+      const result = await pending;
+      assert.equal(result.ok, true, result.failure);
+      assert.equal(result.email, EMAIL);
+    });
+
+    it("signs in with email/password and re-renders the form on a wrong password", async () => {
+      idpCalls.length = 0;
+      const { pending } = start();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const { csrf } = await loadPage();
+
+      const wrong = await postEmail({ csrf, email: EMAIL, password: "wrong" });
+      assert.equal(wrong.status, 401);
+      const wrongHtml = await wrong.text();
+      assert.match(wrongHtml, /Incorrect email or password/);
+      assert.match(wrongHtml, new RegExp(`value="${EMAIL}"`), "keeps the typed email");
+
+      const unconfirmed = await postEmail({ csrf, email: "new@example.com", password: "x" });
+      assert.match(await unconfirmed.text(), /Verify your email first/);
+
+      const right = await postEmail({ csrf, email: EMAIL, password: "right" });
+      assert.equal(right.status, 200);
+      assert.match(await right.text(), /return to your terminal/i);
+
+      const result = await pending;
+      assert.equal(result.ok, true, result.failure);
+      assert.equal(result.idToken, ID_TOKEN);
+      assert.equal(idpCalls.at(-1).target, "AWSCognitoIdentityProviderService.InitiateAuth");
+      assert.equal(idpCalls.at(-1).params.AuthFlow, "USER_PASSWORD_AUTH");
+    });
+
+    it("rejects cross-site posts, a wrong CSRF token, and a foreign Host", async () => {
+      idpCalls.length = 0;
+      const { pending } = start();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      const { csrf, hrefs } = await loadPage();
+
+      const crossSite = await postEmail({ csrf, email: EMAIL, password: "right" }, { Origin: "https://evil.example" });
+      assert.equal(crossSite.status, 403);
+      const badCsrf = await postEmail({ csrf: "guess", email: EMAIL, password: "right" });
+      assert.equal(badCsrf.status, 403);
+      // fetch() won't override Host, so speak raw HTTP like a rebound page would.
+      const reboundStatus = await new Promise((resolve, reject) => {
+        request({ host: "127.0.0.1", port: 18000, path: "/signin", headers: { Host: "evil.example:18000" } }, (res) => {
+          res.resume();
+          resolve(res.statusCode);
+        }).on("error", reject).end();
+      });
+      assert.equal(reboundStatus, 403);
+      assert.equal(idpCalls.length, 0, "never reached Cognito");
+
+      // None of the rejected requests settled the wait: the real redirect still does.
+      await fetch(`http://localhost:18000/?code=good-code&state=${hrefs[0].searchParams.get("state")}`);
+      const result = await pending;
+      assert.equal(result.ok, true, result.failure);
+    });
   });
 
   it("prints the URL and keeps listening when no browser can be opened", async () => {
