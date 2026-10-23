@@ -95,7 +95,7 @@ Use any harness name in place of `claude`: `claude-desktop`, `opencode`, `codex`
 
 ### Install notes
 
-- You need **bash** and **Node.js 18+**. If Node is missing or too old, the installer sets it up via Homebrew on macOS, or points you to nvm / nodejs.org / NodeSource elsewhere.
+- You need **bash** and **Node.js 22+**. If Node is missing or too old, the installer sets it up via Homebrew on macOS, or points you to nvm / nodejs.org / NodeSource elsewhere.
 - The installer puts the CLI in `~/.nexus/cli`, adds the `nexus` launcher to `~/.local/bin` and your shell `PATH`, and runs the same cleanup as `nexus update`. It does not sign you in or change harness settings — that's steps 2 and 3.
 - **Windows:** run the install from Git Bash. Piping it through PowerShell breaks line endings (`set: pipefail\r`).
 

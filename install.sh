@@ -18,7 +18,7 @@ done < <(compgen -e | grep '^FIRECONNECT_' || true)
 
 DEFAULT_SOURCE="https://github.com/fw-ai/nexus-cli.git"
 SOURCE="${NEXUS_SOURCE:-${DEFAULT_SOURCE}}"
-MIN_NODE_MAJOR=18
+MIN_NODE_MAJOR=22
 CLAUDE_SETTINGS_RESTORED=0
 INSTALL_NOTES=()
 
