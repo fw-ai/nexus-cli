@@ -126,6 +126,32 @@ describe("Claude main model storage", () => {
     });
   });
 
+  it("re-on does not protect a retired auto-instant saved default", async () => {
+    await withTempHome("claude-model-retired-default-", async (home) => {
+      seedCatalogFor(home);
+      const settingsPath = userSettingsPath(home);
+      const env = {
+        HOME: home,
+        FIREWORKS_API_KEY: "",
+        ANTHROPIC_API_KEY: "",
+        ANTHROPIC_AUTH_TOKEN: "",
+      };
+      const enabled = await runFireconnect(["claude", "on", "--api-key", FIREWORKS_KEY], env);
+      assert.equal(enabled.code, 0, enabled.stderr);
+
+      let settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      settings.model = "auto-instant";
+      await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+
+      const reon = await runFireconnect(["claude", "on"], env);
+      assert.equal(reon.code, 0, reon.stderr);
+      settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      const pickerIds = (settings.modelPicker?.options ?? []).map((row) => row.model ?? "");
+      assert.ok(!pickerIds.some((id) => String(id).includes("auto-instant")), pickerIds.join(","));
+      assert.equal(settings.model, "auto[1m]");
+    });
+  });
+
   it("re-on appends to a marker-stripped picker without duplicates", async () => {
     await withTempHome("claude-picker-reclaim-", async (home) => {
       seedCatalogFor(home);

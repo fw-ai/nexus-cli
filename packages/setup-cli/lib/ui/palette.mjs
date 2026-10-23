@@ -1,4 +1,34 @@
-import { BRAND } from "./tokens.mjs";
+import { terminalTheme } from "./color.mjs";
+import { CLI_COLORS, DATA_COLORS } from "./tokens.mjs";
+
+/**
+ * @param {string} hex `#RRGGBB`
+ * @returns {string} truecolor foreground SGR
+ */
+export function truecolor(hex) {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return `\u001b[38;2;${(value >> 16) & 255};${(value >> 8) & 255};${value & 255}m`;
+}
+
+const CLI = CLI_COLORS[terminalTheme()];
+
+/**
+ * @param {string} hex `#RRGGBB`
+ * @returns {string} SGR params without `\x1b[` / `m`
+ */
+function truecolorParams(hex) {
+  return truecolor(hex).slice(2, -1);
+}
+
+/** Roles in usage tables and meters, drawn from {@link DATA_COLORS}. */
+export const DATA = Object.freeze({
+  input: truecolor(DATA_COLORS.teal),
+  output: truecolor(DATA_COLORS.green),
+  claudeModel: truecolor(DATA_COLORS.coral),
+  fireworksModel: truecolor(DATA_COLORS.rose),
+  spend: truecolor(DATA_COLORS.coral),
+  cost: truecolor(DATA_COLORS.peach),
+});
 
 /** Raw ANSI sequences — shared by CLI output, usage dashboard, and demo TUI. */
 export const ANSI = Object.freeze({
@@ -7,14 +37,9 @@ export const ANSI = Object.freeze({
   dimFaint: "\u001b[2m",
   muted: "\u001b[90m",
   red: "\u001b[31m",
-  green: "\u001b[32m",
   yellow: "\u001b[33m",
-  cyan: "\u001b[36m",
-  white: "\u001b[97m",
-  orange: "\u001b[38;5;208m",
-  blue: "\u001b[36m",
-  violet: "\u001b[38;5;105m",
-  purple: `\u001b[38;2;103;32;255m`,
+  primary: truecolor(CLI.primary),
+  accent: truecolor(CLI.accent),
   selectedBg: "\u001b[48;5;236m",
   hideCursor: "\u001b[?25l",
   showCursor: "\u001b[?25h",
@@ -31,28 +56,26 @@ export const ANSI = Object.freeze({
 });
 
 /**
- * Live cost-meter palette (same codes as claude-transparent / PR #230).
+ * Live cost-meter palette.
  * Kept here so `nexus claude usage` and the meter share one source.
  */
 export const METER = Object.freeze({
-  accent: "\u001b[38;2;103;32;255m",
-  gold: "\u001b[38;5;220m",
+  accent: truecolor(CLI.primary),
+  gold: DATA.cost,
   ghost: "\u001b[38;5;245m",
-  green: "\u001b[38;5;42m",
-  red: "\u001b[38;5;203m",
+  green: DATA.output,
+  red: "\u001b[31m",
   /** SGR color params (without `\x1b[` / `m`) for per-model badges. */
   modelPalette: Object.freeze([
-    "38;5;141",
-    "38;5;43",
-    "38;5;215",
-    "38;5;75",
-    "38;5;205",
-    "38;5;191",
-    "38;5;117",
-  ]),
+    DATA_COLORS.teal,
+    DATA_COLORS.coral,
+    DATA_COLORS.rose,
+    DATA_COLORS.green,
+    DATA_COLORS.peach,
+    DATA_COLORS.blush,
+    DATA_COLORS.sky,
+    DATA_COLORS.amber,
+    DATA_COLORS.flare,
+  ].map(truecolorParams)),
 });
 
-/** Brand purple as RGB tuple (matches BRAND.purple #6720FF). */
-export const BRAND_RGB = Object.freeze({ r: 103, g: 32, b: 255 });
-
-export { BRAND };

@@ -1,5 +1,5 @@
 import process from "node:process";
-import { accent, bold, dim, cyan, symbols } from "../ui.mjs";
+import { accent, bold, dim, primary, symbols } from "../ui.mjs";
 import { ANSI } from "./palette.mjs";
 
 const HIDE_CURSOR = ANSI.hideCursor;
@@ -333,7 +333,7 @@ function renderRows({ items, index, pageSize, renderRow }) {
 }
 
 function summaryLine(output, message, answer) {
-  output.write(`${cyan(symbols.ok)} ${message} ${bold(answer)}\n`);
+  output.write(`${primary(symbols.ok)} ${message} ${bold(answer)}\n`);
 }
 
 /**
@@ -438,7 +438,7 @@ export async function promptCheckbox({ message, choices, validate, pageSize = 10
         index,
         pageSize,
         renderRow: (choice, active, i) => {
-          const box = checked[i] ? cyan(`[${symbols.ok}]`) : dim("[ ]");
+          const box = checked[i] ? accent(`[${symbols.ok}]`, output) : dim("[ ]");
           return active
             ? `${accent(symbols.pointer, output)} ${box} ${choice.name}`
             : `  ${box} ${choice.name}`;

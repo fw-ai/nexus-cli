@@ -94,7 +94,11 @@ export const FIREWORKS_ENV_KEYS = [
   "CLAUDE_CODE_DISABLE_1M_CONTEXT",
   "CLAUDE_CODE_ATTRIBUTION_HEADER",
   "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING",
+  // Retired: older versions pinned this to "0". Still listed so every Nexus
+  // strip path removes it.
   "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE",
+  // Retired: older versions set these to "1". Still listed so every Nexus
+  // strip path removes them.
   "DISABLE_TELEMETRY",
   "DO_NOT_TRACK",
   "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
@@ -137,13 +141,6 @@ export const MODEL_MAPPING_ENV_KEYS = [
 /** Claude Code behavior tuning shared by direct and router modes (not model mapping). */
 export const CLAUDE_CODE_BEHAVIOR_ENV = {
   CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING: "1",
-  CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0",
-  // Cut Statsig/GrowthBook, Datadog, and other Anthropic-bound nonessential startup traffic.
-  // See Claude Code env vars: DISABLE_TELEMETRY, DO_NOT_TRACK,
-  // CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC.
-  DISABLE_TELEMETRY: "1",
-  DO_NOT_TRACK: "1",
-  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
   // Claude Code disables MCP tool search when ANTHROPIC_BASE_URL is not
   // api.anthropic.com. Force it on so deferred tool_reference loading still
   // works through the Fireworks gateway.
@@ -491,12 +488,12 @@ export function stripFireworksOwnedEnv(env) {
     }
   }
   // Direct mode authenticates via an X-Fireworks-Api-Key line in
-  // ANTHROPIC_CUSTOM_HEADERS (not one of FIREWORKS_ENV_KEYS); strip that line so
-  // `off` never leaves a plaintext Fireworks key, preserving any user lines.
+  // ANTHROPIC_CUSTOM_HEADERS (not one of FIREWORKS_ENV_KEYS); strip every
+  // Nexus-managed line (Fireworks key, BYOK provider keys, provider scope,
+  // telemetry) so `off` never leaves a live key behind for Claude Code to
+  // send to Anthropic, preserving any user lines.
   if (typeof nextEnv.ANTHROPIC_CUSTOM_HEADERS === "string") {
-    const stripped = stripFireconnectTelemetryHeaderLines(
-      stripFireworksKeyFromCustomHeaders(nextEnv.ANTHROPIC_CUSTOM_HEADERS),
-    );
+    const stripped = stripManagedCustomHeaderLines(nextEnv.ANTHROPIC_CUSTOM_HEADERS);
     if (stripped !== nextEnv.ANTHROPIC_CUSTOM_HEADERS) {
       if (stripped) {
         nextEnv.ANTHROPIC_CUSTOM_HEADERS = stripped;
@@ -524,6 +521,33 @@ function preFireconnectEnv(backup = {}) {
 }
 
 /**
+ * Undo env values an older Nexus wrote. A key that still holds the value
+ * Nexus wrote goes back to its pre-Nexus value, or is removed if the user's
+ * settings didn't have it.
+ * @param {Record<string, any>} settings
+ * @param {Record<string, any>} backup provider backup (raw snapshot or legacy values)
+ * @param {Record<string, string>} pins key → the value Nexus wrote
+ * @returns {{ settings: Record<string, any>, changed: boolean }}
+ */
+function stripRetiredEnvPins(settings, backup, pins) {
+  const env = settings.env ?? {};
+  const original = preFireconnectEnv(backup);
+  const keys = Object.keys(pins).filter((key) => env[key] === pins[key] && original[key] !== pins[key]);
+  if (keys.length === 0) {
+    return { settings, changed: false };
+  }
+  const nextEnv = { ...env };
+  for (const key of keys) {
+    if (Object.hasOwn(original, key)) {
+      nextEnv[key] = original[key];
+    } else {
+      delete nextEnv[key];
+    }
+  }
+  return { settings: { ...settings, env: nextEnv }, changed: true };
+}
+
+/**
  * Drop the `CLAUDE_CODE_AUTO_MODE_SERVER=0` pin older versions wrote. Claude
  * Code already falls back to its local classifier when the gateway rejects the
  * server-side request, and the pin would keep blocking the server classifier
@@ -534,14 +558,71 @@ function preFireconnectEnv(backup = {}) {
  * @returns {{ settings: Record<string, any>, changed: boolean }}
  */
 export function stripRetiredAutoModeServerPin(settings, backup = {}) {
+  return stripRetiredEnvPins(settings, backup, { CLAUDE_CODE_AUTO_MODE_SERVER: "0" });
+}
+
+/**
+ * Drop the `CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE=0` pin older versions
+ * wrote. Nexus leaves Claude Code's own update settings alone. A "0" in the
+ * pre-Nexus settings is the user's own and stays.
+ * @param {Record<string, any>} settings
+ * @param {Record<string, any>} [backup] provider backup (raw snapshot or legacy values)
+ * @returns {{ settings: Record<string, any>, changed: boolean }}
+ */
+export function stripRetiredAutoUpdatePin(settings, backup = {}) {
+  return stripRetiredEnvPins(settings, backup, { CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0" });
+}
+
+/**
+ * Telemetry opt-outs older versions wrote. Each one also stops Claude Code
+ * from fetching its feature flags, and without them it hides flag-gated tools
+ * such as Artifact. `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` hides Artifact
+ * on its own as well.
+ */
+const RETIRED_TELEMETRY_OPT_OUTS = {
+  DISABLE_TELEMETRY: "1",
+  DO_NOT_TRACK: "1",
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+};
+
+/**
+ * Drop the telemetry opt-outs older versions wrote, once per install: callers
+ * then set `retiredTelemetryOptOuts` in provider state, so an opt-out the user
+ * adds later stays. Values from the pre-Nexus settings stay too.
+ * @param {Record<string, any>} settings
+ * @param {Record<string, any>} backup provider backup (raw snapshot or legacy values)
+ * @param {Record<string, any>} state provider state
+ * @returns {{ settings: Record<string, any>, changed: boolean }}
+ */
+/**
+ * True when some but not all of the Nexus-written telemetry opt-outs
+ * are present: a partial set the upgrade must not consume its
+ * once-only retirement on, so a later run can still act if the set
+ * is completed or removed.
+ * @param {Record<string, any>} settings
+ */
+export function hasPartialRetiredTelemetryOptOuts(settings) {
   const env = settings.env ?? {};
-  if (env.CLAUDE_CODE_AUTO_MODE_SERVER !== "0"
-      || preFireconnectEnv(backup).CLAUDE_CODE_AUTO_MODE_SERVER === "0") {
+  const present = Object.entries(RETIRED_TELEMETRY_OPT_OUTS)
+    .filter(([key, value]) => env[key] === value);
+  return present.length > 0 && present.length < Object.keys(RETIRED_TELEMETRY_OPT_OUTS).length;
+}
+
+export function retireTelemetryOptOutsOnce(settings, backup, state) {
+  if (state.retiredTelemetryOptOuts) {
     return { settings, changed: false };
   }
-  const nextEnv = { ...env };
-  delete nextEnv.CLAUDE_CODE_AUTO_MODE_SERVER;
-  return { settings: { ...settings, env: nextEnv }, changed: true };
+  // Nexus always wrote the three opt-outs together (CLAUDE_CODE_BEHAVIOR_ENV).
+  // A lone opt-out (e.g. only DISABLE_TELEMETRY=1) is the user's own deliberate
+  // setting added after `on`, so only the full Nexus-written set is retired;
+  // a partial set stays, and the upgrade note tells the user so.
+  const env = settings.env ?? {};
+  const fullNexusSet = Object.entries(RETIRED_TELEMETRY_OPT_OUTS)
+    .every(([key, value]) => env[key] === value);
+  if (!fullNexusSet) {
+    return { settings, changed: false };
+  }
+  return stripRetiredEnvPins(settings, backup, RETIRED_TELEMETRY_OPT_OUTS);
 }
 
 const LEGACY_ATTRIBUTION_HEADER_LEFTOVER = "0";
@@ -756,10 +837,9 @@ export function buildFireworksProviderEnv(env, {
       ].filter(Boolean).join("\n");
     }
   }
-  // A configured OpenAI key rides along for OpenAI-routed FireRouter picks
-  // (bare `firerouter` already carries it via buildClaudeCustomHeaders above;
-  // pinned GPT compounds like `firerouter/gpt-...` take the plain branch and
-  // need it appended). Never duplicated, never prompted for.
+  // An OpenAI key saved with `nexus auto` rides along so Nexus Auto (`auto`)
+  // can use OpenAI models (bare `firerouter` already carries it via
+  // buildClaudeCustomHeaders above). Never duplicated, never prompted for.
   if (openaiKey?.trim() && !openaiKeyFromCustomHeaders(nextEnv.ANTHROPIC_CUSTOM_HEADERS)) {
     nextEnv.ANTHROPIC_CUSTOM_HEADERS = [
       nextEnv.ANTHROPIC_CUSTOM_HEADERS,
@@ -912,7 +992,12 @@ export function buildFireworksSettings(settings, {
       || isFireconnectModelPicker(settings.modelPicker);
     next = withFireconnectModelPicker(next, registerablePickerIds, {
       refresh: refreshPicker,
-      protectedIds: selectedPickerModel ? [selectedPickerModel] : [],
+      // This run's --model and the saved default both survive a refresh
+      // (as the upgrade migration already protects the saved default);
+      // retired defaults (FireRouter, auto-instant) are not protected —
+      // they move to `auto` below instead.
+      protectedIds: [selectedPickerModel, settings.model]
+        .filter((id) => typeof id === "string" && id && !isRetiredModelId(id)),
     });
     // FireRouter rows do not survive the picker refresh (above), so they
     // must not count as servable when deciding whether the saved default
@@ -995,11 +1080,14 @@ export async function enableFireworksProvider({
     authMode: state.authMode,
     managedApiKeyHelper: state.managedApiKeyHelper,
   });
-  const { settings: next } = stripRetiredAutoModeServerPin(withoutHelper, backup);
+  const { settings: withoutAutoModePin } = stripRetiredAutoModeServerPin(withoutHelper, backup);
+  const { settings: withoutAutoUpdatePin } = stripRetiredAutoUpdatePin(withoutAutoModePin, backup);
+  const { settings: next } = retireTelemetryOptOutsOnce(withoutAutoUpdatePin, backup, state);
 
   await writeJson(settingsPath, next, { mode: 0o600 });
   await writeJson(statePath, {
     ...state,
+    retiredTelemetryOptOuts: true,
     authMode: "customHeader",
     keyType: "fireworks",
     managedApiKeyHelper: undefined,
@@ -1049,6 +1137,8 @@ export async function disableFireworksProvider({ settingsPath, dataDir, wasEnabl
     }
     // ANTHROPIC_CUSTOM_HEADERS isn't in FIREWORKS_ENV_KEYS; strip the Fireworks
     // key line so a legacy (values-only) restore never leaves it in plaintext.
+    // Only the Fireworks/telemetry lines go: this env just came out of the
+    // user's own backup, so their BYOK/scope lines in it are theirs to keep.
     if (typeof nextEnv.ANTHROPIC_CUSTOM_HEADERS === "string") {
       const stripped = stripFireconnectTelemetryHeaderLines(
         stripFireworksKeyFromCustomHeaders(nextEnv.ANTHROPIC_CUSTOM_HEADERS),

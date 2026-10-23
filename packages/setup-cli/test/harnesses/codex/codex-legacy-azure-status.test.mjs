@@ -61,7 +61,7 @@ describe("codex status for a leftover fireworks-azure routing", () => {
         assert.match(text, /Connection: on/);
         assert.match(text, /Provider: Fireworks on Microsoft Foundry/);
         assert.match(text, new RegExp(`Endpoint: ${LEGACY_AZURE_BASE}`));
-        // Regression (Bugbot, #426): {env:AZURE_API_KEY} must not render as
+        // Regression: {env:AZURE_API_KEY} must not render as
         // "stored in config" just because AZURE_API_KEY happens to be set.
         assert.match(text, /Auth: environment reference in config/);
         assert.doesNotMatch(text, /stored in config/);

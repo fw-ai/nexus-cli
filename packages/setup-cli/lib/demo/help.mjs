@@ -17,7 +17,7 @@ Race two models on the same code-generation prompt via Claude Code. Requires
 \`nexus claude\`. Interactive runs: pick two models, pick a game,
 then watch the split-pane race and open the browser comparison.
 
-  Each side runs \`claude -p\` with your existing Nexus Claude profile —
+  Each side runs \`claude -p\` with your existing Nexus CLI Claude profile —
   same auth and routing as \`nexus claude\`. Only \`--model\` differs
   per side; ~/.claude/settings.json is never modified.
 

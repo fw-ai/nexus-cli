@@ -48,6 +48,8 @@ export function mintedKeyName(hostname = os.hostname()) {
 
 const failed = (failure) => ({ ok: false, key: "", keyId: "", userName: "", failure });
 
+const GRPC_PERMISSION_DENIED = 7;
+
 /**
  * List the Fireworks accounts an id_token principal can mint keys under. The
  * control plane resolves the principal to its accounts server-side; when more
@@ -95,6 +97,11 @@ export async function mintApiKeyForAccount(idToken, accountName, {
     users = await grpcWebCall(baseUrl, "ListUsers", usersRequest, idToken);
   } catch (error) {
     return failed(`Couldn't reach the Fireworks control plane (${error?.message ?? "network error"}).`);
+  }
+  // A bare denial is the gateway's non-member answer; denials with a message
+  // (SSO enforcement, role limits) fall through so the reason is shown.
+  if (users.status === GRPC_PERMISSION_DENIED && !users.detail) {
+    return failed(`You signed in, but you're not a member of "${accountName.replace(/^accounts\//, "")}" yet — ask your account admin to add you.`);
   }
   if (users.status !== 0 || !users.message) {
     return failed(rpcFailureLine("looking up your user", users));

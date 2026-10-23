@@ -15,6 +15,7 @@ import { resolveFireworksCatalog } from "../../fireworks/model-specs.mjs";
 import { prettyModelName, warmServerlessPricingCache } from "../../fireworks/models.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
 import { writeFileAtomic } from "../../io/atomic-write.mjs";
+import { omitHeaders } from "../../firerouter/core.mjs";
 import { MISSING_FIREWORKS_API_KEY_MESSAGE } from "../../keys/key-type.mjs";
 import { readRawIfExists } from "../opencode/core.mjs";
 import {
@@ -128,6 +129,40 @@ export function parseDeepseekCredentials(raw) {
 function fireworksProvider(settings) {
   const providers = asPlainObject(asPlainObject(settings[DEEPSEEK_LLM_PI_AI_NS])?.providers);
   return asPlainObject(providers?.[DEEPSEEK_FIREWORKS_PROVIDER_ID]);
+}
+
+/**
+ * Headers on the Fireworks provider in settings.yaml, so a repeat `on` can
+ * keep provider keys that live only there.
+ * @param {Record<string, unknown>} settings
+ * @returns {Record<string, string>}
+ */
+export function deepseekStoredProviderHeaders(settings) {
+  return asPlainObject(fireworksProvider(settings)?.headers) ?? {};
+}
+
+/**
+ * Remove the named provider-key headers from the Fireworks provider in
+ * settings.yaml, keeping every other header. False when none was present.
+ * @param {{ settingsPath: string, headerNames: string[] }} opts
+ * @returns {Promise<boolean>}
+ */
+export async function removeDeepseekSavedProviderKeys({ settingsPath, headerNames }) {
+  const { existed, settings } = await readDeepseekSettingsIfExists(settingsPath);
+  const provider = existed ? fireworksProvider(settings) : null;
+  const headers = provider ? omitHeaders(provider.headers, headerNames) : null;
+  if (!headers) {
+    return false;
+  }
+  const next = structuredClone(settings);
+  const nextProvider = next[DEEPSEEK_LLM_PI_AI_NS].providers[DEEPSEEK_FIREWORKS_PROVIDER_ID];
+  if (Object.keys(headers).length) {
+    nextProvider.headers = headers;
+  } else {
+    delete nextProvider.headers;
+  }
+  await writeFileAtomic(settingsPath, serializeYaml(next), { mode: 0o600 });
+  return true;
 }
 
 function isManagedFireworksProvider(settings) {
@@ -722,13 +757,13 @@ export async function enableDeepseekFireworks({
  */
 export async function migrateDeepseekFirerouterModel({ settingsPath }) {
   const settingsSnap = await readDeepseekSettingsIfExists(settingsPath);
-  const effective = await deepseekEffectiveFireworksState(settingsPath, settingsSnap.settings);
-  if (effective.provider !== "fireworks" || !isRetiredModelId(effective.model ?? "")) {
-    return false;
-  }
+  // Migrate each layer on its own: the effective model comes from whichever
+  // layer wins, so gating on it left retired models behind in the layers
+  // that lose (a current settings layer over a retired patch, or vice versa).
   const target = defaultMainModel();
   let changed = false;
-  if (isRetiredModelId(deepseekCurrentModelId(settingsSnap.settings) ?? "")) {
+  if (isManagedFireworksProvider(settingsSnap.settings)
+    && isRetiredModelId(deepseekCurrentModelId(settingsSnap.settings) ?? "")) {
     const provider = fireworksProvider(settingsSnap.settings);
     await writeFileAtomic(settingsPath, serializeYaml(patchDeepseekFireworksSettings(settingsSnap.settings, {
       modelId: target,

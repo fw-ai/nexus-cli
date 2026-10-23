@@ -20,7 +20,7 @@
 import process from "node:process";
 
 import {
-  BOLD, DIM, CYAN, RED, REVERSE, RESET, HIDE_CURSOR, SHOW_CURSOR,
+  ACCENT, BOLD, DIM, RED, REVERSE, RESET, HIDE_CURSOR, SHOW_CURSOR,
   CLEAR_LINE,
 } from "./ansi.mjs";
 import { isAnthropicShapedKey } from "../firerouter/core.mjs";
@@ -112,7 +112,7 @@ export async function promptMaskedKey({ validate, label, framing, stdin = proces
       const bullets = `${BOLD}${MASK.repeat(value.length)}${RESET}`;
       const count = value.length > 0 ? `  ${DIM}(${value.length} chars)${RESET}` : "";
       const cursor = `${REVERSE} ${RESET}`;
-      let line = `  ${BOLD}${CYAN}${label}${RESET} ${bullets}${cursor}${count}`;
+      let line = `  ${BOLD}${label}${RESET} ${bullets}${cursor}${count}`;
       if (error) {
         line += `  ${RED}${error}${RESET}`;
       }
@@ -414,13 +414,13 @@ export async function promptChoice({ title, hint = "", options, stdin = process.
     const selected = idx === focus;
     const num = `${idx + 1}`;
     const body = `${num} ${opt}`;
-    return selected ? `  ${CYAN}❯${RESET} ${REVERSE}${BOLD}${body}${RESET}` : `    ${DIM}${body}${RESET}`;
+    return selected ? `  ${ACCENT}❯${RESET} ${REVERSE}${BOLD}${body}${RESET}` : `    ${DIM}${body}${RESET}`;
   });
 
   const render = () => {
     // Repaint in place: move up over the previously drawn block, clear each
     // line, then write the new block. The first paint starts fresh.
-    const lines = [`  ${BOLD}${CYAN}${title}${RESET}`];
+    const lines = [`  ${BOLD}${title}${RESET}`];
     if (hint) {
       lines.push(`  ${DIM}${hint}${RESET}`);
     }

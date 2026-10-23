@@ -406,7 +406,7 @@ print_claude_restore_summary() {
   fi
   echo
   echo "Your original Claude Code settings were restored before the upgrade."
-  echo "Reconnect Claude Code through Nexus: nexus claude"
+  echo "Reconnect Claude Code through Nexus CLI: nexus claude"
 }
 
 ensure_durable_source() {
@@ -415,7 +415,7 @@ ensure_durable_source() {
   fi
 
   local install_dir="${HOME}/.nexus/cli"
-  install_progress "Downloading Nexus..."
+  install_progress "Downloading Nexus CLI..."
 
   if ! command -v git >/dev/null 2>&1; then
     echo "Missing required command: git" >&2
@@ -429,7 +429,7 @@ ensure_durable_source() {
   if ! git clone --quiet --depth 1 "${SOURCE}" "${staging}" \
     || [[ ! -f "${staging}/packages/setup-cli/bin/nexus.mjs" ]]; then
     rm -rf "${staging}"
-    echo "Couldn't download Nexus from ${SOURCE}; your existing install was left in place." >&2
+    echo "Couldn't download Nexus CLI from ${SOURCE}; your existing install was left in place." >&2
     exit 1
   fi
   rm -rf "${install_dir}"
@@ -447,7 +447,7 @@ ensure_dependencies() {
   local setup_dir
   setup_dir="$(cd "$(dirname "${CLI}")/.." && pwd)"
   if [[ ! -f "${setup_dir}/package.json" ]]; then
-    echo "Nexus source not found; cannot install dependencies." >&2
+    echo "Nexus CLI source not found; cannot install dependencies." >&2
     exit 1
   fi
   install_progress "Installing dependencies..."
@@ -462,7 +462,7 @@ ensure_dependencies() {
   # `→` steps. Discard stdout (errors still surface on stderr) unless verbose.
   if ! (cd "${setup_dir}" && NEXUS_SKIP_POSTINSTALL_FINALIZE=1 \
     npm install --omit=dev --no-fund --no-audit --loglevel="${npm_loglevel}" 1>"${npm_stdout}"); then
-    echo "Failed to install Nexus dependencies." >&2
+    echo "Failed to install Nexus CLI dependencies." >&2
     exit 1
   fi
 }
@@ -531,7 +531,7 @@ install_cli_launcher() {
 NODE_BIN="\${NEXUS_NODE_BIN:-${node_bin}}"
 [ -x "\$NODE_BIN" ] || NODE_BIN="\$(command -v node 2>/dev/null)"
 if [ -z "\$NODE_BIN" ] || ! [ -x "\$NODE_BIN" ]; then
-  echo "nexus: Node.js was not found. Install Node and re-run the Nexus installer." >&2
+  echo "nexus: Node.js was not found. Install Node and re-run the Nexus CLI installer." >&2
   exit 1
 fi
 # Suppress Node's ExperimentalWarning for node:sqlite (Node >= 22).
@@ -556,21 +556,43 @@ foreign_launcher() {
 }
 
 # Exit 0 when ~/.nexus holds another program's files. Nexus is recognized by
-# files only it writes (same rule as the CLI's isNexusDataDir).
+# files only it writes (same rule as the CLI's isNexusDataDir). The CLI is
+# not installed yet at this point, so the owned list duplicates
+# NEXUS_OWNED_FILENAMES in lib/system/data-dir.mjs — keep them in step; the
+# install preflight tests pin the two lists together.
 foreign_data_dir() {
   [[ -e "${HOME}/.nexus" ]] || return 1
   node - "${HOME}/.nexus" <<'NODE'
 const fs = require("node:fs");
 const path = require("node:path");
 const dir = process.argv[2];
+const OWNED = [
+  "key-storage.json", "secret-backend.json", "rename-complete", "rename-announced",
+  "catalog-cache.json", "list-price-cache.json", "codex-stock-models.json",
+  "update-check.json", "update-check.lock", "release-notes.json", "minted-key.json",
+  "demo.json", ".api-key", ".secret-memory",
+  "cli", "claude-desktop", "statusline-refresh",
+];
+const STRONG = [
+  "key-storage.json", "secret-backend.json", "rename-complete", "rename-announced",
+  "minted-key.json", ".secret-memory",
+];
 let entries = [];
 try { entries = fs.readdirSync(dir); } catch { process.exit(0); }
-if (entries.length === 0 || entries.includes("key-storage.json") || entries.includes("rename-complete")
+const owned = (entry) => OWNED.includes(entry) || entry.startsWith(".secret-memory-");
+const strong = (entry) => STRONG.includes(entry) || entry.startsWith(".secret-memory-");
+if (entries.length === 0 || entries.some(strong)
   || fs.existsSync(path.join(dir, "cli", "packages", "setup-cli", "bin", "nexus.mjs"))) process.exit(1);
 try {
   const config = JSON.parse(fs.readFileSync(path.join(dir, "config.json"), "utf8"));
-  if (config && typeof config === "object" && typeof config.harnesses === "object") process.exit(1);
+  if (config && typeof config === "object" && !Array.isArray(config)
+    && config.harnesses && typeof config.harnesses === "object"
+    && !Array.isArray(config.harnesses)) process.exit(1);
 } catch {}
+// Generic owned names alone count only when nothing foreign sits beside
+// them; a config.json that no longer parses to our shape does not poison
+// the tier, but never claims the directory on its own either.
+if (entries.some(owned) && entries.every((entry) => owned(entry) || entry === "config.json")) process.exit(1);
 process.exit(0);
 NODE
 }

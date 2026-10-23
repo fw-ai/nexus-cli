@@ -299,16 +299,21 @@ describe("runHarnessForwardMigrations", () => {
       );
 
       const notes = await runHarnessForwardMigrations(home);
-      assert.equal(notes.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      assert.equal(notes.filter((n) => /FireRouter is now Nexus Auto: moved OpenCode to `auto`/.test(n)).length, 1, notes.join("\n"));
       const migrated = JSON.parse(await readFile(configPath, "utf8"));
       assert.equal(migrated.model, "fireworks-ai/auto");
-      // The FireRouter picker row and its BYOK headers go with the selection
+      // The FireRouter picker row goes with the selection; provider-key
+      // headers stay for Nexus Auto.
       // (the `auto` row is the upgrade's own auto backfill).
       assert.deepEqual(Object.keys(migrated.provider["fireworks-ai"].models).sort(), ["auto", "kimi-latest"]);
-      assert.deepEqual(migrated.provider["fireworks-ai"].options.headers, { "X-User-Trace": "keep" });
+      assert.deepEqual(migrated.provider["fireworks-ai"].options.headers, {
+        "x-anthropic-api-key": "sk-ant-legacy",
+        "x-openai-api-key": "sk-proj-legacy",
+        "X-User-Trace": "keep",
+      });
 
       const again = await runHarnessForwardMigrations(home);
-      assert.equal(again.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 0, again.join("\n"));
+      assert.equal(again.filter((n) => /FireRouter is now Nexus Auto: moved OpenCode to `auto`/.test(n)).length, 0, again.join("\n"));
     });
   });
 
@@ -333,7 +338,7 @@ describe("runHarnessForwardMigrations", () => {
       );
 
       const notes = await runHarnessForwardMigrations(home);
-      assert.equal(notes.filter((n) => /Moved OpenCode off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      assert.equal(notes.filter((n) => /FireRouter is now Nexus Auto: moved OpenCode to `auto`/.test(n)).length, 1, notes.join("\n"));
       assert.equal(JSON.parse(await readFile(configPath, "utf8")).model, "fireworks-ai/auto");
     });
   });
@@ -356,7 +361,7 @@ describe("runHarnessForwardMigrations", () => {
       await writeJson(settingsPath, { model: "fireworks/firerouter" });
 
       const notes = await runHarnessForwardMigrations(home);
-      assert.equal(notes.filter((n) => /Moved the Copilot CLI off FireRouter/.test(n)).length, 1, notes.join("\n"));
+      assert.equal(notes.filter((n) => /FireRouter is now Nexus Auto: moved the Copilot CLI to `auto`/.test(n)).length, 1, notes.join("\n"));
       assert.equal((await readJsonIfExists(settingsPath)).model, "fireworks/auto");
       const ids = (await readJsonIfExists(providersPath)).models.map((model) => model.id);
       assert.ok(!ids.includes("firerouter"), ids.join(","));
@@ -579,8 +584,8 @@ describe("runHarnessForwardMigrations", () => {
 
       assert.ok(
         notes.includes(
-          "Removed the deprecated routing preference from Claude Code, OpenCode and Pi: FireRouter routes are "
-            + "no longer supported. Restart them to pick it up.",
+          "Removed the deprecated routing preference from Claude Code, OpenCode and Pi: Nexus Auto "
+            + "takes effort from your harness instead. Restart them to pick it up.",
         ),
         notes.join("\n"),
       );

@@ -5,6 +5,7 @@ import path from "node:path";
 import { writeFileAtomic } from "../../io/atomic-write.mjs";
 import { COPILOT_FIREWORKS_BASE_URL } from "../copilot-shared.mjs";
 import { readJsonIfExists } from "../../io/json.mjs";
+import { omitHeaders } from "../../firerouter/core.mjs";
 
 /**
  * GitHub Copilot **CLI** (`@github/copilot`) BYOK configuration.
@@ -258,6 +259,56 @@ export async function enableCopilotCli({
   await chmod(providersPath, 0o600);
 
   return { providersPath, modelsAdded: models.map((model) => model.id) };
+}
+
+/**
+ * Headers on the Nexus-managed provider in providers.json, so a repeat `on`
+ * can keep provider keys that live only there. {} when the file is missing
+ * or unparseable.
+ * @param {string} providersPath
+ * @returns {Promise<Record<string, string>>}
+ */
+export async function readCopilotCliProviderHeaders(providersPath) {
+  const { existed, raw } = await readRawIfExists(providersPath);
+  if (!existed || !raw.trim()) {
+    return {};
+  }
+  try {
+    const providers = JSON.parse(raw)?.providers;
+    const provider = Array.isArray(providers)
+      ? providers.find((entry) => entry?.name === COPILOT_CLI_PROVIDER_NAME)
+      : null;
+    const headers = provider?.headers;
+    return headers && typeof headers === "object" && !Array.isArray(headers) ? headers : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Remove the named provider-key headers from the Nexus-managed provider in
+ * providers.json, keeping every other header. False when none was present.
+ * @param {{ providersPath: string, headerNames: string[] }} opts
+ * @returns {Promise<boolean>}
+ */
+export async function removeCopilotCliSavedProviderKeys({ providersPath, headerNames }) {
+  const { existed, raw } = await readRawIfExists(providersPath);
+  if (!existed || !raw.trim()) {
+    return false;
+  }
+  const config = JSON.parse(raw);
+  const providers = Array.isArray(config.providers) ? config.providers : [];
+  const index = providers.findIndex((entry) => entry?.name === COPILOT_CLI_PROVIDER_NAME);
+  const headers = index === -1 ? null : omitHeaders(providers[index].headers, headerNames);
+  if (!headers) {
+    return false;
+  }
+  const { headers: _dropped, ...provider } = providers[index];
+  const nextProviders = [...providers];
+  nextProviders[index] = Object.keys(headers).length ? { ...provider, headers } : provider;
+  await writeFileAtomic(providersPath, `${JSON.stringify({ ...config, providers: nextProviders }, null, 2)}\n`);
+  await chmod(providersPath, 0o600);
+  return true;
 }
 
 /**

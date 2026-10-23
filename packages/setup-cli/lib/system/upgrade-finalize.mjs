@@ -11,6 +11,11 @@ import { finalizeInstallOrUpgrade } from "./finalize-install.mjs";
  * old process's ESM module cache. Fall back to in-process finalize when the
  * installed CLI is missing (dev trees, tests).
  *
+ * The child's output (stdio: inherit) already names the problem when it
+ * fails, so a failure here is rethrown as what it means — the update did
+ * not finish — instead of the child's raw `Command failed: node …` exec
+ * error, which says nothing about what to do next.
+ *
  * @param {string} home
  * @param {string} installDir
  * @param {{
@@ -26,12 +31,19 @@ export async function runUpgradeFinalize(home, installDir, {
 } = {}) {
   const updatedCli = path.join(installDir, "packages/setup-cli/bin/nexus.mjs");
   if (!exists(updatedCli)) {
-    await finalizeInProcess({ home, installDir });
+    const result = await finalizeInProcess({ home, installDir });
+    if (result?.renameBlocked) {
+      throw new Error("Update did not finish: rename or remove ~/.nexus, then run the update again.");
+    }
     return;
   }
 
-  execFile(process.execPath, [updatedCli, "finalize-install"], {
-    env: { ...process.env, HOME: home },
-    stdio: "inherit",
-  });
+  try {
+    execFile(process.execPath, [updatedCli, "finalize-install"], {
+      env: { ...process.env, HOME: home },
+      stdio: "inherit",
+    });
+  } catch {
+    throw new Error("Update did not finish: the finalize step failed (see above). Fix that, then run the update again.");
+  }
 }

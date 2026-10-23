@@ -3,7 +3,7 @@
 {trail}*     .     ★     .     ✦     .     ★     .     *{/trail}
 {burst}\\    \\    \\     |     |     |     |     |     |    //    //    //{/burst}
 {ember}░░▒▒▓▓{/ember}{burst}██████████████████████████████████████████████████████████{/burst}{ember}▓▓▒▒░░{/ember}
-{ember}██▓▓▒▒░░{/ember}  {core}***{/core}  {brand}   Nexus   {/brand}  {core}***{/core}  {ember}░░▒▒▓▓██{/ember}
+{ember}██▓▓▒▒░░{/ember}  {core}***{/core}  {brand} Nexus CLI {/brand}  {core}***{/core}  {ember}░░▒▒▓▓██{/ember}
 {ember}░░▒▒▓▓{/ember}{burst}██████████████████████████████████████████████████████████{/burst}{ember}▓▓▒▒░░{/ember}
 {burst}//    //    //     |     |     |     |     |     |    \\    \\    \\{/burst}
 {spark}\v/   \v/   \v/   \v/   \v/   \v/   \v/   \v/   \v/{/spark}

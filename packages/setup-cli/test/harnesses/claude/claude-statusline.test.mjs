@@ -83,19 +83,17 @@ function assistantLine({ id, model, input = 0, output = 0, cacheRead = 0 }) {
 
 describe("claude status line", () => {
   it("resolves Fireworks model ids to their catalog label, ignoring the [1m] tag", () => {
-    assert.equal(claudeStatusLineModelLabel("firerouter[1m]"), "FireRouter");
-    assert.equal(claudeStatusLineModelLabel("firerouter"), "FireRouter");
+    assert.equal(claudeStatusLineModelLabel("firerouter[1m]"), "Auto");
+    assert.equal(claudeStatusLineModelLabel("firerouter"), "Auto");
     assert.equal(claudeStatusLineModelLabel("kimi-fast-latest[1m]"), "Kimi K3 Fast (Latest)");
     // No metadata for the id: the bare slug, never a crash.
     assert.equal(claudeStatusLineModelLabel("not-a-real-model"), "not-a-real-model");
     assert.equal(claudeStatusLineModelLabel(""), "unknown model");
   });
 
-  it("labels FireRouter compounds and OpenAI ids instead of collapsing them", () => {
-    // A compound pins its own target, so it reads as the compound — the bare
-    // router label would merge the Astra leg with every other FireRouter leg.
-    assert.equal(claudeStatusLineModelLabel("firerouter/astra"), "FireRouter · Astra");
-    assert.equal(claudeStatusLineModelLabel("firerouter/kimi-k3"), "FireRouter · Kimi K3");
+  it("labels leftover FireRouter ids like auto, and OpenAI ids by name", () => {
+    assert.equal(claudeStatusLineModelLabel("firerouter/astra"), "Auto");
+    assert.equal(claudeStatusLineModelLabel("firerouter/kimi-k3"), "Auto");
     // A served Astra id reads off the OpenAI list-price table.
     assert.equal(claudeStatusLineModelLabel("gpt-6-astra"), "GPT-6 Astra");
     assert.equal(claudeStatusLineModelLabel("astra"), "GPT-6 Astra");
@@ -579,7 +577,7 @@ describe("claude status line", () => {
         transcript_path: transcript,
       }, { home }));
       // A session that has not been billed must not read as a free one.
-      assert.equal(plain, "FireRouter");
+      assert.equal(plain, "Auto");
       assert.doesNotMatch(plain, /\$/, plain);
     });
   });
@@ -601,7 +599,7 @@ describe("claude status line", () => {
         encoding: "utf8",
       });
 
-      assert.match(line, /FireRouter/, line);
+      assert.match(line, /Auto/, line);
       // Secondary text must not pin an absolute color: the status line cannot
       // know the surface it lands on, and a fixed light grey validated for a
       // dark theme washes out on a light one. Faint + default foreground
@@ -645,7 +643,7 @@ describe("claude status line", () => {
         // A brand-new session: Claude Code names a transcript before writing it.
         transcript_path: path.join(home, "does-not-exist.jsonl"),
       }, { home });
-      assert.equal(stripAnsi(line), "FireRouter");
+      assert.equal(stripAnsi(line), "Auto");
     });
   });
 

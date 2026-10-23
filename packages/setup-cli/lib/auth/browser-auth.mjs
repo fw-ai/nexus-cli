@@ -4,7 +4,7 @@ import { Buffer } from "node:buffer";
 import process from "node:process";
 import { link, openInBrowser } from "../ui/term.mjs";
 import { isRemoteContext } from "../config/remote-context.mjs";
-import { BRAND } from "../ui/tokens.mjs";
+import { CLI_COLORS } from "../ui/tokens.mjs";
 
 /**
  * Browser sign-in for `nexus login`.
@@ -89,20 +89,20 @@ export function callbackPage(ok) {
 <title>${title} — Nexus</title>
 <style>
 :root{color-scheme:dark}
-body{margin:0;background:#101014;color:#e7e5ee;min-height:100vh;box-sizing:border-box;padding:24px;
+body{margin:0;background:#121212;color:#ededed;min-height:100vh;box-sizing:border-box;padding:24px;
   font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
   display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
-.cb{width:360px;max-width:100%;box-sizing:border-box;background:#141119;border:1px solid #26222f;
+.cb{width:360px;max-width:100%;box-sizing:border-box;background:#1a1a1a;border:1px solid #2a2a2a;
   border-radius:16px;box-shadow:0 8px 44px rgba(0,0,0,.5);padding:40px 32px 34px;text-align:center}
 .mark{width:88px;height:auto;display:block;margin:0 auto 24px;overflow:visible}
-.mark path{fill:${ok ? BRAND.purple : "#3a3546"}}
+.mark path{fill:${ok ? CLI_COLORS.dark.primary : "#3a3a3a"}}
 h1{margin:0 0 20px;font-size:24px;font-weight:600;letter-spacing:-.02em;
   font-family:"Space Grotesk","Avenir Next","Segoe UI",system-ui,sans-serif}
 .term{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px;line-height:1.5;
-  background:#0c0a10;border:1px solid #221e2b;border-radius:8px;padding:12px 14px;color:#9b96a6}
-.fallback{display:inline-block;margin-top:16px;font-size:13px;color:#9b96a6;text-decoration:none}
+  background:#0e0e0e;border:1px solid #262626;border-radius:8px;padding:12px 14px;color:#a0a0a0}
+.fallback{display:inline-block;margin-top:16px;font-size:13px;color:${CLI_COLORS.dark.accent};text-decoration:none}
 .fallback:hover{text-decoration:underline}
-.foot{font-size:12px;color:#6f6b78}
+.foot{font-size:12px;color:#777777}
 @keyframes burst{0%{transform:scale(.2);opacity:0}60%{transform:scale(1.12);opacity:1}100%{transform:scale(1)}}
 .mark g{transform-box:fill-box;transform-origin:center${ok ? ";animation:burst 520ms cubic-bezier(.2,.8,.2,1) both" : ""}}
 @media(prefers-reduced-motion:reduce){.mark g{animation:none}}
@@ -117,7 +117,7 @@ h1{margin:0 0 20px;font-size:24px;font-weight:600;letter-spacing:-.02em;
 <h1>${title}</h1>
 <div class="term">${term}</div>${fallback}
 </div>
-<div class="foot">Nexus · Fireworks AI</div>
+<div class="foot">Nexus CLI · Fireworks AI</div>
 </body></html>`;
 }
 

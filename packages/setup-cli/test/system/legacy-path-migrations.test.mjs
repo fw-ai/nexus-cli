@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
 import { retireLegacyShimAgent, SHIM_AGENT_LABEL } from "../../lib/harnesses/claude-desktop/platform.mjs";
-import { migrateDesktopShimAgentOnUpgrade } from "../../lib/harnesses/claude-desktop/upgrade-migrations.mjs";
+import {
+  migrateDesktopShimAgentOnUpgrade,
+  restartClaudeDesktopShimOnUpgrade,
+} from "../../lib/harnesses/claude-desktop/upgrade-migrations.mjs";
 import { claudeStatusLineCommand } from "../../lib/harnesses/claude/statusline.mjs";
 import { migrateClaudeStatusLinePathOnUpgrade } from "../../lib/harnesses/claude/upgrade-migrations.mjs";
 import { withTempHome } from "../helpers.mjs";
@@ -152,6 +155,33 @@ describe("migrateDesktopShimAgentOnUpgrade", () => {
       await writePlist(home, LEGACY_LABEL);
       assert.equal(await migrateDesktopShimAgentOnUpgrade(home, { platform: "linux", start, stop }), false);
       assert.deepEqual(calls, []);
+    });
+  });
+});
+
+describe("restartClaudeDesktopShimOnUpgrade", () => {
+  it("restarts the existing shim service so upgraded code takes effect", async () => {
+    await withTempHome("shim-restart-", async (home) => {
+      const savedTest = process.env.NEXUS_TEST;
+      delete process.env.NEXUS_TEST;
+      try {
+        const { shimServicePath } = await import("../../lib/harnesses/claude-desktop/profile-lane.mjs");
+        const dataDir = path.join(home, ".nexus", "claude-desktop");
+        await mkdir(path.dirname(shimServicePath(home)), { recursive: true });
+        await mkdir(dataDir, { recursive: true });
+        await writeFile(shimServicePath(home), "[Unit]\n");
+        await writeFile(path.join(dataDir, "profile-state.json"), JSON.stringify({ profileId: "test" }));
+        const calls = [];
+        const start = async (file, options) => { calls.push([path.basename(file), options.label]); };
+        assert.equal(await restartClaudeDesktopShimOnUpgrade(home, { platform: "linux", start }), true);
+        assert.equal(calls.length, 1);
+        // No service file: nothing to restart.
+        await rm(shimServicePath(home), { force: true });
+        assert.equal(await restartClaudeDesktopShimOnUpgrade(home, { platform: "linux", start }), false);
+      } finally {
+        if (savedTest === undefined) delete process.env.NEXUS_TEST;
+        else process.env.NEXUS_TEST = savedTest;
+      }
     });
   });
 });

@@ -59,7 +59,7 @@ export function runtimeDepsInstalled(setupDir = resolveSetupCliDir()) {
  * @returns {string}
  */
 export function cliDependenciesMissingMessage() {
-  return "Nexus is missing required dependencies. Run `nexus update` to install them, or re-run the curl installer.";
+  return "Nexus CLI is missing required dependencies. Run `nexus update` to install them, or re-run the curl installer.";
 }
 
 /**

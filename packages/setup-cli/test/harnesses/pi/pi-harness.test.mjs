@@ -137,7 +137,7 @@ describe("pi harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(on.code, 0);
-    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(on.stderr, /is no longer supported/);
   });
 
   it("rejects --openai-api-key with a firerouter model", async () => {
@@ -155,7 +155,7 @@ describe("pi harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(on.code, 0);
-    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(on.stderr, /is no longer supported/);
   });
 
   it("registers only Nexus-only rows, leaving catalog models to Pi's own catalog", async () => {

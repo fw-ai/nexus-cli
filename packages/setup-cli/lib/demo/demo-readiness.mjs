@@ -12,7 +12,7 @@ import { resolveFireworksApiKey } from "../keys/harness-api-key.mjs";
 import { readJsonIfExists } from "../io/json.mjs";
 import { resolveSetupCliDir } from "../system/ensure-cli-deps.mjs";
 import {
-  BOLD, CYAN, DIM, GREEN, RED, RESET, YELLOW,
+  BOLD, DIM, PRIMARY, RED, RESET, YELLOW,
   CLEAR_SCREEN, HOME_CURSOR, CLEAR_LINE, HIDE_CURSOR, SHOW_CURSOR, moveTo,
 } from "./ansi.mjs";
 export const FIRECONNECT_REQUIRED_MSG =
@@ -55,14 +55,14 @@ function commandOnPath(name) {
 }
 
 function statusMark(ok) {
-  return ok ? `${GREEN}✓${RESET}` : `${RED}✗${RESET}`;
+  return ok ? `${PRIMARY}✓${RESET}` : `${RED}✗${RESET}`;
 }
 
 function renderReadinessLines(readiness) {
   const lines = [
     "",
-    `  ${BOLD}${CYAN}Nexus Demo — get ready${RESET}`,
-    `  ${DIM}Both sides use your Nexus Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`,
+    `  ${BOLD}Nexus CLI Demo: get ready${RESET}`,
+    `  ${DIM}Both sides use your Nexus CLI Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`,
     "",
     `  ${statusMark(readiness.claudeOn)}  ${BOLD}nexus claude${RESET}  ${DIM}(Fireworks routing)${RESET}`,
     `  ${statusMark(readiness.fireworksKey)}  ${BOLD}Fireworks API key${RESET}  ${DIM}(login or FIREWORKS_API_KEY)${RESET}`,
@@ -70,7 +70,7 @@ function renderReadinessLines(readiness) {
     "",
   ];
   if (readiness.ok) {
-    lines.push(`  ${GREEN}Ready.${RESET} Press ${BOLD}Enter${RESET} to pick models and start.`);
+    lines.push(`  ${PRIMARY}Ready.${RESET} Press ${BOLD}Enter${RESET} to pick models and start.`);
   } else {
     lines.push(`  ${YELLOW}Fix the items above, then press ${BOLD}r${RESET} to refresh.${RESET}`);
     if (!readiness.claudeOn) {

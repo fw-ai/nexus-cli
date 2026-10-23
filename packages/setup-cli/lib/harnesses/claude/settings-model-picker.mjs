@@ -17,7 +17,7 @@ import {
 export const FIRECONNECT_MODEL_PICKER_MANAGED_KEY = "fireconnectManaged";
 export const INVALID_MODEL_PICKER_MESSAGE =
   "Claude Code's modelPicker must be an object whose options are rows with a non-empty model string. "
-  + "Nexus did not change it.";
+  + "Nexus CLI did not change it.";
 
 /**
  * @param {unknown} modelPicker

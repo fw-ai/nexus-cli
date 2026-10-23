@@ -110,7 +110,7 @@ describe("dep-less checkout configure", () => {
       [
         path.join(setupDir, "bin/nexus.mjs"),
         "--home", home,
-        "claude", "on",
+        "claude", "on", "--skip-install-check",
         "--api-key", "fw_fallback_test_key",
       ],
       { env, encoding: "utf8", timeout: 120000 },
@@ -162,7 +162,7 @@ describe("dep-less checkout configure", () => {
       [
         path.join(setupDir, "bin/nexus.mjs"),
         "--home", home,
-        "claude", "on",
+        "claude", "on", "--skip-install-check",
         "--api-key", "fw_builtin_only_key",
       ],
       { env, encoding: "utf8", timeout: 120000 },

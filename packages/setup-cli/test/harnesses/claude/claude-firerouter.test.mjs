@@ -72,7 +72,7 @@ describe("Claude FireRouter via --model", () => {
       cliEnv(home),
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--model firerouter is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /--model firerouter is no longer supported/);
     assert.equal(existsSync(userSettingsPath(home)), false);
   });
 
@@ -88,7 +88,7 @@ describe("Claude FireRouter via --model", () => {
     ]) {
       const result = await runFireconnect(args, cliEnv(home));
       assert.notEqual(result.code, 0, args.join(" "));
-      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/, args.join(" "));
+      assert.match(result.stderr, /is no longer supported/, args.join(" "));
     }
     assert.equal(existsSync(userSettingsPath(home)), false);
   });
@@ -176,7 +176,7 @@ describe("Claude FireRouter via --model", () => {
       env,
     );
     assert.notEqual(byok.code, 0);
-    assert.match(byok.stderr, /Claude Code pays for Claude turns with its own sign-in/);
+    assert.match(byok.stderr, /Claude Code's own login covers Claude turns/);
     assert.equal(await readFile(userSettingsPath(home), "utf8"), before);
   });
 

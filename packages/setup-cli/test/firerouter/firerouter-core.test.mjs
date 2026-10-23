@@ -19,19 +19,16 @@ import { FIREWORKS_BASE_URL } from "../../lib/fireworks/model-id.mjs";
 import { providerStatusFromEnv } from "../../lib/harnesses/claude/core.mjs";
 import { writeGlobalConfig } from "../../lib/config/global-config.mjs";
 describe("firerouter-core", () => {
-  it("describes bare firerouter, one-model routes, and listed routes as FireRouter serves them", () => {
-    assert.equal(firerouterTagline("firerouter"), "Routes each user turn between open models and the closed models you have access to.");
-    assert.equal(firerouterTagline("firerouter/astra"), "Routes each user turn between this closed model and Fireworks open models.");
-    assert.equal(firerouterTagline("firerouter/opus"), "Routes each user turn between this closed model and Fireworks open models.");
-    assert.equal(firerouterTagline("accounts/fireworks/routers/firerouter/claude-opus-5-5[1m]"), "Routes each user turn between this closed model and Fireworks open models.");
-    assert.equal(firerouterTagline("firerouter/gpt-6.1-sol"), "Routes each user turn between this closed model and Fireworks open models.");
-    assert.equal(firerouterTagline("firerouter/kimi-k3"), "Serves this model on every turn.");
-    assert.equal(firerouterTagline("firerouter/auto"), "Routes each user turn across Fireworks open models.");
-    assert.equal(firerouterTagline("firerouter/auto-instant"), "Routes each user turn across the fastest Fireworks open models.");
-    assert.equal(
-      firerouterTagline("firerouter/opus/glm-5p3"),
-      "Routes each user turn across only the models listed in this route.",
-    );
+  it("describes every leftover FireRouter id like auto, which is how the gateway serves it", () => {
+    for (const id of [
+      "firerouter",
+      "firerouter/astra",
+      "accounts/fireworks/routers/firerouter/claude-opus-5-5[1m]",
+      "firerouter/kimi-k3",
+      "firerouter/opus/glm-5p3",
+    ]) {
+      assert.equal(firerouterTagline(id), "Smart routing: automatically picks the best model for the task.", id);
+    }
   });
 
   it("detects FireRouter mode from the `firerouter` model id, not base URL", () => {

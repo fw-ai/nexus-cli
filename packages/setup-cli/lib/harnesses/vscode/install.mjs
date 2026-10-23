@@ -40,20 +40,25 @@ export function detectVscodeInstall(installDir) {
 
 /**
  * Per-platform candidate installs, stable first. `folder` is the user-data
- * directory name (e.g. "Code", "Code - Insiders").
+ * directory name (e.g. "Code", "Code - Insiders"). Install detection reuses
+ * the `productJson` paths; `root` prefixes the machine-wide locations so its
+ * specs never see the host's own install.
+ * @param {{ platform?: string, env?: NodeJS.ProcessEnv, home?: string, root?: string }} [options]
  * @returns {{ variant: "stable"|"insiders", folder: string, productJson: string }[]}
  */
-function vscodeInstallCandidates() {
-  const platform = os.platform();
+export function vscodeInstallCandidates({
+  platform = os.platform(), env = process.env, home = os.homedir(), root = "/",
+} = {}) {
+  const sys = (...parts) => path.join(root, ...parts);
   if (platform === "darwin") {
     return [
-      { variant: "stable", folder: "Code", productJson: "/Applications/Visual Studio Code.app/Contents/Resources/app/product.json" },
-      { variant: "insiders", folder: "Code - Insiders", productJson: "/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/product.json" },
+      { variant: "stable", folder: "Code", productJson: sys("Applications", "Visual Studio Code.app", "Contents", "Resources", "app", "product.json") },
+      { variant: "insiders", folder: "Code - Insiders", productJson: sys("Applications", "Visual Studio Code - Insiders.app", "Contents", "Resources", "app", "product.json") },
     ];
   }
   if (platform === "win32") {
-    const prog = process.env.ProgramFiles || "C:\\Program Files";
-    const prog86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+    const prog = env.ProgramFiles || "C:\\Program Files";
+    const prog86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
     return [
       { variant: "stable", folder: "Code", productJson: path.join(prog, "Microsoft VS Code", "resources", "app", "product.json") },
       { variant: "stable", folder: "Code", productJson: path.join(prog86, "Microsoft VS Code", "resources", "app", "product.json") },
@@ -61,12 +66,12 @@ function vscodeInstallCandidates() {
       { variant: "insiders", folder: "Code - Insiders", productJson: path.join(prog86, "Microsoft VS Code Insiders", "resources", "app", "product.json") },
     ];
   }
-  const xdg = process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
+  const xdg = env.XDG_DATA_HOME || path.join(home, ".local", "share");
   return [
-    { variant: "stable", folder: "Code", productJson: "/usr/share/code/resources/app/product.json" },
-    { variant: "stable", folder: "Code", productJson: "/usr/lib/code/resources/app/product.json" },
+    { variant: "stable", folder: "Code", productJson: sys("usr", "share", "code", "resources", "app", "product.json") },
+    { variant: "stable", folder: "Code", productJson: sys("usr", "lib", "code", "resources", "app", "product.json") },
     { variant: "stable", folder: "Code", productJson: path.join(xdg, "code", "resources", "app", "product.json") },
-    { variant: "insiders", folder: "Code - Insiders", productJson: "/usr/share/code-insiders/resources/app/product.json" },
+    { variant: "insiders", folder: "Code - Insiders", productJson: sys("usr", "share", "code-insiders", "resources", "app", "product.json") },
     { variant: "insiders", folder: "Code - Insiders", productJson: path.join(xdg, "code-insiders", "resources", "app", "product.json") },
   ];
 }

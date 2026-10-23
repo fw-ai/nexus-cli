@@ -41,6 +41,8 @@ import { isFireworksKey } from "../../keys/key-type.mjs";
 import { finishEnvHarnessOn } from "../../harness/env-hook.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import { readProviderSettings } from "../../config/global-config.mjs";
+import { ANTHROPIC_BYOK_HEADER, byokEnvFromHeaders } from "../../firerouter/core.mjs";
+import { resolveAutoProviderKeyHeaders } from "../../firerouter/flag.mjs";
 import {
   codexPathsFor,
   ensureHomeForHarness,
@@ -56,7 +58,7 @@ import { harnessStatusKeySource } from "../../keys/api-key.mjs";
 import { existsSync } from "node:fs";
 
 const CODEX_PROVIDER_KEYS_REMOVED_NOTE =
-  "Codex now pays for GPT turns only with its own sign-in, so Nexus removed the "
+  "Codex now pays for GPT turns only with its own sign-in, so Nexus CLI removed the "
   + "provider-key headers from config.toml. To pay with an OpenAI key, sign Codex in with it: "
   + "`codex login --with-api-key`.";
 
@@ -146,6 +148,12 @@ export default defineHarnessProfile({
     telemetryHeaders,
   }) => {
     await ensureCodexStopped(ctx);
+    const { doc } = await readCodexTomlIfExists(paths.configPath);
+    const anthropicKey = (await resolveAutoProviderKeyHeaders({
+      home: ctx.home,
+      settingsEnv: byokEnvFromHeaders(doc.tables[CODEX_PROVIDER_TABLE]?.http_headers),
+      openai: false,
+    }))[ANTHROPIC_BYOK_HEADER] ?? "";
     const exclusionReason = codexModelExclusionReason(modelId);
     if (exclusionReason) {
       throw new Error(exclusionReason);
@@ -165,6 +173,7 @@ export default defineHarnessProfile({
       catalogAvailable,
       refreshCatalog: ctx.modelImplied === true,
       telemetryHeaders,
+      anthropicKey,
     });
   },
   envHookOn: (ctx) => finishEnvHarnessOn(ctx.home, { harnessId: "codex" }),

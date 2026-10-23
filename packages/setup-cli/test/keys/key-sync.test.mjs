@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { syncBakedKeysAfterStore } from "../../lib/keys/sync.mjs";
@@ -201,6 +201,7 @@ describe("syncBakedKeysAfterStore", () => {
         await ensureItemTable(stateDbPath);
         await writeItemTableValue(stateDbPath, `secret://${secretId}`, "fw_stale_gateway_00000000000000000");
         await writeProvider([buildModelEntry("accounts/fireworks/models/test-model")]);
+        assert.equal((await stat(vscodePath)).mode & 0o077, 0, "key-bearing VS Code config is owner-only");
 
         const notes = await syncBakedKeysAfterStore(home, NEW_KEY);
         assert.equal(notes.length, 1, notes.join("\n"));

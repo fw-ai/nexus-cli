@@ -124,6 +124,25 @@ describe("configure --unset openai-api-key / --unset anthropic-api-key across ha
     });
   });
 
+  it("scrubs the saved key from a hand-disabled harness too", async () => {
+    await withHarnessHome("unset-disabled-harness-", async ({ home, env, on, files }) => {
+      const configure = await runCli(["auto", "--openai-api-key", OPENAI_KEY], { home, env });
+      assert.equal(configure.code, 0, configure.stderr);
+      await on("claude");
+      await injectSavedKey(files.claude, "claude", "x-openai-api-key", OPENAI_KEY);
+      // Hand-disable the harness entry: `off` never ran, so its settings
+      // still hold the baked key copy.
+      const configPath = path.join(home, ".nexus", "config.json");
+      const config = JSON.parse(await readFile(configPath, "utf8"));
+      config.harnesses.claude.enabled = false;
+      await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`);
+
+      const unset = await runCli(["auto", "--unset", "openai-api-key"], { home, env });
+      assert.equal(unset.code, 0, unset.stderr);
+      assert.doesNotMatch(await readFile(files.claude, "utf8"), new RegExp(OPENAI_KEY));
+    });
+  });
+
   it("removes the saved Anthropic key from every harness but leaves Claude Code's own sign-in", async () => {
     await withHarnessHome("unset-anthropic-harnesses-", async ({ home, env, on, files }) => {
       // Claude Code's own sign-in: a key the user set before Nexus.

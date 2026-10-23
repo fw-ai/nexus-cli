@@ -58,6 +58,7 @@ function upgradeDependencies(overrides = {}) {
     successFn: () => {},
     log: () => {},
     runtimeDepsPresent: () => true,
+    dataDirBlocked: () => false,
     ...overrides,
   };
 }
@@ -237,6 +238,66 @@ describe("Claude upgrade preflight", () => {
   });
 });
 
+describe("upgrade with a foreign ~/.nexus", () => {
+  it("stops before fetching, resetting, or claiming success", async () => {
+    const events = [];
+    let finalized = false;
+    let succeeded = false;
+    await assert.rejects(
+      runUpgradeCommand(upgradeDependencies({
+        execFile: fakeGit({ events }),
+        dataDirBlocked: () => true,
+        finalize: async () => {
+          finalized = true;
+        },
+        successFn: () => {
+          succeeded = true;
+        },
+      })),
+      /Update stopped before changing anything: ~\/\.nexus belongs to another program.*Rename or remove ~\/\.nexus, then run the update again\./,
+    );
+    assert.deepEqual(events, [], "no git fetch or reset runs");
+    assert.equal(finalized, false);
+    assert.equal(succeeded, false);
+  });
+
+  it("claims success only after finalize completes", async () => {
+    const order = [];
+    await runUpgradeCommand(upgradeDependencies({
+      execFile: fakeGit({}),
+      preflight: async () => ({ proceed: true, restored: false }),
+      finalize: async () => {
+        order.push("finalize");
+      },
+      successFn: () => {
+        order.push("success");
+      },
+      printNotes: async () => {
+        order.push("notes");
+      },
+    }));
+    assert.deepEqual(order, ["finalize", "success", "notes"]);
+  });
+
+  it("does not claim success when finalize fails", async () => {
+    let succeeded = false;
+    await assert.rejects(
+      runUpgradeCommand(upgradeDependencies({
+        execFile: fakeGit({}),
+        preflight: async () => ({ proceed: true, restored: false }),
+        finalize: async () => {
+          throw new Error("Update did not finish: the finalize step failed (see above). Fix that, then run the update again.");
+        },
+        successFn: () => {
+          succeeded = true;
+        },
+      })),
+      /Update did not finish/,
+    );
+    assert.equal(succeeded, false);
+  });
+});
+
 describe("upgrade fetch, compare, and reset ordering", () => {
   it("does not run the Claude preflight or reset when already current", async () => {
     const events = [];
@@ -311,7 +372,7 @@ describe("upgrade fetch, compare, and reset ordering", () => {
     ]);
     assert.deepEqual(output, [
       "Update complete. Your original Claude Code settings were restored.",
-      "To reconnect with Nexus v1.0.0:\n  nexus claude",
+      "To reconnect with Nexus CLI v1.0.0:\n  nexus claude",
     ]);
   });
 
@@ -408,6 +469,35 @@ describe("upgrade finalize process", () => {
     ]);
     assert.equal(calls[0].options.env.HOME, home);
     assert.equal(calls[0].options.stdio, "inherit");
+  });
+
+  it("reports a failed finalize child as an unfinished update, not a raw exec error", async () => {
+    await assert.rejects(
+      runUpgradeFinalize("/tmp/home", "/tmp/home/.nexus/cli", {
+        exists: () => true,
+        execFile: () => {
+          throw new Error("Command failed: node /tmp/home/.nexus/cli/packages/setup-cli/bin/nexus.mjs finalize-install");
+        },
+      }),
+      (error) => {
+        assert.match(error.message, /Update did not finish: the finalize step failed/);
+        assert.doesNotMatch(error.message, /Command failed/);
+        return true;
+      },
+    );
+  });
+
+  it("reports an in-process finalize blocked by a foreign ~/.nexus as unfinished", async () => {
+    await assert.rejects(
+      runUpgradeFinalize("/tmp/home", "/tmp/home/.nexus/cli", {
+        exists: () => false,
+        execFile: () => {
+          throw new Error("must not spawn");
+        },
+        finalizeInProcess: async () => ({ notes: [], migrated: false, setupDir: "", renameBlocked: true }),
+      }),
+      /Update did not finish: rename or remove ~\/\.nexus/,
+    );
   });
 
   it("falls back to in-process finalize when the installed CLI is missing", async () => {

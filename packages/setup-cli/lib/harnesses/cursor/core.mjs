@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
-import os from "node:os";
 import { chmod, mkdir, readdir, rename, unlink } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import {
@@ -16,6 +15,7 @@ import {
 import { isCachedServerlessModelRef } from "../../fireworks/serverless-catalog-cache.mjs";
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
+import { appUserDataDir } from "../../io/user-data-dir.mjs";
 import {
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
@@ -114,7 +114,7 @@ function cursorModelRef(model) {
 
 /** User-facing note: only Fireworks picker models work while Nexus routes Cursor. */
 export const CURSOR_FIREWORKS_ONLY_NOTE =
-  "Only Fireworks models work while Nexus is on; Cursor's built-ins are hidden. "
+  "Only Fireworks models work while Nexus CLI is on; Cursor's built-ins are hidden. "
   + "Run `nexus cursor off` to restore them.";
 
 /** Field we own on the blob to track which models nexus registered. */
@@ -140,18 +140,7 @@ export function cursorStateDbPath({ home = "", dbPath = "" } = {}) {
   if (dbPath) {
     return path.resolve(dbPath);
   }
-  const baseHome = home || process.env.HOME || "";
-  const platform = os.platform();
-  if (platform === "darwin") {
-    return path.join(baseHome, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
-  }
-  if (platform === "win32") {
-    const appData = process.env.APPDATA || path.join(baseHome, "AppData", "Roaming");
-    return path.join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
-  }
-  // linux / others follow the XDG-ish Cursor layout
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(baseHome, ".config");
-  return path.join(configHome, "Cursor", "User", "globalStorage", "state.vscdb");
+  return path.join(appUserDataDir(home || process.env.HOME || "", "Cursor"), "User", "globalStorage", "state.vscdb");
 }
 
 /**

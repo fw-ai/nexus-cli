@@ -8,7 +8,7 @@ import { accent } from "../../ui/term.mjs";
  */
 export async function promptSignInMethod({ stdin: in_ = stdin, stdout: out_ = stdout } = {}) {
   out_.write("\n");
-  out_.write("  Nexus needs a Fireworks API key for this machine.\n");
+  out_.write("  Nexus CLI needs a Fireworks API key for this machine.\n");
   out_.write(`  (Removable anytime with ${accent("nexus logout", out_)}.)\n`);
   out_.write("\n");
   out_.write(`    ${accent("1", out_)}) Create one for me — opens your browser to sign in or sign up\n`);

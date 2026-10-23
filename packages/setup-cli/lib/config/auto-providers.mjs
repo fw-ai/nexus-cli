@@ -11,6 +11,12 @@ import { HARNESS } from "../harness/id.mjs";
 
 export const NEXUS_PROVIDERS_HEADER = "x-nexus-providers";
 
+/** Request headers that carry the user's own keys to Nexus Auto. */
+export const AUTO_PROVIDER_KEY_HEADERS = Object.freeze({
+  anthropic: "x-anthropic-api-key",
+  openai: "x-openai-api-key",
+});
+
 /**
  * Harnesses that cannot carry this setting yet: their provider config
  * has no per-request settings channel for Nexus to write into. (Claude
@@ -65,8 +71,12 @@ export function parseAutoProviders(raw, flag = "--providers") {
 }
 
 /**
- * Normalize a stored providers value. Anything unrecognized is dropped;
- * an empty result reads as unset (`null`).
+ * Normalize a stored providers value. Unrecognized entries are dropped.
+ * A stored list with nothing recognized reads as an empty scope (`[]`),
+ * not unset: no `x-nexus-providers` header is sent and no saved provider
+ * key is sent, so an unknown value (future version, hand-edit) can never
+ * widen scope back to the default. Only a missing/non-list value is
+ * unset (`null`, the default).
  * @param {unknown} raw
  * @returns {string[] | null}
  */
@@ -77,8 +87,7 @@ export function normalizeAutoProviders(raw) {
   const valid = raw
     .filter((value) => typeof value === "string")
     .map((value) => value.trim().toLowerCase());
-  const providers = AUTO_PROVIDER_IDS.filter((id) => valid.includes(id));
-  return providers.length ? providers : null;
+  return AUTO_PROVIDER_IDS.filter((id) => valid.includes(id));
 }
 
 /**
@@ -106,4 +115,50 @@ export function formatAutoProviders(providers) {
 export function nexusProvidersHeaders(providers) {
   const value = formatAutoProviders(providers);
   return value ? { [NEXUS_PROVIDERS_HEADER]: value } : {};
+}
+
+/**
+ * Anthropic and OpenAI keys saved with `nexus auto` for Nexus Auto to use.
+ * Literal keys only: an environment reference (`{env:...}`) or a value of the
+ * wrong shape reads as unset. Nexus never sends a key from the environment;
+ * a harness may still read one on its own (Claude Code reads
+ * ANTHROPIC_API_KEY, Codex signs in with an OpenAI key).
+ * @param {{ anthropicApiKey?: string, openaiApiKey?: string } | null | undefined} config
+ * @returns {{ anthropicKey: string, openaiKey: string }}
+ */
+export function savedAutoProviderKeys(config) {
+  const literal = (value) => (typeof value === "string" && !value.trim().startsWith("{env:") ? value.trim() : "");
+  const anthropic = literal(config?.anthropicApiKey);
+  const openai = literal(config?.openaiApiKey);
+  return {
+    anthropicKey: anthropic.startsWith("sk-ant-") ? anthropic : "",
+    openaiKey: openai.startsWith("sk-") && !openai.startsWith("sk-ant-") ? openai : "",
+  };
+}
+
+/**
+ * Whether the `nexus auto` scope lets `auto` use this provider. Unset scope
+ * allows every provider; a set scope allows only the providers it names, so
+ * `--providers fireworks` leaves out Anthropic and OpenAI.
+ * @param {{ auto?: unknown } | null | undefined} config
+ * @param {"anthropic" | "openai"} provider
+ */
+export function autoScopeAllows(config, provider) {
+  const { providers } = normalizeAutoSettings(config?.auto);
+  return !providers || providers.includes(provider);
+}
+
+/**
+ * The saved keys Nexus sends: each one only while the `nexus auto` scope
+ * allows its provider. A scoped-out key stays saved and is sent again once
+ * the scope allows it (`nexus auto --reset`).
+ * @param {{ auto?: unknown, anthropicApiKey?: string, openaiApiKey?: string } | null | undefined} config
+ * @returns {{ anthropicKey: string, openaiKey: string }}
+ */
+export function autoProviderKeysInScope(config) {
+  const saved = savedAutoProviderKeys(config);
+  return {
+    anthropicKey: autoScopeAllows(config, "anthropic") ? saved.anthropicKey : "",
+    openaiKey: autoScopeAllows(config, "openai") ? saved.openaiKey : "",
+  };
 }

@@ -429,7 +429,7 @@ export function syncAgentPane(pane, agents) {
 }
 
 /**
- * Tail one session log with the PR #230 cost-meter UI.
+ * Tail one session log with the live cost-meter UI.
  *
  * @param {{
  *   filePath: string,
@@ -474,13 +474,12 @@ export async function runUsageMeter({
   const colorOn = Boolean(colorEnabled(stream) && !plain);
   applyMeterStyle(colorOn);
   const usePlain = plain || !colorOn;
-  const liveSplit = process.env.FC_LIVE_SPLIT === "1";
 
   const db = new Dashboard(filePath, new ModelIndex(), {
     fullscreen: !usePlain,
     stream,
     agentLabel,
-    ...(keyHint ? { keyHint } : liveSplit ? { keyHint: "q quit layout" } : {}),
+    ...(keyHint ? { keyHint } : {}),
   });
   db.locked = true;
   // Caller-owned so the keys that move the pane cursor (read outside the meter)

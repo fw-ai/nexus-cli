@@ -3,7 +3,7 @@
  */
 
 import {
-  BOLD, CYAN, DIM, RED, RESET, REVERSE,
+  ACCENT, BOLD, DIM, RED, RESET, REVERSE,
   HIDE_CURSOR, SHOW_CURSOR, HOME_CURSOR, CLEAR_SCREEN, moveTo, CLEAR_LINE,
   padRight,
 } from "./ansi.mjs";
@@ -347,9 +347,9 @@ function renderMatchupStep(state, labelWidth) {
   for (let i = 0; i < MATCHUP_OPTION_IDS.length; i += 1) {
     const optId = MATCHUP_OPTION_IDS[i];
     const selected = i === state.matchupIndex;
-    const bullet = selected ? `${CYAN}●${RESET}` : `${DIM}○${RESET}`;
+    const bullet = selected ? `${ACCENT}●${RESET}` : `${DIM}○${RESET}`;
     const preset = demoMatchupPreset(optId);
-    const title = selected ? `${BOLD}${CYAN}${matchupLabel(optId)}${RESET}` : `${DIM}${matchupLabel(optId)}${RESET}`;
+    const title = selected ? `${BOLD}${ACCENT}${matchupLabel(optId)}${RESET}` : `${DIM}${matchupLabel(optId)}${RESET}`;
     let line = `  ${bullet} ${DIM}${i + 1}${RESET}  ${title}`;
     if (preset) {
       line += `  ${DIM}${demoModelLabel(preset.leftModel)} vs ${demoModelLabel(preset.rightModel)}${RESET}`;
@@ -365,7 +365,7 @@ function renderMatchupStep(state, labelWidth) {
     const label = i === 0 ? "Model A" : "Model B";
     const active = state.focus === "models" && state.modelFocus === i;
     const field = modelField(key, label, i === 0 ? state.leftModel : state.rightModel);
-    const marker = active ? `${CYAN}❯${RESET} ` : "  ";
+    const marker = active ? `${ACCENT}❯${RESET} ` : "  ";
     lines.push(`  ${marker}${DIM}${padRight(`${label}:`, labelWidth)}${RESET}${renderModelValue(field, state.defaults?.slotMapping)}`);
   }
   lines.push("");
@@ -385,8 +385,8 @@ function renderGameStep(state, labelWidth) {
   for (let i = 0; i < PROMPT_OPTION_IDS.length; i += 1) {
     const id = PROMPT_OPTION_IDS[i];
     const selected = i === state.promptIndex;
-    const bullet = selected ? `${CYAN}●${RESET}` : `${DIM}○${RESET}`;
-    const title = selected ? `${BOLD}${CYAN}${promptLabel(id)}${RESET}` : `${DIM}${promptLabel(id)}${RESET}`;
+    const bullet = selected ? `${ACCENT}●${RESET}` : `${DIM}○${RESET}`;
+    const title = selected ? `${BOLD}${ACCENT}${promptLabel(id)}${RESET}` : `${DIM}${promptLabel(id)}${RESET}`;
     lines.push(`  ${bullet} ${DIM}${i + 1}${RESET}  ${title}`);
     if (selected && DEMO_PRESET_HINTS[id]) {
       lines.push(`      ${DIM}${DEMO_PRESET_HINTS[id]}${RESET}`);
@@ -414,14 +414,14 @@ function renderConfirmStep(state, labelWidth) {
   lines.push(`  ${DIM}Model A:${RESET}   ${BOLD}${demoModelLabel(state.leftModel)}${RESET}`);
   lines.push(`  ${DIM}Model B:${RESET}   ${BOLD}${demoModelLabel(state.rightModel)}${RESET}`);
   lines.push("");
-  lines.push(`  ${DIM}Both sides use your Nexus Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`);
+  lines.push(`  ${DIM}Both sides use your Nexus CLI Claude setup. Anthropic slots run real Anthropic; only --model differs.${RESET}`);
   if (est) {
     lines.push(`  ${DIM}Est. cost:${RESET}   ~$${est.low.toFixed(2)}–$${est.high.toFixed(2)} · opens browser when done`);
   } else {
     lines.push(`  ${DIM}Opens browser comparison when the race finishes.${RESET}`);
   }
   lines.push("");
-  lines.push(`  ${BOLD}${CYAN}Enter${RESET} start race   ${DIM}s swap · e edit · b back · q quit${RESET}`);
+  lines.push(`  ${BOLD}${ACCENT}Enter${RESET} start race   ${DIM}s swap · e edit · b back · q quit${RESET}`);
   return lines;
 }
 
@@ -429,7 +429,7 @@ export function renderFormLines(state, meta) {
   const labelWidth = 18;
   const lines = [
     "",
-    `  ${BOLD}${CYAN}Nexus Demo${RESET}`,
+    `  ${BOLD}Nexus CLI Demo${RESET}`,
     `  ${DIM}Same prompt, two models — race and compare.${RESET}`,
     "",
   ];

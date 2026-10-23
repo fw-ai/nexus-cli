@@ -19,6 +19,9 @@ export const LEGACY_DATA_DIRNAME = ".fireconnect";
 /** Where an old `~/.fireconnect` is kept when this CLI's `~/.nexus` already exists. */
 export const LEGACY_ASIDE_DIRNAME = ".nexus-pre";
 
+const RENAME_COMPLETE_MARKER = "rename-complete";
+const RENAME_ANNOUNCED_MARKER = "rename-announced";
+
 /**
  * @param {string} file
  * @returns {import("node:fs").Stats | null}
@@ -44,6 +47,56 @@ function statOrNull(file) {
 }
 
 /**
+ * Top-level entries this CLI writes into `~/.nexus`. Writers such as the
+ * catalog and price caches run before `migrateLegacyDataDir` (the rename is
+ * retried on every CLI start), and helpers that never run the migration at
+ * all — the Claude status line and its price-refresh runner, the Claude
+ * Desktop shim daemon, the installer — write others, so any of these can be
+ * the only thing in a fresh `~/.nexus` when the migration first looks at it.
+ * They have to count as ownership here, or the migration judges the CLI's own
+ * writes foreign and every later upgrade fails telling the user another
+ * program owns the directory. Add an entry here whenever a new
+ * writer targets `~/.nexus` by name. Account-suffixed `.secret-memory-*`
+ * files are matched by prefix in `isNexusDataDir`.
+ */
+export const NEXUS_OWNED_FILENAMES = Object.freeze([
+  "key-storage.json",
+  "secret-backend.json",
+  RENAME_COMPLETE_MARKER,
+  RENAME_ANNOUNCED_MARKER,
+  "catalog-cache.json",
+  "list-price-cache.json",
+  "codex-stock-models.json",
+  "update-check.json",
+  "update-check.lock",
+  "release-notes.json",
+  "minted-key.json",
+  "demo.json",
+  ".api-key",
+  ".secret-memory",
+  "cli",
+  "claude-desktop",
+  "statusline-refresh",
+]);
+
+/**
+ * Owned names distinctive enough to claim the directory on their own.
+ * The rest of {@link NEXUS_OWNED_FILENAMES} (`demo.json`, `cli`,
+ * `update-check.json`, ...) are generic enough that another program could
+ * use them too: they count only when nothing foreign-looking is beside
+ * them, which still covers a fresh `~/.nexus` one of Nexus's own early
+ * writers created before the migration ran.
+ */
+export const NEXUS_STRONG_FILENAMES = Object.freeze([
+  "key-storage.json",
+  "secret-backend.json",
+  RENAME_COMPLETE_MARKER,
+  RENAME_ANNOUNCED_MARKER,
+  "minted-key.json",
+  ".secret-memory",
+]);
+
+/**
  * True when `dir` is this CLI's data directory (or empty), false when it holds
  * another program's files. Nexus is recognized by files only it writes.
  * @param {string} dir
@@ -55,7 +108,9 @@ export function isNexusDataDir(dir) {
   } catch {
     return false;
   }
-  if (entries.length === 0 || entries.includes("key-storage.json") || entries.includes(RENAME_COMPLETE_MARKER)) {
+  const owned = (entry) => NEXUS_OWNED_FILENAMES.includes(entry) || entry.startsWith(".secret-memory-");
+  const strong = (entry) => NEXUS_STRONG_FILENAMES.includes(entry) || entry.startsWith(".secret-memory-");
+  if (entries.length === 0 || entries.some(strong)) {
     return true;
   }
   if (existsSync(path.join(dir, "cli", "packages", "setup-cli", "bin", "nexus.mjs"))) {
@@ -63,10 +118,20 @@ export function isNexusDataDir(dir) {
   }
   try {
     const config = JSON.parse(readFileSync(path.join(dir, "config.json"), "utf8"));
-    return Boolean(config && typeof config === "object" && typeof config.harnesses === "object");
+    if (config && typeof config === "object" && !Array.isArray(config)
+      && config.harnesses && typeof config.harnesses === "object"
+      && !Array.isArray(config.harnesses)) {
+      return true;
+    }
   } catch {
-    return false;
+    // Not our config; fall through to the generic-names check.
   }
+  // A Nexus-owned directory can also hold a `config.json` that no longer
+  // parses to our shape (hand edit, corruption): the file name is ours,
+  // so it does not poison the tier — but it never claims the directory
+  // on its own either.
+  return entries.some(owned)
+    && entries.every((entry) => owned(entry) || entry === "config.json");
 }
 
 /**
@@ -247,8 +312,27 @@ export function migrateLegacyDataDir(home, { platform = process.platform, rename
   return "moved";
 }
 
-const RENAME_COMPLETE_MARKER = "rename-complete";
-
+/**
+ * True when the rename would report "foreign" — `~/.fireconnect` still holds
+ * this CLI's data and `~/.nexus` holds another program's files — without
+ * moving anything. Lets upgrade/finalize stop before they touch either
+ * directory instead of discovering it after the new code is already on disk.
+ * @param {string} home
+ */
+export function hasForeignDataDir(home) {
+  if (!home) {
+    return false;
+  }
+  const legacy = path.join(home, LEGACY_DATA_DIRNAME);
+  const target = path.join(home, DATA_DIRNAME);
+  if (!statOrNull(legacy)?.isDirectory() || linksTo(legacy, target)) {
+    return false;
+  }
+  if (!lstatOrNull(target) || linksTo(target, legacy) || alreadyMoved(legacy, target)) {
+    return false;
+  }
+  return !isNexusDataDir(target);
+}
 /**
  * True for a FireConnect user whose rename hasn't finished every step yet.
  * Cheap enough for every CLI start; fresh Nexus installs have no
@@ -272,6 +356,49 @@ export function markRenameMigrationComplete(home) {
     }
   } catch {
     // Startup retries the rename and tries again.
+  }
+}
+
+/** The key message of the rename headline. */
+export const RENAME_KEY_MESSAGE = "FireConnect is now Nexus CLI.";
+
+/**
+ * Shown once per machine, ahead of the rename notes, on whichever path runs
+ * the rename first.
+ * @param {{ primary?: (text: string) => string, command?: (text: string) => string }} [style]
+ *   `primary` paints the key message; `command` renders the command name.
+ */
+export function renameHeadline({ primary = (text) => text, command = (text) => `\`${text}\`` } = {}) {
+  return `${primary(RENAME_KEY_MESSAGE)} Use ${command("nexus")} from now on.\n`
+    + "Your harnesses, key, and settings carry over unchanged.\n"
+    + `FireRouter is now Nexus Auto: use the ${command("auto")} model.`;
+}
+
+/**
+ * True until the rename headline has been shown to a FireConnect user. Every
+ * upgrade path reaches it: `finalize-install` after any released upgrader,
+ * the installer, and the first command after an upgrader that skipped finalize.
+ * @param {string} home
+ * @param {{ legacyLauncher?: boolean }} [options] whether the `fireconnect` launcher is still installed
+ */
+export function renameAnnouncementDue(home, { legacyLauncher = false } = {}) {
+  if (!home || !(legacyLauncher || renameMigrationIncomplete(home))) {
+    return false;
+  }
+  return ![DATA_DIRNAME, LEGACY_DATA_DIRNAME]
+    .some((dirname) => existsSync(path.join(home, dirname, RENAME_ANNOUNCED_MARKER)));
+}
+
+/**
+ * @param {string} home
+ */
+export function markRenameAnnounced(home) {
+  try {
+    if (statOrNull(path.join(home, DATA_DIRNAME))?.isDirectory()) {
+      writeFileSync(path.join(home, DATA_DIRNAME, RENAME_ANNOUNCED_MARKER), `${new Date().toISOString()}\n`);
+    }
+  } catch {
+    // The headline shows again on the next command.
   }
 }
 

@@ -10,9 +10,9 @@ import { DATA_DIRNAME, retargetLegacyPath } from "../../system/data-dir.mjs";
 import { claudeDesktopDataDir } from "./core.mjs";
 import { thirdPartyDir } from "./lineup.mjs";
 import {
-  LEGACY_SHIM_AGENT_LABEL, SHIM_AGENT_LABEL, launchAgentPlistPath, startLaunchAgent, stopLaunchAgent,
+  LEGACY_SHIM_AGENT_LABEL, SHIM_AGENT_LABEL, launchAgentPlistPath, startLaunchAgent, startShimService, stopLaunchAgent,
 } from "./platform.mjs";
-import { readProfileState, shimPlistPath, shimStatePath } from "./profile-lane.mjs";
+import { readProfileState, shimPlistPath, shimServicePath, shimStatePath } from "./profile-lane.mjs";
 
 /**
  * @param {string} file
@@ -130,4 +130,32 @@ export async function migrateClaudeDesktopFirerouterOnUpgrade(home) {
     }
   }
   return changed;
+}
+
+/**
+ * Restart the running Desktop shim after an update, so the new code —
+ * including the live Nexus Auto scope and saved-key loaders — is what
+ * actually serves requests. The shim loads its code at process start;
+ * without a restart an upgraded install keeps the previous release's
+ * shim in memory while the CLI reports live pickup.
+ * @param {string} home
+ * @param {{ platform?: NodeJS.Platform, start?: typeof startShimService }} [options]
+ * @returns {Promise<boolean>} true when the service was restarted
+ */
+export async function restartClaudeDesktopShimOnUpgrade(home, {
+  platform = process.platform,
+  start = startShimService,
+} = {}) {
+  if (!home || process.env.NEXUS_TEST === "1") {
+    return false;
+  }
+  if (!(await readProfileState(home))) {
+    return false;
+  }
+  const servicePath = platform === "linux" ? shimServicePath(home) : shimPlistPath(home);
+  if (!existsSync(servicePath)) {
+    return false;
+  }
+  await start(servicePath, { allowSystemChanges: true, label: SHIM_AGENT_LABEL, platform });
+  return true;
 }

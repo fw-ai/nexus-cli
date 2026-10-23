@@ -3,7 +3,7 @@ import { listHarnesses } from "../../harness/registry.mjs";
 import { detectInstalledHarnesses } from "../../harness/detect.mjs";
 import { readGlobalConfig } from "../../config/global-config.mjs";
 import { promptSelect } from "../../ui/prompt.mjs";
-import { accent, bold, dim, cyan } from "../../ui.mjs";
+import { accent, bold, dim } from "../../ui.mjs";
 import { readLocalVersion } from "../../system/version.mjs";
 import { runHarnessCommand } from "./harness.mjs";
 import { printHelp } from "./global.mjs";
@@ -17,7 +17,7 @@ import { printHelp } from "./global.mjs";
  */
 export function harnessStatusText(entry, detected) {
   if (entry?.enabled) {
-    return cyan("on");
+    return "on";
   }
   if (entry) {
     return dim("off");
@@ -82,9 +82,6 @@ export function buildActionChoices(adapter, enabled) {
   ];
   if (typeof adapter.usage === "function") {
     actions.splice(3, 0, action("usage", "estimate session usage cost", "usage"));
-  }
-  if (typeof adapter.live === "function") {
-    actions.splice(typeof adapter.usage === "function" ? 4 : 3, 0, action("live", "Claude + live usage meter (tmux)", "live"));
   }
   return actions;
 }

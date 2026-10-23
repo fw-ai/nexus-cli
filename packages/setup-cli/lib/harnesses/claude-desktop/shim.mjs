@@ -26,9 +26,11 @@ import { writeFileAtomic } from "../../io/atomic-write.mjs";
 import { serverlessLineup, thirdPartyDir } from "./lineup.mjs";
 import { autoCatalogEntry, autoCatalogEntryId } from "../../fireworks/models.mjs";
 import {
+  AUTO_PROVIDER_KEY_HEADERS,
   NEXUS_PROVIDERS_HEADER,
   formatAutoProviders,
   normalizeAutoProviders,
+  autoProviderKeysInScope,
 } from "../../config/auto-providers.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import { buildFireconnectTelemetryHeaders } from "../../telemetry/request-headers.mjs";
@@ -204,6 +206,30 @@ export function createAutoProvidersLoader({ configPath }) {
   };
 }
 
+/**
+ * Live Anthropic and OpenAI keys saved with `nexus auto`, from the global
+ * config: `{ anthropicKey, openaiKey }`, each "" when unset. Memoized on the
+ * config file's mtime, so `nexus auto --anthropic-api-key` takes effect on
+ * the next request, and none is sent while the `nexus auto` scope leaves
+ * its provider out. Never reads the environment; a missing or unreadable
+ * config reads as no keys.
+ * @param {{ configPath: string }} opts
+ */
+export function createAutoKeysLoader({ configPath }) {
+  let memo = null;
+  return async function currentAutoKeys() {
+    try {
+      const mtime = await stat(configPath).then((s) => s.mtimeMs).catch(() => 0);
+      if (memo?.mtime === mtime) return memo.value;
+      const value = autoProviderKeysInScope(mtime ? await readJson(configPath) : null);
+      memo = { mtime, value };
+      return value;
+    } catch {
+      return { anthropicKey: "", openaiKey: "" };
+    }
+  };
+}
+
 /** Copy upstream response headers, dropping the hop-by-hop ones. */
 function copyUpstreamHeaders(headers) {
   const out = {};
@@ -232,6 +258,9 @@ export function createShimServer({
   // When provided, resolves the current `nexus auto` providers value
   // ("" = no scope). Sent only for turns routed to an auto model.
   autoProvidersLoader = null,
+  // When provided, resolves the keys saved with `nexus auto`. Sent only for
+  // turns routed to an auto model.
+  autoKeysLoader = null,
 }) {
   const currentModelMap = async () => (lineupLoader ? (await lineupLoader()).modelMap : modelMap) ?? modelMap;
   // The Nexus attribution every other harness puts on its gateway traffic.
@@ -297,12 +326,20 @@ export function createShimServer({
       Object.assign(headers, telemetryHeaders);
       // The `nexus auto` scope belongs to Nexus, not the client: drop any
       // inbound copy, then set the current one for auto-routed turns only.
+      // The provider keys are Nexus's too, sent the same way.
       delete headers[NEXUS_PROVIDERS_HEADER];
-      if (autoProvidersLoader
-        && typeof routedModel === "string"
-        && (routedModel === "auto" || routedModel.startsWith("auto-"))) {
+      delete headers[AUTO_PROVIDER_KEY_HEADERS.anthropic];
+      delete headers[AUTO_PROVIDER_KEY_HEADERS.openai];
+      const autoTurn = typeof routedModel === "string"
+        && (routedModel === "auto" || routedModel.startsWith("auto-"));
+      if (autoProvidersLoader && autoTurn) {
         const providers = await autoProvidersLoader().catch(() => "");
         if (providers) headers[NEXUS_PROVIDERS_HEADER] = providers;
+      }
+      if (autoKeysLoader && autoTurn) {
+        const { anthropicKey, openaiKey } = await autoKeysLoader().catch(() => ({}));
+        if (anthropicKey) headers[AUTO_PROVIDER_KEY_HEADERS.anthropic] = anthropicKey;
+        if (openaiKey) headers[AUTO_PROVIDER_KEY_HEADERS.openai] = openaiKey;
       }
 
       const controller = new AbortController();
@@ -390,6 +427,9 @@ async function main() {
     catalogDir,
     lineupLoader,
     autoProvidersLoader: createAutoProvidersLoader({
+      configPath: path.join(home, ".nexus", "config.json"),
+    }),
+    autoKeysLoader: createAutoKeysLoader({
       configPath: path.join(home, ".nexus", "config.json"),
     }),
     // The harness matrix's CI loopback; never honored outside tests, so a

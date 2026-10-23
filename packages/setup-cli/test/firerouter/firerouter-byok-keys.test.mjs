@@ -1,6 +1,3 @@
-import { mkdtemp } from "node:fs/promises";
-import path from "node:path";
-import os from "node:os";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -12,28 +9,9 @@ import {
   isAnthropicShapedKey,
   isOpenAIShapedKey,
   openaiKeyFromCustomHeaders,
-  resolveOpenaiKey,
 } from "../../lib/firerouter/core.mjs";
-import {
-  resolveFirerouterByokHeaders,
-  resolveFirerouterPlan,
-  supportsOpenaiApiKeyFlag,
-} from "../../lib/firerouter/flag.mjs";
+import { supportsOpenaiApiKeyFlag } from "../../lib/firerouter/flag.mjs";
 import { firerouterRequiresOpenaiKey } from "../../lib/fireworks/model-id.mjs";
-import { writeGlobalConfig } from "../../lib/config/global-config.mjs";
-
-function clearProviderKeys() {
-  const saved = {
-    anthropic: process.env.ANTHROPIC_API_KEY,
-    openai: process.env.OPENAI_API_KEY,
-  };
-  delete process.env.ANTHROPIC_API_KEY;
-  delete process.env.OPENAI_API_KEY;
-  return () => {
-    if (saved.anthropic !== undefined) process.env.ANTHROPIC_API_KEY = saved.anthropic;
-    if (saved.openai !== undefined) process.env.OPENAI_API_KEY = saved.openai;
-  };
-}
 
 describe("firerouter provider key shapes", () => {
   it("keeps the Anthropic and OpenAI families disjoint", () => {
@@ -62,21 +40,6 @@ describe("firerouter provider key shapes", () => {
     assert.equal(firerouterRequiresOpenaiKey(""), false);
   });
 
-  it("resolveFirerouterPlan reports both provider requirements", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter" }), {
-      mainModel: "firerouter",
-      isFirerouter: true,
-      requiresAnthropicKey: true,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-    const opus = resolveFirerouterPlan({ main: "firerouter/opus" });
-    assert.equal(opus.requiresAnthropicKey, true);
-    assert.equal(opus.requiresOpenaiKey, false);
-    const gpt = resolveFirerouterPlan({ main: "firerouter/gpt-5p6" });
-    assert.equal(gpt.isFirerouter, true);
-    assert.equal(gpt.requiresOpenaiKey, true);
-  });
 });
 
 describe("firerouter openai key resolution", () => {
@@ -104,34 +67,6 @@ describe("firerouter openai key resolution", () => {
     assert.deepEqual(byokEnvFromHeaders({}), {});
   });
 
-  it("resolves flag over global over env over stored header, rejecting mislabeled keys", async () => {
-    const restore = clearProviderKeys();
-    try {
-      const home = await mkdtemp(path.join(os.tmpdir(), "fc-openai-resolve-"));
-      await writeGlobalConfig(home, { openaiApiKey: "sk-proj-from-global", harnesses: {} });
-      process.env.OPENAI_API_KEY = "sk-proj-from-env";
-
-      assert.equal(await resolveOpenaiKey({ home }), "sk-proj-from-global");
-      assert.equal(
-        await resolveOpenaiKey({ apiKey: "sk-proj-from-flag", home }),
-        "sk-proj-from-flag",
-      );
-      // A mislabeled Anthropic key never seats the OpenAI credential.
-      assert.equal(
-        await resolveOpenaiKey({ apiKey: "sk-ant-mislabeled", home }),
-        "sk-proj-from-global",
-      );
-      assert.equal(await resolveOpenaiKey({}), "sk-proj-from-env");
-      delete process.env.OPENAI_API_KEY;
-      const headerKey = await resolveOpenaiKey({
-        settingsEnv: byokEnvFromHeaders({ [OPENAI_BYOK_HEADER]: "sk-proj-from-header" }),
-      });
-      assert.equal(headerKey, "sk-proj-from-header");
-      assert.equal(await resolveOpenaiKey({}), "");
-    } finally {
-      restore();
-    }
-  });
 });
 
 describe("firerouter byok header wiring", () => {
@@ -153,70 +88,6 @@ describe("firerouter byok header wiring", () => {
       buildClaudeCustomHeaders({ fireworksKey: "fw_test" }),
       "X-Fireworks-Api-Key: fw_test",
     );
-  });
-
-  it("attaches a configured OpenAI key on bare firerouter without requiring one", async () => {
-    const restore = clearProviderKeys();
-    try {
-      process.env.OPENAI_API_KEY = "sk-proj-env-123";
-      const plan = resolveFirerouterPlan({ main: "firerouter" });
-      const headers = await resolveFirerouterByokHeaders({
-        plan,
-        ctx: { home: "" },
-        preResolvedAnthropicKey: "",
-      });
-      assert.equal(headers[OPENAI_BYOK_HEADER], "sk-proj-env-123");
-      assert.equal(ANTHROPIC_BYOK_HEADER in headers, false);
-    } finally {
-      restore();
-    }
-  });
-
-  it("attaches a configured Anthropic key on firerouter/opus", async () => {
-    const restore = clearProviderKeys();
-    try {
-      process.env.ANTHROPIC_API_KEY = "sk-ant-env-123";
-      const plan = resolveFirerouterPlan({ main: "firerouter/opus" });
-      assert.equal(plan.requiresAnthropicKey, true);
-      const headers = await resolveFirerouterByokHeaders({ plan, ctx: { home: "" } });
-      assert.equal(headers[ANTHROPIC_BYOK_HEADER], "sk-ant-env-123");
-      assert.equal(OPENAI_BYOK_HEADER in headers, false);
-    } finally {
-      restore();
-    }
-  });
-
-  it("attaches nothing when neither key is configured instead of failing", async () => {
-    const restore = clearProviderKeys();
-    try {
-      const plan = resolveFirerouterPlan({ main: "firerouter/opus" });
-      const headers = await resolveFirerouterByokHeaders({
-        plan,
-        ctx: { home: "" },
-        preResolvedAnthropicKey: "",
-      });
-      assert.deepEqual(headers, {});
-    } finally {
-      restore();
-    }
-  });
-
-  it("leaves pinned non-GPT compounds clean even with an OpenAI key configured", async () => {
-    const restore = clearProviderKeys();
-    try {
-      process.env.OPENAI_API_KEY = "sk-proj-env-123";
-      for (const model of ["firerouter/kimi-k3", "firerouter/sol", "firerouter/opus"]) {
-        const plan = resolveFirerouterPlan({ main: model });
-        const headers = await resolveFirerouterByokHeaders({
-          plan,
-          ctx: { home: "" },
-          preResolvedAnthropicKey: "",
-        });
-        assert.deepEqual(headers, {}, model);
-      }
-    } finally {
-      restore();
-    }
   });
 
   it("supportsOpenaiApiKeyFlag mirrors harness forwarding ability", () => {

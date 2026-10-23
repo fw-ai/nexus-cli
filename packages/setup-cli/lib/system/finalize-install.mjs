@@ -12,9 +12,11 @@ import { reapplyCodexOnUpgrade } from "../harnesses/codex/upgrade-reon.mjs";
 import { isEnabledFireworksHarness, readGlobalConfig } from "../config/global-config.mjs";
 import { HARNESS } from "../harness/id.mjs";
 import { refreshListPriceCache } from "../pricing/list-price-cache.mjs";
+import { hasForeignDataDir } from "./data-dir.mjs";
 import { runRenameMigration } from "./rename-migration.mjs";
 import { ensureCliDependencies, resolveSetupCliDir } from "./ensure-cli-deps.mjs";
-import { runHarnessForwardMigrations } from "./forward-migrations.mjs";
+import { formatNexusAutoMoves, isNexusAutoMoveNote, runHarnessForwardMigrations } from "./forward-migrations.mjs";
+import { reapplySavedProviderKeysOnUpgrade } from "./provider-keys-upgrade.mjs";
 
 /**
  * Refresh every model source the harness pickers are built from, before the
@@ -69,9 +71,10 @@ export async function refreshModelSources(home) {
  *   migrate?: typeof runHarnessForwardMigrations,
  *   reconcile?: typeof reconcileHarnessConfigOnUpgrade,
  *   codexSignIn?: typeof reapplyCodexOnUpgrade,
+ *   providerKeys?: typeof reapplySavedProviderKeysOnUpgrade,
  *   rename?: typeof runRenameMigration,
  * }} [options]
- * @returns {Promise<{ notes: string[], migrated: boolean, setupDir: string }>}
+ * @returns {Promise<{ notes: string[], migrated: boolean, setupDir: string, renameBlocked: boolean }>}
  */
 export async function finalizeInstallOrUpgrade({
   home = process.env.HOME ?? "",
@@ -84,12 +87,21 @@ export async function finalizeInstallOrUpgrade({
   migrate = runHarnessForwardMigrations,
   reconcile = reconcileHarnessConfigOnUpgrade,
   codexSignIn = reapplyCodexOnUpgrade,
+  providerKeys = reapplySavedProviderKeysOnUpgrade,
   rename = runRenameMigration,
 } = {}) {
   const notes = [];
-  for (const note of await rename(home)) {
+  const nexusAutoMoves = [];
+  const emit = (note) => {
+    if (isNexusAutoMoveNote(note)) {
+      nexusAutoMoves.push(note);
+      return;
+    }
     log(note);
     notes.push(note);
+  };
+  for (const note of await rename(home)) {
+    emit(note);
   }
   const durableSetup = installDir
     ? path.join(installDir, "packages/setup-cli")
@@ -98,6 +110,13 @@ export async function finalizeInstallOrUpgrade({
     || (durableSetup && existsSync(path.join(durableSetup, "package.json"))
       ? durableSetup
       : resolveSetupCliDir());
+
+  // A foreign ~/.nexus means the rename did not happen: every step below
+  // resolves state under ~/.nexus and would read or write the other
+  // program's files. Stop with just the rename's note.
+  if (home && hasForeignDataDir(home)) {
+    return { notes, migrated: false, setupDir: resolvedSetup, renameBlocked: true };
+  }
 
   if (existsSync(path.join(resolvedSetup, "package.json"))) {
     ensureDeps(resolvedSetup);
@@ -130,8 +149,7 @@ export async function finalizeInstallOrUpgrade({
 
     try {
       for (const note of await migrate(home)) {
-        log(note);
-        notes.push(note);
+        emit(note);
       }
     } catch {
       // Best-effort forward migrations.
@@ -140,8 +158,7 @@ export async function finalizeInstallOrUpgrade({
     try {
       const reconcileNotes = await reconcile(home);
       for (const note of reconcileNotes) {
-        log(note);
-        notes.push(note);
+        emit(note);
       }
     } catch {
       // Best-effort reconcile.
@@ -151,10 +168,18 @@ export async function finalizeInstallOrUpgrade({
     // After the rebake, so a legacy env-reference config already holds a
     // literal key for the re-`on` to reuse.
     for (const note of await codexSignIn(home)) {
-      log(note);
-      notes.push(note);
+      emit(note);
+    }
+
+    for (const note of await providerKeys(home)) {
+      emit(note);
     }
   }
 
-  return { notes, migrated, setupDir: resolvedSetup };
+  if (nexusAutoMoves.length) {
+    const block = formatNexusAutoMoves(nexusAutoMoves);
+    log(block);
+    notes.push(block);
+  }
+  return { notes, migrated, setupDir: resolvedSetup, renameBlocked: false };
 }

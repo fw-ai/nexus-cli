@@ -13,6 +13,7 @@ import {
   AUTO_UNSUPPORTED_HARNESSES,
   NEXUS_PROVIDERS_HEADER,
   autoHarnessSupported,
+  autoProviderKeysInScope,
   formatAutoProviders,
   nexusProvidersHeaders,
   normalizeAutoProviders,
@@ -41,11 +42,22 @@ describe("auto providers (pure parsing/storage)", () => {
     assert.throws(() => parseAutoProviders(""), /comma-separated list/);
   });
 
-  it("normalizes stored values, dropping junk to unset", () => {
+  it("normalizes stored values; unknown-only reads as empty, never unset", () => {
     assert.deepEqual(normalizeAutoProviders(["junk", "fireworks"]), ["fireworks"]);
-    assert.equal(normalizeAutoProviders([]), null);
+    assert.deepEqual(normalizeAutoProviders(["junk"]), []);
+    assert.deepEqual(normalizeAutoProviders([]), []);
     assert.equal(normalizeAutoProviders("fireworks"), null);
     assert.equal(normalizeAutoProviders(null), null);
+    // Empty scope sends neither the scope header nor saved provider keys.
+    assert.deepEqual(nexusProvidersHeaders(normalizeAutoProviders(["junk"])), {});
+    assert.deepEqual(
+      autoProviderKeysInScope({
+        auto: { providers: ["junk"] },
+        anthropicApiKey: "sk-ant-example-0000",
+        openaiApiKey: "sk-example-0000",
+      }),
+      { anthropicKey: "", openaiKey: "" },
+    );
   });
 
   it("knows which harnesses cannot carry the setting yet", () => {
@@ -187,8 +199,15 @@ describe("nexus auto (CLI)", () => {
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(JSON.parse(result.stdout), {
       providers: ["fireworks"],
+      keys: { anthropic: false, openai: false },
+      keysSent: { anthropic: false, openai: false },
       fireworksOnly: true,
       behavior: "auto routes only to the listed providers; your account's model restrictions always apply first",
+      providerKeys: {
+        outcome: "no-key",
+        anthropic: { state: "not-connected", keyHint: "" },
+        openai: { state: "not-connected", keyHint: "" },
+      },
     });
   });
 
@@ -293,6 +312,37 @@ describe("x-nexus-providers on harness on", () => {
       await engineOn(profile, ctx);
       assert.equal(captured.byokHeaders[NEXUS_PROVIDERS_HEADER], undefined);
       assert.equal(captured.telemetryHeaders[NEXUS_PROVIDERS_HEADER], undefined);
+    });
+  });
+
+  it("engine on warns when a stored scope can't apply in the harness", async () => {
+    await withTempHome("auto-engine-unsupported-", async (home) => {
+      const profile = {
+        id: "cursor",
+        label: "Cursor IDE",
+        resolveKey: async () => "",
+        paths: () => ({}),
+        keyEnvRef: "{env:FIREWORKS_API_KEY}",
+        firerouter: null,
+        restartHint: () => {},
+        resolveOnKey: async () => ({ apiKeyRef: "fw_test_key", effectiveKey: "fw_test_key" }),
+        enable: async () => ({ model: "nexus/auto", modelsAdded: ["nexus/auto"] }),
+      };
+      const lines = [];
+      const original = console.log;
+      console.log = (...args) => lines.push(args.join(" "));
+      try {
+        await writeGlobalConfig(home, { auto: { providers: ["fireworks"] } });
+        await engineOn(profile, { home, main: "auto" });
+        assert.ok(lines.some((line) => /provider scope doesn't apply in Cursor IDE/.test(line)), lines.join("\n"));
+
+        lines.length = 0;
+        await writeGlobalConfig(home, { auto: { providers: null } });
+        await engineOn(profile, { home, main: "auto" });
+        assert.ok(!lines.some((line) => /provider scope doesn't apply/.test(line)), lines.join("\n"));
+      } finally {
+        console.log = original;
+      }
     });
   });
 

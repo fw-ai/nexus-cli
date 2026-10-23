@@ -116,8 +116,39 @@ describe("configure to harness on propagation", () => {
     assert.match(onResult.stderr, new RegExp(MISSING_FIREWORKS_API_KEY_MESSAGE.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   });
 
-  it("on --anthropic-api-key is rejected now that FireRouter routes are retired, and persists nothing", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-on-persist-anthropic-"));
+  it("a key saved with nexus auto reaches the harness on its next on", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-auto-key-opencode-"));
+    await mkdir(path.dirname(opencodeConfigPath(home)), { recursive: true });
+    const env = { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" };
+
+    const saved = await runFireconnect(["auto", "--anthropic-api-key", "sk-ant-global-key-12345"], env);
+    assert.equal(saved.code, 0, saved.stderr);
+    const onResult = await runFireconnect(["opencode", "on", "--api-key", "fw_test_key_12345"], env);
+    assert.equal(onResult.code, 0, onResult.stderr);
+
+    const config = JSON.parse(await readFile(opencodeConfigPath(home), "utf8"));
+    assert.equal(
+      config.provider["fireworks-ai"].options.headers["x-anthropic-api-key"],
+      "sk-ant-global-key-12345",
+    );
+  });
+
+  it("on leaves an exported ANTHROPIC_API_KEY out of the harness config", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-on-env-anthropic-"));
+    await mkdir(path.dirname(opencodeConfigPath(home)), { recursive: true });
+
+    const onResult = await runFireconnect(
+      ["opencode", "on", "--api-key", "fw_test_key_12345"],
+      { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "sk-ant-env-only-12345" },
+    );
+    assert.equal(onResult.code, 0, onResult.stderr);
+
+    const raw = await readFile(opencodeConfigPath(home), "utf8");
+    assert.doesNotMatch(raw, /sk-ant-env-only-12345/);
+  });
+
+  it("on refuses provider-key flags and points to nexus auto, persisting nothing", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-on-refuse-anthropic-"));
     await mkdir(path.dirname(opencodeConfigPath(home)), { recursive: true });
 
     const onResult = await runFireconnect(
@@ -129,26 +160,20 @@ describe("configure to harness on propagation", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
     assert.notEqual(onResult.code, 0);
-    assert.match(onResult.stderr, /--anthropic-api-key was for FireRouter routes, which are no longer supported/);
+    assert.match(onResult.stderr, /Save the key once with `nexus auto --anthropic-api-key <key>`/);
 
     const globalConfig = JSON.parse(await readFile(globalConfigPath(home), "utf8").catch(() => "{}"));
     assert.ok(!globalConfig.anthropicApiKey, JSON.stringify(globalConfig));
   });
 
-  it("rejects invalid --anthropic-api-key without persisting to global config", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-on-invalid-anthropic-"));
-    await mkdir(path.dirname(opencodeConfigPath(home)), { recursive: true });
-
-    const onResult = await runFireconnect(
-      [
-        "opencode", "on",
-        "--api-key", "fw_test_key_12345",
-        "--anthropic-api-key", "fw_not_anthropic",
-      ],
+  it("nexus auto rejects an invalid --anthropic-api-key without persisting it", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-auto-invalid-anthropic-"));
+    const result = await runFireconnect(
+      ["auto", "--anthropic-api-key", "fw_not_anthropic"],
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
-    assert.notEqual(onResult.code, 0);
-    assert.match(onResult.stderr, /--anthropic-api-key was for FireRouter routes, which are no longer supported/);
+    assert.notEqual(result.code, 0);
+    assert.match(result.stderr, /--anthropic-api-key must be an Anthropic API key/);
 
     const globalConfig = JSON.parse(await readFile(globalConfigPath(home), "utf8").catch(() => "{}"));
     assert.ok(!globalConfig.anthropicApiKey, JSON.stringify(globalConfig));

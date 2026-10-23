@@ -7,6 +7,7 @@ import {
   writeGlobalConfig,
 } from "../config/global-config.mjs";
 import {
+  fireworksKeyPresent,
   persistApiKeyFromFlag,
   resolveFireworksApiKeyValue,
   tryReadKeychainSecret,
@@ -130,6 +131,19 @@ export async function resolveFireworksApiKey({
 
   const harnessKey = resolveKey ? await resolveKey() : "";
   return isFireworksShapedKey(harnessKey) ? harnessKey.trim() : "";
+}
+
+/**
+ * Whether `harnessFullKey` would find a key, without reading the stored one
+ * (see `fireworksKeyPresent`). For status output that only reports presence.
+ * @param {import("../harness/types.mjs").HarnessContext} ctx
+ * @param {(ctx: import("../harness/types.mjs").HarnessContext) => Promise<string>} resolveKey
+ */
+export async function harnessHasFullKey(ctx, resolveKey) {
+  if (await fireworksKeyPresent({ apiKey: ctx.apiKey, home: ctx.home })) {
+    return true;
+  }
+  return isFireworksShapedKey(await resolveKey(ctx));
 }
 
 export function harnessFullKey(ctx, resolveKey) {

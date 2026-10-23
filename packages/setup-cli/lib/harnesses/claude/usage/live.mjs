@@ -10,7 +10,6 @@
 
 import process, { stdin, stdout } from "node:process";
 
-import { killLiveLayout } from "../live-tmux.mjs";
 import {
   attachAgentBackKey,
   promptClaudeUsageAgent,
@@ -77,18 +76,14 @@ export function shouldRunClaudeUsageLive(ctx, stream = stdout) {
  * Footer key hint for the live meter.
  *
  * Tab focuses the in-frame agents pane and Esc goes back to the session list —
- * but only when one exists. In a live tmux split (`FC_LIVE_SPLIT=1`) `q` tears
- * down the whole layout (Claude included), so it advertises "quit layout" rather
- * than just "quit"; without this the meter's own `FC_LIVE_SPLIT` fallback never
- * applies because the caller always passes a `keyHint`.
+ * but only when one exists.
  *
- * @param {{ canPickSession?: boolean, liveSplit?: boolean }} [opts]
+ * @param {{ canPickSession?: boolean }} [opts]
  */
-export function liveMeterKeyHint({ canPickSession = false, liveSplit = false } = {}) {
-  const quit = liveSplit ? "q quit layout" : "q quit";
+export function liveMeterKeyHint({ canPickSession = false } = {}) {
   return canPickSession
-    ? `Tab agents · Esc sessions · ${quit}`
-    : `Tab agents · ${quit}`;
+    ? "Tab agents · Esc sessions · q quit"
+    : "Tab agents · q quit";
 }
 
 /**
@@ -214,12 +209,7 @@ export async function runClaudeUsageLive({
   };
   // One key per action: Tab focuses the agents pane, Esc goes back to the session
   // list. Arrow keys are the pane cursor's, so they never double as navigation.
-  // In a live tmux split `q` tears down the whole layout — Claude included — so
-  // the footer says "quit layout" rather than just "quit".
-  const keyHint = liveMeterKeyHint({
-    canPickSession,
-    liveSplit: process.env.FC_LIVE_SPLIT === "1",
-  });
+  const keyHint = liveMeterKeyHint({ canPickSession });
 
   for (;;) {
     if (signal?.aborted) return;
@@ -303,9 +293,6 @@ export async function runClaudeUsageLive({
       // paused TTY stdin still holds a libuv ref, so returning up the stack
       // just hangs the process (only Ctrl+C, which exits explicitly, ended it).
       // Match that path and exit now that the terminal is restored.
-      if (process.env.FC_LIVE_SPLIT === "1") {
-        killLiveLayout();
-      }
       process.exit(0);
     }
     if (signal?.aborted) {

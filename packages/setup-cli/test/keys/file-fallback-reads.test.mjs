@@ -37,6 +37,20 @@ describe("an OS keychain that refuses the key", () => {
     }
   });
 
+  it("deleteSecret removes both copies so a deleted key cannot resurrect", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "nexus-file-fallback-delete-"));
+    try {
+      // Keychain copy first, then a broken-keychain write that falls back to
+      // the encrypted file: both stores now hold the key, cache says file.
+      run(home, "working", "await s.setSecret('fw_old', home);");
+      run(home, "broken", "await s.setSecret('fw_old', home);");
+      run(home, "working", "await s.deleteSecret(home);");
+      assert.equal(readKey(home, "working"), "null");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
   it("moves it into the keychain on upgrade only once the keychain keeps it", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "nexus-file-fallback-reprobe-"));
     try {

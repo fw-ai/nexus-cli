@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import http from "node:http";
 
-import { createAutoProvidersLoader, createShimServer } from "../../../lib/harnesses/claude-desktop/shim.mjs";
+import { createAutoKeysLoader, createAutoProvidersLoader, createShimServer } from "../../../lib/harnesses/claude-desktop/shim.mjs";
 import {
   detectConnectors, migrateSkillsPlugin, DEFAULT_MODEL_MAP, firstPartyDir, thirdPartyDir,
 } from "../../../lib/harnesses/claude-desktop/profile-lane.mjs";
@@ -559,6 +559,63 @@ test("shim sends the saved auto scope for auto-routed turns only, live from conf
     await post("claude-opus-4-8");
     assert.equal(seen.at(-1).model, "auto");
     assert.equal(seen.at(-1).providers, undefined);
+  } finally {
+    await new Promise((r) => server.close(r));
+    await new Promise((r) => upstream.close(r));
+    await rm(catalogDir, { recursive: true, force: true });
+    await cleanup();
+  }
+});
+
+test("shim sends keys saved with nexus auto on auto-routed turns only, live from config", async () => {
+  const { home, cleanup } = await tempHome();
+  const catalogDir = await mkdtemp(path.join(tmpdir(), "fc-shim-catalog-"));
+  const configPath = path.join(home, "config.json");
+  await writeFile(configPath, JSON.stringify({ anthropicApiKey: "sk-ant-example-0000", openaiApiKey: "{env:OPENAI_API_KEY}" }));
+  const loader = createAutoKeysLoader({ configPath });
+  // An environment reference never counts as a saved key.
+  assert.deepEqual(await loader(), { anthropicKey: "sk-ant-example-0000", openaiKey: "" });
+  const scopedPath = path.join(home, "scoped-config.json");
+  await writeFile(scopedPath, JSON.stringify({ anthropicApiKey: "sk-ant-example-0000", auto: { providers: ["fireworks"] } }));
+  assert.deepEqual(await createAutoKeysLoader({ configPath: scopedPath })(), { anthropicKey: "", openaiKey: "" });
+
+  const seen = [];
+  const upstream = http.createServer((req, res) => {
+    let d = ""; req.on("data", (c) => { d += c; }).on("end", () => {
+      seen.push({
+        model: JSON.parse(d).model,
+        anthropic: req.headers["x-anthropic-api-key"],
+        openai: req.headers["x-openai-api-key"],
+      });
+      res.writeHead(200, { "content-type": "application/json" }); res.end("{}");
+    });
+  });
+  await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+  const server = createShimServer({
+    modelMap: DEFAULT_MODEL_MAP, catalogDir,
+    upstreamOrigin: `http://127.0.0.1:${upstream.address().port}`,
+    autoKeysLoader: loader,
+    log: () => {},
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const post = (model, headers = {}) => fetch(`http://127.0.0.1:${server.address().port}/v1/messages`, {
+    method: "POST", headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify({ model, messages: [] }),
+  });
+  try {
+    await post("claude-opus-4-8");
+    await post("claude-sonnet-4-8", { "x-openai-api-key": "sk-proj-spoofed" });
+    assert.deepEqual(seen, [
+      { model: "auto", anthropic: "sk-ant-example-0000", openai: undefined },
+      { model: "glm-latest", anthropic: undefined, openai: undefined },
+    ]);
+
+    // `nexus auto --unset anthropic-api-key` applies on the next request.
+    await writeFile(configPath, JSON.stringify({ anthropicApiKey: "" }));
+    const later = new Date(Date.now() + 5000);
+    await utimes(configPath, later, later);
+    await post("claude-opus-4-8");
+    assert.equal(seen.at(-1).anthropic, undefined);
   } finally {
     await new Promise((r) => server.close(r));
     await new Promise((r) => upstream.close(r));

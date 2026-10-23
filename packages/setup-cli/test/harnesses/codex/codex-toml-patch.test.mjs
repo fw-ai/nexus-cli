@@ -289,7 +289,7 @@ describe("codex-toml-patch", () => {
     assert.match(once, /^model = "glm-5p1"\n\n\[tui\]$/m);
   });
 
-  it("patchFireconnectRoutingRaw removes stale web_search = disabled written by #320", () => {
+  it("patchFireconnectRoutingRaw removes stale web_search = disabled written by earlier releases", () => {
     const input = [
       'model_provider = "openai"',
       'model = "gpt-4.1"',

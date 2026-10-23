@@ -2,7 +2,6 @@ import { writeFileAtomic } from "../../io/atomic-write.mjs";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rename, unlink } from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {
   defaultMainModel,
@@ -10,11 +9,13 @@ import {
   isAutoModelId,
   isAutoInstantModelId,
   isFirerouterModelPattern,
+  isRetiredModelId,
   fullFireworksResourceId,
   normalizeModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
 import { readJsonIfExists, writeJson } from "../../io/json.mjs";
+import { appUserDataDir } from "../../io/user-data-dir.mjs";
 import {
   isFireworksShapedKey,
   MISSING_FIREWORKS_API_KEY_MESSAGE,
@@ -112,17 +113,7 @@ export function chatLanguageModelsPath({ home = "", vscodePath = "" } = {}) {
   // and the keychain service always target the same variant (stable vs
   // Insiders). Falls back to the stable "Code" folder when no install is found.
   const folder = detectVscodeInstall()?.folder || "Code";
-  const baseHome = home || process.env.HOME || "";
-  const platform = os.platform();
-  if (platform === "darwin") {
-    return path.join(baseHome, "Library", "Application Support", folder, "User", "chatLanguageModels.json");
-  }
-  if (platform === "win32") {
-    const appData = process.env.APPDATA || path.join(baseHome, "AppData", "Roaming");
-    return path.join(appData, folder, "User", "chatLanguageModels.json");
-  }
-  const configHome = process.env.XDG_CONFIG_HOME || path.join(baseHome, ".config");
-  return path.join(configHome, folder, "User", "chatLanguageModels.json");
+  return path.join(appUserDataDir(home || process.env.HOME || "", folder), "User", "chatLanguageModels.json");
 }
 
 /**
@@ -202,7 +193,9 @@ export async function readChatLanguageModels(filePath) {
  */
 export async function writeChatLanguageModels(filePath, arr) {
   await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFileAtomic(filePath, `${JSON.stringify(arr, null, "\t")}\n`);
+  // Model rows can carry saved provider keys in their request headers, so
+  // the file is owner-only like the other key-bearing harness configs.
+  await writeFileAtomic(filePath, `${JSON.stringify(arr, null, "\t")}\n`, { mode: 0o600 });
 }
 
 /** Read the raw file text for byte-for-byte snapshot/restore. */
@@ -314,7 +307,9 @@ export function fireconnectRegisteredModels(arr) {
  */
 export function vscodeStoredByokHeaders(arr) {
   const provider = findFireconnectProvider(arr);
-  const model = (provider?.models ?? []).find((m) => firerouterRequiresAnthropicKey(m.id));
+  // Provider keys ride on the `auto` row (and on an older FireRouter row).
+  const model = (provider?.models ?? []).find((m) => m.id === "auto")
+    ?? (provider?.models ?? []).find((m) => firerouterRequiresAnthropicKey(m.id));
   if (!model) {
     return {};
   }
@@ -329,7 +324,7 @@ export function vscodeStoredByokHeaders(arr) {
 /**
  * Drop saved provider keys from the Nexus provider's models in
  * `chatLanguageModels.json` (`requestHeaders`, plus the Anthropic body field),
- * after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * after `nexus auto --unset anthropic-api-key` / `--unset openai-api-key`.
  * `dryRun` reports whether anything would be removed without writing.
  * @param {{ filePath: string, headerNames: string[], dryRun?: boolean }} opts
  * @returns {Promise<boolean>} whether the file changed (or would change)
@@ -817,12 +812,19 @@ export async function enableVscodeAzure({
  * @param {string} resolvedModel the normalized default/`--model` model id
  * @returns {object[]}
  */
-function computeVscodeModels(existing, modelId, resolvedModel, catalogModelIds = [], catalogAvailable = false) {
+export function computeVscodeModels(existing, modelId, resolvedModel, catalogModelIds = [], catalogAvailable = false) {
   const existingModels = (existing?.models ?? []).map((model) => ({
     ...model,
     id: shortFireworksModelRef(model.id),
   }));
   const byId = new Map(existingModels.map((m) => [m.id, m]));
+  // Retired FireRouter rows never survive a re-`on`, even offline: they
+  // are Nexus-owned rows, so dropping them needs no catalog (as Cursor does).
+  for (const id of [...byId.keys()]) {
+    if (isRetiredModelId(id)) {
+      byId.delete(id);
+    }
+  }
   const ensure = (id) => {
     const storedId = shortFireworksModelRef(id);
     if (storedId && !byId.has(storedId)) {
@@ -1023,7 +1025,7 @@ export async function refreshVscodeGatewayKey({ vscodePath, stateDbPath, firewor
   assertVscodeStopped();
   const encrypted = encryptSecret(fireworksKey, cryptoOpts);
   if (linuxSecretUsesKeyringBackend(stored) && linuxEncryptUsesBasicTextBackend(encrypted)) {
-    throw new Error("VS Code's API key is keyring-encrypted but Nexus can only write an obfuscated one here; left it unchanged.");
+    throw new Error("VS Code's API key is keyring-encrypted but Nexus CLI can only write an obfuscated one here; left it unchanged.");
   }
   await writeItemTableValue(dbPath, secretStorageKey(secretId), encrypted);
   return true;

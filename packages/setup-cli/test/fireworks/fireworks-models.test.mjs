@@ -418,7 +418,7 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
       formatCatalogUpdatedAt(Date.UTC(2026, 7, 29, 20, 28), "America/Los_Angeles"),
       "Aug 29, 2026, 1:28 PM PDT",
     );
-    assert.equal(formatCatalogUpdatedAt(null), "bundled with Nexus");
+    assert.equal(formatCatalogUpdatedAt(null), "bundled with Nexus CLI");
   });
 
   test("formatCatalogSections uses the shared minimal USD format", () => {
@@ -465,13 +465,13 @@ describe("fireworks-models serverless catalog", () => {  test("fetchServerlessCa
 
     assert.match(output, /SMART ROUTERS/);
     assert.match(output, /one model picked per user turn/);
-    assert.match(output, /auto: +Routes each user turn across Fireworks open models\./);
+    assert.match(output, /auto: +Smart routing: automatically picks the best model for the task\./);
     assert.match(output, /auto-instant: +Routes each user turn across the fastest Fireworks open models\./);
-    assert.match(output, /firerouter: +Routes each user turn between open models and the closed models you have access to\./);
+    assert.match(output, /firerouter: +Smart routing: automatically picks the best model for the task\./);
     // The three notes line up in one column.
     const noteColumns = output.replace(/\x1b\[[0-9;]*m/g, "").split("\n")
       .filter((line) => /^ {2}(auto|auto-instant|firerouter):/.test(line))
-      .map((line) => line.indexOf("Routes"));
+      .map((line) => line.match(/^ {2}\S+: +/)[0].length);
     assert.equal(noteColumns.length, 3, output);
     assert.equal(new Set(noteColumns).size, 1, output);
   });

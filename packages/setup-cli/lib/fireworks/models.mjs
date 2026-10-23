@@ -4,8 +4,6 @@ import {
   FIREROUTER_ROUTER_ID,
   OPENAI_MODEL_FAMILIES,
   canonicalAutoModelId,
-  isFirerouterModel,
-  isFirerouterModelPattern,
 } from "./model-id.mjs";
 import { MISSING_FIREWORKS_API_KEY_MESSAGE } from "../keys/key-type.mjs";
 import {
@@ -32,15 +30,6 @@ export const PLATFORM_ACCOUNT_ID = "fireworks";
 export const KIND_SERVERLESS = "serverless";
 export const SERVERLESS_CODING_USE_CASE = "coding";
 /** @typedef {{ id: string, shortId: string, displayName: string, baseModelId?: string, kind: "serverless", serverlessMode?: string }} CatalogEntry */
-
-export function firerouterCatalogEntry() {
-  return {
-    id: FIREROUTER_ROUTER_ID,
-    shortId: "firerouter",
-    displayName: "FireRouter",
-    kind: KIND_SERVERLESS,
-  };
-}
 
 /**
  * Synthesized row for an auto mix. The serverless API never returns them, so
@@ -123,31 +112,14 @@ export function autoDisplayName(modelId) {
 }
 
 /**
- * Human-readable label for a FireRouter selection. Bare `firerouter` renders as
- * "FireRouter"; a multi-model slug joins pretty model names with " · "
- * (firerouter/claude-opus-5/kimi-k3-fast -> "FireRouter · Claude Opus 5 · Kimi K3 Fast").
- * @param {string} modelId
+ * Label for a FireRouter id still stored in a harness config (one an upgrade
+ * couldn't migrate yet). The gateway serves every FireRouter id as `auto`, so
+ * it reads the same as `auto`.
+ * @param {string} _modelId
  * @returns {string}
  */
-export function firerouterDisplayName(modelId) {
-  if (!isFirerouterModelPattern(modelId)) {
-    return "FireRouter";
-  }
-  if (isFirerouterModel(modelId)) {
-    return "FireRouter";
-  }
-  const stripped = String(modelId ?? "")
-    .replace(/\[1m\]$/i, "")
-    .replace(/^accounts\/fireworks\/(?:models|routers)\//i, "")
-    .trim();
-  const NOISE = new Set(["accounts", "fireworks", "models", "routers"]);
-  const segments = stripped.split("/").filter(
-    (part) => part && !part.startsWith("firerouter") && !NOISE.has(part.toLowerCase()),
-  );
-  if (segments.length === 0) {
-    return "FireRouter";
-  }
-  return ["FireRouter", ...segments.map(prettyModelName)].join(" · ");
+export function firerouterDisplayName(_modelId) {
+  return autoDisplayName(AUTO_MODEL_ID);
 }
 
 /** The gateway answered with a non-2xx status (as opposed to a failed request). */
@@ -826,17 +798,12 @@ export function preferLatestAliases(catalog) {
 
 /**
  * Preferred model ids for harness provider catalogs. The served catalog
- * already carries the `auto` mix (see `loadServerlessCatalog`); FireRouter is
- * included only when explicitly requested via `on --model firerouter`.
+ * already carries the `auto` mix (see `loadServerlessCatalog`).
  * @param {import("./models.mjs").CatalogEntry[]} catalog
- * @param {{ includeFirerouter?: boolean }} [opts]
  * @returns {string[]}
  */
-export function registerableModelIds(catalog, { includeFirerouter = false } = {}) {
-  return catalogWithAutomaticFirerouter(
-    preferLatestAliases(catalog),
-    { includeFirerouter },
-  )
+export function registerableModelIds(catalog) {
+  return withoutFirerouterRow(preferLatestAliases(catalog))
     // The retired `auto-instant` mix never registers, even when the
     // gateway still returns its row.
     .filter((entry) => autoCatalogEntryId(entry) !== AUTO_INSTANT_MODEL_ID)
@@ -863,17 +830,13 @@ export function autoCatalogEntryId(entry) {
   return canonicalAutoModelId(entry?.shortId) || canonicalAutoModelId(shortIdFromResourceName(entry?.id));
 }
 
-export function catalogWithAutomaticFirerouter(catalog, { includeFirerouter = false } = {}) {
-  const withoutFirerouter = catalog.filter((entry) => entry.id !== FIREROUTER_ROUTER_ID);
-  if (!includeFirerouter) {
-    return withoutFirerouter;
-  }
-  // The catalog carried its own firerouter row: keep it in place rather than
-  // prepending a synthesized duplicate.
-  if (withoutFirerouter.length !== catalog.length) {
-    return catalog;
-  }
-  return [firerouterCatalogEntry(), ...withoutFirerouter];
+/**
+ * The retired FireRouter row never registers, even if the gateway still
+ * lists it.
+ * @param {CatalogEntry[]} catalog
+ */
+function withoutFirerouterRow(catalog) {
+  return catalog.filter((entry) => entry.id !== FIREROUTER_ROUTER_ID);
 }
 
 /**
@@ -928,15 +891,18 @@ function withCanonicalAutoRows(catalog) {
   return changed ? rows : catalog;
 }
 
-export async function loadRegisterableModels({ apiKey, includeFirerouter = false }) {
+export async function loadRegisterableModels({ apiKey }) {
   const { catalog, source } = await loadServerlessCatalog({ apiKey, refresh: true });
-  const ids = registerableModelIds(catalog, { includeFirerouter });
+  const ids = registerableModelIds(catalog);
   return { ids, available: source !== "stale" };
 }
 
 export async function loadServerlessCatalog({ apiKey, refresh = false }) {
-  const resolvedKey = apiKey;
-  if (!resolvedKey) {
+  // `apiKey` may be a resolver, called only when the catalog must be fetched:
+  // `model list` passes one so a fresh cached catalog is served without
+  // reading the stored key (each read can cost a keychain prompt).
+  const lazyKey = typeof apiKey === "function";
+  if (!lazyKey && !apiKey) {
     throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
 
@@ -957,13 +923,18 @@ export async function loadServerlessCatalog({ apiKey, refresh = false }) {
     // process previously resolved the snapshot to null.
     setServerlessCatalogSnapshot(cache.snapshot);
     return {
-      apiKey: resolvedKey,
+      apiKey: lazyKey ? "" : apiKey,
       catalog: catalogWithAutomaticAuto(cache.snapshot.entries),
       rawModels: [],
       routersUnavailable: false,
       source: "cache",
       updatedAt: cache.cachedAt || null,
     };
+  }
+
+  const resolvedKey = lazyKey ? await apiKey() : apiKey;
+  if (!resolvedKey) {
+    throw new Error(MISSING_FIREWORKS_API_KEY_MESSAGE);
   }
 
   try {

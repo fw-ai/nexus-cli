@@ -65,7 +65,7 @@ function printNextSteps() {
   console.log(`  ${bold("Next, connect a harness:")}`);
   printHarnessRows(featured, { indent: "    ", style: accent });
   console.log("");
-  console.log(`  Using another harness? See them all with  ${accent("nexus harnesses")}`);
+  console.log(`  Using another harness? See them all with  ${accent("nexus status")}`);
 }
 
 /**

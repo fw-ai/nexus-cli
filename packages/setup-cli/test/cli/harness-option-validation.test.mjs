@@ -52,17 +52,27 @@ describe("harness option validation", () => {
         ["copilot-app", "on", "--model", "firerouter"],
         ["claude-desktop", "on", "--model", "firerouter"],
       ]) {
-        await rejects(home, args, /is a FireRouter route, which is no longer supported/);
+        await rejects(home, args, /is no longer supported/);
       }
     });
   });
 
-  it("rejects BYOK options now that FireRouter routes are retired", async () => {
-    await withTempHome("option-firerouter-", async (home) => {
+  it("refuses provider-key flags on every harness command and points to nexus auto", async () => {
+    await withTempHome("option-provider-keys-", async (home) => {
       await rejects(
         home,
         ["pi", "on", "--anthropic-api-key", "sk-ant-test"],
-        /--anthropic-api-key was for FireRouter routes, which are no longer supported/,
+        /Save the key once with `nexus auto --anthropic-api-key <key>`, then run `nexus pi` again/,
+      );
+      await rejects(
+        home,
+        ["pi", "status", "--openai-api-key", "sk-openai-test"],
+        /nexus auto --openai-api-key <key>/,
+      );
+      await rejects(
+        home,
+        ["claude", "on", "--anthropic-api-key", "sk-ant-test"],
+        /Claude Code's own login covers Claude turns/,
       );
     });
   });
@@ -73,12 +83,12 @@ describe("harness option validation", () => {
       await rejects(
         home,
         ["cursor", "on", "--model", "firerouter/kimi-k3", "--anthropic-api-key", "sk-ant-test"],
-        /is a FireRouter route, which is no longer supported/,
+        /is no longer supported/,
       );
       await rejects(
         home,
         ["cursor", "on", "--model", "firerouter/kimi-k3", "--openai-api-key", "sk-openai-test"],
-        /is a FireRouter route, which is no longer supported/,
+        /is no longer supported/,
       );
     });
   });
@@ -107,7 +117,7 @@ describe("harness option validation", () => {
       );
       assert.notEqual(result.code, 0);
       // The FireRouter model is rejected before the BYOK flag is considered.
-      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(result.stderr, /is no longer supported/);
       assert.equal(existsSync(codexConfigPath(home)), false);
       const globalConfig = existsSync(globalConfigPath(home))
         ? JSON.parse(await readFile(globalConfigPath(home), "utf8"))
@@ -140,7 +150,7 @@ describe("harness option validation", () => {
       );
       assert.notEqual(result.code, 0);
       // The FireRouter model is rejected before the BYOK flag is considered.
-      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(result.stderr, /is no longer supported/);
       assert.equal(existsSync(codexConfigPath(home)), false);
       const globalConfig = existsSync(globalConfigPath(home))
         ? JSON.parse(await readFile(globalConfigPath(home), "utf8"))
@@ -154,7 +164,7 @@ describe("harness option validation", () => {
       await rejects(
         home,
         ["claude", "on", "--api-key", "fw_test_key_12345", "--model", "firerouter"],
-        /--model firerouter is a FireRouter route, which is no longer supported\. Use --model auto instead\./,
+        /--model firerouter is no longer supported\. Use --model auto instead\./,
       );
     });
   });
@@ -198,18 +208,18 @@ describe("harness option validation", () => {
     });
   });
 
-  it("accepts --session for claude live as well as claude usage", async () => {
+  it("points the retired claude live command at the status line, even with --session", async () => {
     await withTempHome("option-live-session-", async (home) => {
-      // `claude live --session` must clear option validation; any later failure
-      // (no tmux, or no matching session log in the empty home) is not the
-      // "applies only to" rejection this test guards against.
-      const live = await runCli(["claude", "live", "--session", "abc"], {
-        home,
-        env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" },
-      });
-      assert.doesNotMatch(live.stderr, /--session applies only to/);
-      // Report-only flags stay usage-only even on the live command.
-      await rejects(home, ["claude", "live", "--days", "3"], /--days\/--last-n\/--verbose\/--plain apply only to/);
+      for (const args of [["claude", "live"], ["claude", "live", "--session", "abc"]]) {
+        const live = await runCli(args, {
+          home,
+          env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" },
+        });
+        assert.equal(live.code, 0, `${args.join(" ")} should exit cleanly`);
+        assert.match(live.stderr, /`nexus claude live` was removed: Claude Code's status line shows the routed model/);
+        assert.match(live.stderr, /nexus claude usage/);
+      }
+      await rejects(home, ["codex", "usage", "--session", "abc"], /--session applies only to `nexus claude usage`\./);
     });
   });
 });

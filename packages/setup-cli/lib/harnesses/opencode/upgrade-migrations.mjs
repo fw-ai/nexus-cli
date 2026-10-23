@@ -81,19 +81,12 @@ export async function migrateOpencodeFirerouterOnUpgrade(home) {
   const keptModels = Object.fromEntries(
     Object.entries(models).filter(([id]) => !isRetiredModelId(id)),
   );
-  const headers = provider?.options?.headers && typeof provider.options.headers === "object"
-    ? provider.options.headers
-    : {};
-  const keptHeaders = Object.fromEntries(
-    Object.entries(headers).filter(([name]) => !["x-anthropic-api-key", "x-openai-api-key"].includes(name.toLowerCase())),
-  );
   const modelChanged = Boolean(ref) && migrated !== ref;
   const rowsChanged = Object.keys(keptModels).length !== Object.keys(models).length;
-  const headersChanged = Object.keys(keptHeaders).length !== Object.keys(headers).length;
-  if (!modelChanged && !rowsChanged && !headersChanged) {
+  if (!modelChanged && !rowsChanged) {
     return false;
   }
-  // BYOK headers only ever served the FireRouter route being dropped.
+  // Provider-key headers stay: Nexus Auto reads them now.
   await writeOpencodeConfig(configPath, {
     ...config,
     ...(modelChanged ? { model: `${prefix}${migrated}` } : {}),
@@ -102,10 +95,6 @@ export async function migrateOpencodeFirerouterOnUpgrade(home) {
       [OPENCODE_FIREWORKS_PROVIDER_ID]: {
         ...provider,
         models: keptModels,
-        options: {
-          ...(provider?.options ?? {}),
-          ...(Object.keys(keptHeaders).length ? { headers: keptHeaders } : { headers: undefined }),
-        },
       },
     },
   });

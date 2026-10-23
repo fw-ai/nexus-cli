@@ -1,11 +1,10 @@
-# Nexus
+# Nexus CLI
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/fw-ai/nexus-cli/blob/main/LICENSE)
 
-> Use [Fireworks AI](https://fireworks.ai) models inside the coding harnesses you already use: Claude Code, Claude Desktop, OpenCode, Codex, Pi, Cursor, VS Code, GitHub Copilot (app and CLI), and DeepSeek Harness.
+> **One key. Ten harnesses.** Use [Fireworks AI](https://fireworks.ai) models inside the coding tools you already love: Claude Code, Claude Desktop, OpenCode, Codex, Pi, Cursor, VS Code, GitHub Copilot (app and CLI), and DeepSeek Harness.
 
-Nexus is a small CLI that points each harness at Fireworks by editing that harness's own
-settings. No hosted service, nothing extra to run:
+Nexus CLI points each harness at Fireworks by editing that harness's own settings. No hosted service to deploy. **Claude Desktop** is the one exception: it runs a tiny local shim (a launchd/systemd user unit) and is covered under [Claude Desktop](#claude-desktop).
 
 - **`nexus <harness>`** routes it through Fireworks and registers Fireworks models in its picker.
 - **`nexus <harness> off`** puts your original settings back **exactly as they were**, byte for byte.
@@ -15,10 +14,10 @@ settings. No hosted service, nothing extra to run:
 [Default models](#default-models) · [Claude Code](#claude-code) · [Codex](#codex) ·
 [OpenCode](#opencode) · [Pi](#pi) · [Cursor](#cursor) · [VS Code Chat](#vs-code-chat) ·
 [GitHub Copilot app](#github-copilot-app) · [GitHub Copilot CLI](#github-copilot-cli) · [DeepSeek Harness](#deepseek-harness) ·
-[Claude Desktop](#claude-desktop) · [FireRouter](#firerouter) · [Models](#models) ·
+[Claude Desktop](#claude-desktop) · [Nexus Auto](#firerouter-is-now-nexus-auto) · [Models](#models) ·
 [Azure / Foundry](#azure-microsoft-foundry-endpoints) · [CLI reference](#cli-reference) ·
 [Keys and storage](#keys-and-storage) · [Troubleshooting](#troubleshooting) ·
-[Upgrade and uninstall](#upgrade-and-uninstall)
+[Update and uninstall](#update-and-uninstall)
 
 ## Quick start
 
@@ -52,7 +51,8 @@ Model picker
   Anthropic model slots → unchanged
   Fireworks catalog → appended in /model
 
-Also in your model list: …
+Also in your model list:
+  deepseek-flash-latest, ember-1, glm-fast-latest, …
 
 Restart Claude Code to use the new setup.
 
@@ -85,17 +85,16 @@ Registered models:
 ```bash
 nexus model list                 # browse the models you can pick
 nexus claude --model glm-latest  # choose one (or pin tiers: --sonnet <id>)
-nexus harnesses                  # every harness and whether it's connected
+nexus status                     # every harness: on/off and installed
 nexus claude off                 # back to exactly how things were
 ```
 
 Use any harness name in place of `claude`: `claude-desktop`, `opencode`, `codex` (or `chatgpt`),
-`pi`, `cursor`, `vscode`, `copilot-app`, `copilot-cli`, `deepseek`. Run `nexus help` or
-`nexus <harness> help` for every option.
+`pi`, `cursor`, `vscode`, `copilot-app`, `copilot-cli`, `deepseek`. Start with `nexus help`, then use `nexus <harness> help` or `nexus <command> --help` for options.
 
 ### Install notes
 
-- You need **bash** and **Node.js 22+**. If Node is missing or too old, the installer sets it up via Homebrew on macOS, or points you to nvm / nodejs.org / NodeSource elsewhere.
+- You need **bash**, **git**, and **Node.js 22+**. If Node is missing or too old, the installer offers to install Node via Homebrew on macOS (asks first), or points you to nvm / nodejs.org / NodeSource elsewhere.
 - The installer puts the CLI in `~/.nexus/cli`, adds the `nexus` launcher to `~/.local/bin` and your shell `PATH`, and runs the same cleanup as `nexus update`. It does not sign you in or change harness settings — that's steps 2 and 3.
 - **Windows:** run the install from Git Bash. Piping it through PowerShell breaks line endings (`set: pipefail\r`).
 
@@ -108,11 +107,11 @@ tmp="$(mktemp -d)" && git clone --depth 1 git@github.com:fw-ai/nexus-cli.git "$t
 
 ## Supported harnesses
 
-Run `nexus harnesses` to see this list along with which harnesses are connected on your machine.
+Run `nexus status` to see this list along with which harnesses are connected and installed on your machine.
 Every harness supports `on`, `off`, `status`, and `help`, and every model change goes through
-`<harness> on`. Settings apply per session — restart the harness (or start a new session) after `on`/`off`.
+`<harness> on`. Settings apply per session: restart the harness (or start a new session) after `on`/`off`.
 
-| Harness | Command | Settings it edits | Before `on` / `off` |
+| Harness | Command | Settings it edits | Quit / restart |
 |---------|---------|-------------------|---------------------|
 | [Claude Code](#claude-code) | `nexus claude` | `~/.claude/settings.json` | Restart after |
 | [Codex](#codex) | `nexus codex` / `nexus chatgpt` | `~/.codex/config.toml` | Restart after |
@@ -125,14 +124,19 @@ Every harness supports `on`, `off`, `status`, and `help`, and every model change
 | [DeepSeek Harness](#deepseek-harness) | `nexus deepseek` | `~/.dsh/settings.yaml` + patch layers | Restart `dsh` after |
 | [Claude Desktop](#claude-desktop) | `nexus claude-desktop` | Claude-3p provider profile + loopback shim | **Quit and reopen Desktop after** |
 
-`off` restores from a snapshot kept under `~/.nexus/` (files) or removes exactly what Nexus
+`off` restores from a snapshot kept under `~/.nexus/` (files) or removes exactly what Nexus CLI
 added (IDEs and databases). Your own providers, models, and settings are never touched.
+`on` refuses a harness that isn't installed. Any sign of the tool counts: its command, its app, its editor
+extension, or data only the tool writes (like Claude Code's `~/.claude/projects`). If the tool is installed
+somewhere Nexus CLI doesn't look, pass `--skip-install-check`. `nexus status` shows which harnesses are installed
+(`--json` for scripts).
 
 ## Default models
 
-Every harness starts on **`auto`**, Fireworks' smart router: it picks a model per user turn
-across Fireworks open models, so everything works with zero configuration. Pin a concrete
-model whenever you want one model for every turn:
+Every harness's main model starts on **`auto`**, Fireworks' smart router: it automatically
+picks the best model for the task, so everything works with zero configuration. Pin a
+concrete model whenever you want one model for every turn. Claude Code's tier slots and
+Claude Desktop's per-family defaults are detailed in their sections.
 
 ```bash
 nexus model list                    # what you can pick (prices included)
@@ -149,7 +153,7 @@ nexus <harness>                     # re-run to refresh the picker; your pick st
 Re-running `nexus <harness>` refreshes the registered catalog (new models added, retired
 ones pruned, metadata re-rendered) and keeps your pick — with one exception: a retired-router
 pick (FireRouter, `auto-instant`) moves to `auto`. Both routers are retired; selecting them
-is rejected in favour of `auto` (see [FireRouter](#firerouter)).
+is rejected in favour of `auto` (see [Nexus Auto](#firerouter-is-now-nexus-auto)).
 
 ## Claude Code
 
@@ -159,12 +163,11 @@ nexus claude --model <id>          # select a model and ensure it's in /model
 nexus claude --sonnet <id> --subagent <id>  # pin tier slots (native unpins)
 nexus claude status                # mapping, auth, and per-slot rates (--json for scripts)
 nexus claude usage                 # live session meter at Fireworks rates
-nexus claude live                  # tmux split: Claude Code left, live meter right
 nexus claude demo                  # race two models on a prompt (needs routing on)
 nexus claude off
 ```
 
-**How it routes.** Nexus appends the Fireworks catalog to `/model` and leaves the Anthropic
+**How it routes.** Nexus CLI appends the Fireworks catalog to `/model` and leaves the Anthropic
 tier slots on Claude's own defaults unless you pin them. Auth is a static
 `X-Fireworks-Api-Key` header in `settings.json` (owner-only file; the OS keychain stays the
 source of truth), which wins over any stray `ANTHROPIC_API_KEY`, so a leftover key can't
@@ -183,6 +186,10 @@ quietly break routing. An exact backup is kept for `off`.
   `vision` or `text-only`; recover a broken session with `/rewind`.
 - Native `WebSearch`/`WebFetch` keep working through the gateway; your own MCPs and
   permission rules are untouched.
+- **Claude Code's telemetry stays on.** Nexus CLI doesn't set `DISABLE_TELEMETRY`, `DO_NOT_TRACK`,
+  or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`: any of them stops Claude Code from loading its
+  feature flags, which hides tools such as Artifact. If you set one yourself in `settings.json`
+  while connected, Nexus CLI leaves it alone.
 
 ### Status line
 
@@ -231,10 +238,9 @@ Codex offers them), then the Fireworks catalog. A re-run keeps the model you're 
   on OpenAI; start a new thread for Fireworks. Resuming a CLI session needs the provider on:
   `codex resume <id> -c model_provider="fireworks-ai"`.
 - **MiniMax doesn't work on Codex** (its templates reject Codex's message shape);
-  `codex --model minimax-latest` explains. Use a Chat Completions harness instead.
+  `nexus codex --model minimax-latest` explains the Responses-API problem. Use a Chat Completions harness instead.
 - **Quit the ChatGPT app before `on`/`off`** (it caches config at boot), like the IDEs;
   `--force` writes anyway, not recommended. `nexus chatgpt` is the same command.
-- Like the IDEs, quit the ChatGPT app before `on`/`off` (`--force` writes anyway, not recommended).
 
 ## OpenCode
 
@@ -254,7 +260,7 @@ nexus opencode off
 
 Sets `defaultProvider`/`defaultModel` in `~/.pi/agent/settings.json`, registers the catalog
 (full `accounts/fireworks/...` IDs, so rows line up with Pi's own) in `models.json`, and saves
-your key in `auth.json`. All three files are backed up; `off` removes only what Nexus added.
+your key in `auth.json`. All three files are snapshot-backed; `off` restores them byte-for-byte, with a surgical fallback that removes only what Nexus CLI added if you edited a file while connected.
 `--settings-path <path>` for a settings file elsewhere.
 
 ```bash
@@ -266,13 +272,13 @@ nexus pi off
 ## Cursor
 
 > **Quit Cursor (`Cmd-Q`) before `on` or `off`** — a running Cursor overwrites your edit from
-> memory. Nexus waits in the terminal, offers to continue after ~90s, and `--force` skips the wait.
+> memory. Nexus CLI waits in the terminal, offers to continue after ~90s, and `--force` skips the wait.
 
-Nexus writes Cursor's `state.vscdb` directly: your key goes to its secure storage, the base
+Nexus CLI writes Cursor's `state.vscdb` directly: your key goes to its secure storage, the base
 URL points at Fireworks, and Fireworks models are registered per mode. `--model <id>` applies
 to every mode you already have (it never invents modes). While connected, **only Fireworks
 models answer** — Cursor's built-ins are hidden until `nexus cursor off`, which removes only
-what Nexus added. `--db-path <path>` for a non-default database (e.g. Insiders).
+what Nexus CLI added. `--db-path <path>` for a non-default database (e.g. Insiders).
 
 ```bash
 nexus cursor --api-key fw_...
@@ -286,7 +292,7 @@ nexus cursor off
 
 Adds a `Fireworks` provider to `chatLanguageModels.json`; your key is **not** in that file —
 it lives encrypted (Electron `safeStorage`) in VS Code's `state.vscdb` under a
-`chat.lm.secret.fw-*` id. On Linux that needs `libsecret` for real encryption (Nexus writes
+`chat.lm.secret.fw-*` id. On Linux that needs `libsecret` for real encryption (Nexus CLI writes
 either way, with a warning). `off` restores the JSON exactly and deletes the secret row;
 providers you set up yourself are untouched. `--vscode-path <path>` for a non-default file.
 
@@ -300,7 +306,7 @@ nexus vscode off
 
 Adds one `fc-` provider (with its model rows) to the desktop app's `~/.copilot/data.db`;
 your key rides as an `Authorization` header on that row (the file is owner-only). Your
-built-in Copilot models keep working alongside it, and `off` deletes exactly Nexus's rows.
+built-in Copilot models keep working alongside it, and `off` deletes exactly Nexus CLI's rows.
 BYOK models in the app don't get image input, the hover Context row, or AI-credits pricing.
 
 > **Quit GitHub Copilot before `on` or `off`**, same rule as Cursor.
@@ -344,8 +350,9 @@ nexus deepseek off
 
 ## Claude Desktop
 
-Runs Claude Desktop's Chat, Cowork, and Code surfaces on Fireworks models, starting on
-`auto`, with the Fireworks line-up and per-model effort menus in the picker.
+Runs Claude Desktop's Chat, Cowork, and Code surfaces on Fireworks models, with the
+Fireworks line-up and per-model effort menus in the picker. Family defaults start on
+`auto` for Opus and Fable, `glm-latest` for Sonnet, and `glm-flash-latest` for Haiku.
 
 ```bash
 nexus claude-desktop on                # switch Desktop to Fireworks; imports your connectors
@@ -356,7 +363,7 @@ nexus claude-desktop off               # restore your previous setup
 
 Quit and reopen Desktop after `on`/`off`. Requires macOS or Linux and a stored credential
 (`nexus login`). Linux is unofficial: Anthropic documents Desktop's third-party mode for
-macOS and Windows only, but the Linux build ships the same mechanism and Nexus drives it
+macOS and Windows only, but the Linux build ships the same mechanism and Nexus CLI drives it
 the same way.
 
 **How it works.** `on` writes a third-party inference provider profile (Desktop's own
@@ -365,7 +372,7 @@ on Linux) that maps model names and mirrors the model catalog. The shim auto-sta
 login; if it's ever down, `nexus claude-desktop status` says so and `on` brings it back. On
 Linux, `on` needs a systemd user session (the normal case when logged in).
 
-**Connectors are managed through Nexus** — Desktop's in-app connector browser is suppressed
+**Connectors are managed through Nexus CLI** — Desktop's in-app connector browser is suppressed
 in third-party mode:
 
 - `on` imports connectors from your session history, previous Desktop config, and claude.ai
@@ -374,10 +381,10 @@ in third-party mode:
   Your connector setup survives `off`/`on`.
 - **Google connectors** (Gmail, Drive, Calendar, BigQuery) and **Figma** can't self-register:
   register your own OAuth client once, e.g.
-  `nexus claude-desktop mcp add gmail https://gmailmcp.googleapis.com/mcp/v1 --client-id "<ID>.apps.googleusercontent.com" --client-secret "GOCSPX-..."`,
+  `nexus claude-desktop mcp add gmail https://gmailmcp.googleapis.com/mcp/v1 --client-id "<ID>.apps.googleusercontent.com" --client-secret "GOCSPX-..."` (a value travels in shell history, so treat with care),
   or use Figma's local server: `nexus claude-desktop mcp add figma-desktop http://127.0.0.1:3845/mcp`.
 
-**What changes in third-party mode** (Claude Desktop's rules, not Nexus bugs):
+**What changes in third-party mode** (Claude Desktop's rules, not Nexus CLI bugs):
 
 | Change | Workaround |
 |---|---|
@@ -392,32 +399,66 @@ in third-party mode:
 Anthropic's own summary: [third-party feature matrix](https://claude.com/docs/third-party/claude-desktop/feature-matrix).
 If `status` shows the shim NOT RESPONDING, run `nexus claude-desktop on` to restart it.
 
-## FireRouter
+## FireRouter is now Nexus Auto
 
-FireRouter (and its latency-first sibling `auto-instant`) used to route each user turn
-between closed models and Fireworks open models. Both are **retired as model selections**:
-Nexus no longer connects any harness through them, and `auto` is the routed default.
+FireRouter is now **Nexus Auto**, model ID `auto`: one model ID that picks a Fireworks open
+model or an Anthropic or OpenAI model for each user turn. FireRouter routes such as
+`firerouter` and `firerouter/opus`, and the latency-first `auto-instant`, are **retired as
+model selections**. `auto` is the main default across harnesses; Claude Code tier slots
+and Claude Desktop family defaults keep the exceptions described in their sections.
 
 **Selecting one fails**, on every harness (including Claude tier-slot flags):
 
 ```text
-✗ Error: --model firerouter is a FireRouter route, which is no longer supported. Use --model auto instead.
+✗ Error: --model firerouter is no longer supported. Use --model auto instead. Run: nexus claude help
 ```
 
-Nothing is written and no key is stored. Use `--model auto` for routed turns, or name a
-concrete model from `nexus model list`.
+Nothing is written and no key is stored. The replacement named in the error is flag-specific (for example, `--sonnet firerouter` says to use `--sonnet auto`). You can also name a concrete model from `nexus model list`.
 
-**Already on one?** A stored selection is moved to `auto` for you: upgrading rewrites the
-live selection on every harness, re-running `nexus <harness>` does the same, and retired
-picker rows leave with it. `status` and `off` still read a stored config, so nothing breaks
-before you upgrade.
+**Already on one?** Upgrading moves a stored FireRouter selection to `auto` on every
+harness, re-running `nexus <harness>` does the same, and retired picker rows leave with it.
+`status` and `off` still read a stored config, so nothing breaks before you upgrade.
 
-**Frontier models without FireRouter.** Claude turns are paid by Claude Code's own sign-in
-(`claude login`) or an Anthropic [Provider Key](https://docs.fireworks.ai/nexus/provider-keys);
-GPT turns by Codex's own sign-in or an OpenAI Provider Key. The `--anthropic-api-key` /
-`--openai-api-key` flags on `<harness> on` only ever served FireRouter and are retired with
-it (Claude's `--openai-api-key` still stores the key). Clear saved keys anytime with
-`nexus configure --unset anthropic-api-key` (or `--unset openai-api-key`).
+### Anthropic and OpenAI keys for Nexus Auto
+
+Nexus Auto uses an Anthropic or OpenAI model only when a credential for it reaches the
+request. Save your own keys once with `nexus auto`; Nexus CLI sends each one from every harness
+that can carry it and has no credentials of its own for that provider:
+
+```bash
+nexus auto --anthropic-api-key   # prompts for the key; saved to ~/.nexus/config.json
+nexus auto --openai-api-key      # prompts for the key
+nexus opencode                              # run each harness again to apply
+nexus auto                                  # shows which keys are saved
+nexus auto --unset openai-api-key           # clear it here and in every harness
+```
+
+| Harness | Anthropic turns | OpenAI turns |
+|---|---|---|
+| Claude Code (and Claude Agent SDK via Claude Code settings) | Claude Code's own sign-in (`claude login`, or `ANTHROPIC_API_KEY`) | Saved key |
+| Codex, ChatGPT desktop app | Saved key | Codex's own sign-in |
+| OpenCode, Pi, VS Code, Copilot CLI, DeepSeek Harness | Saved key | Saved key |
+| Claude Desktop | Saved key, sent live by the local shim | Saved key, sent live by the local shim |
+| Cursor, Copilot app | Provider Key | Provider Key |
+
+A [Provider Key](https://docs.fireworks.ai/nexus/provider-keys) on your Fireworks account
+works in every harness, with nothing stored locally.
+
+- A saved key only fills a gap: Claude Code never gets the Anthropic key (its login covers
+  Claude turns), and Codex never gets the OpenAI key (its sign-in covers GPT turns).
+- Nexus CLI writes a saved key into the harness config as an `x-anthropic-api-key` or
+  `x-openai-api-key` header (files are mode `0600`). VS Code gets it on the `auto` row
+  only. Claude Desktop's shim adds it to auto turns on the next request; after `nexus update`, the shim restarts so code updates take effect without a re-run.
+- While `nexus auto --providers fireworks` is set, saved keys stay saved but no harness
+  gets them: the next `nexus <harness>` removes them, and `nexus auto --reset` followed by
+  `nexus <harness>` sends them again.
+- Nexus CLI never sends `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` from your environment, so a
+  key exported for another tool never starts billing Anthropic or OpenAI. A harness can
+  still read its own variable: Claude Code uses `ANTHROPIC_API_KEY`, Codex signs in with an
+  OpenAI key.
+- `<harness> on` doesn't take `--anthropic-api-key` / `--openai-api-key`; it points you to
+  `nexus auto`. `nexus configure --anthropic-api-key` / `--openai-api-key` / `--unset` still
+  work but are deprecated.
 
 > The old `--router` flag is gone. Use `--model auto`. `--routing-preference` is deprecated
 > and has no effect.
@@ -437,11 +478,11 @@ Lists coding-ready serverless models plus the `-latest` router aliases
 (`glm-latest`, `kimi-fast-latest`, `minimax-latest`, …). Prefer the aliases over pinned
 versions — they follow new releases on their own. Results are cached for **1 hour**;
 offline, the last cached list is shown instead of an error. Retired routers never appear
-(see [FireRouter](#firerouter)).
+(see [Nexus Auto](#firerouter-is-now-nexus-auto)).
 
 **Short names everywhere.** `glm-latest` and full `accounts/fireworks/...` IDs both work;
 harnesses store the form they use themselves (Pi stores full IDs, most others short names).
-US-only routers take short names too (see [US-only Serverless](https://docs.fireworks.ai/serverless/us-only-serverless)):
+US-only routers take short names too, when a US router appears in your account's catalog (see [US-only Serverless](https://docs.fireworks.ai/serverless/us-only-serverless)). Check with `nexus model list`:
 
 ```bash
 nexus claude on --model kimi-k3-us
@@ -507,26 +548,30 @@ nexus <harness> status --json  Same state as JSON (for CI checks).
 nexus <harness> help         Help for that harness.
 ```
 
-Claude adds `nexus claude usage`, `nexus claude live`, and `nexus claude demo`.
+Claude adds `nexus claude usage` and `nexus claude demo`. A few plumbing commands also exist but stay out of the main flow: `nexus key export` (print a stored key), `nexus claude-desktop mcp list|add|remove|sync`, and `nexus claude demo clean`.
 
 **Global**
 
 ```text
 nexus login                  Sign in: browser (creates a key) or paste a key you have.
 nexus logout                 Clear the stored key (keychain entry + config ref).
-nexus status                 Show sign-in state, machine environment, and key storage.
-nexus harnesses              List every supported harness and whether it is connected.
+nexus status                 Show sign-in state, environment, key storage, and each harness (on/off, installed).
 nexus model list             Browse the serverless catalog (`models` is an alias).
-nexus configure              Set the provider (Azure/Foundry) and the BYOK keys.
-nexus configure --unset openai-api-key   Clear the saved OpenAI key (`--unset anthropic-api-key` for Anthropic).
-nexus auto                   Show the auto router's provider scope.
+nexus configure              Set the provider (Azure/Foundry).
+nexus auto                   Show the auto router's provider scope and saved keys.
+nexus auto --anthropic-api-key   Prompt to save an Anthropic key for Nexus Auto (`--openai-api-key` for OpenAI).
+nexus auto --unset openai-api-key      Clear a saved key here and in every harness.
 nexus auto --providers fireworks   Route auto only to Fireworks-hosted models, then run `nexus <harness>` again.
 nexus auto --reset           Back to the default scope.
-nexus update                 Update Nexus (`upgrade` is an alias).
-nexus uninstall              Switch off + restore every harness, then remove Nexus.
+nexus update                 Update Nexus CLI (`upgrade` is an alias).
+nexus uninstall              Switch off + restore every harness, then remove Nexus CLI.
 nexus --version              Print the installed CLI version (-V; --json for machine-readable).
 nexus help                   Show help (`help <topic>` or `<harness> help`).
 ```
+
+**Plumbing (used by recipes and CI):** `nexus key export [--openai | --anthropic] [--stored-only]`,
+`nexus claude-desktop mcp list|add|remove|sync`, and `nexus claude demo clean`. Use `nexus <harness> help`
+or a command's `--help` for options.
 
 `nexus auto` narrows the `auto` router globally (not per harness): with nothing saved it
 auto-selects based on your setup; `--providers fireworks` restricts it to Fireworks-hosted
@@ -535,19 +580,16 @@ Your account's model restrictions always apply first.
 
 ## Keys and storage
 
-- `~/.nexus/config.json` holds a **reference** (`{keychain:fireworks-api-key}`), never the key
-  itself. The key lives in the OS keychain, or an encrypted-file/plaintext fallback when no
-  secret service exists (`nexus status` says which).
+- **Your Fireworks key** is never stored literally in `~/.nexus/config.json`: that file holds a **reference** (`{keychain:fireworks-api-key}`). The key lives in the OS keychain, or an encrypted-file/plaintext fallback when no secret service exists (`nexus status` says which). Saved Anthropic/OpenAI Auto keys (and an Azure key you provide directly, rather than as an `$AZURE_API_KEY` reference) are the exception: they live literally in the same owner-only file (mode `0600`).
 - `login` creates a machine key in the browser or checks a pasted one live; `--paste` skips
   the question, `--with-token` reads stdin (CI), `--account <id>` targets enterprise SSO.
   On success it re-saves the key into every connected harness that keeps its own copy, so a
   rotated key reaches all of them. `logout` can also revoke the machine key server-side.
 - Some harness configs hold their own copy of the key (Claude's header, Codex, OpenCode, Pi,
   DeepSeek); Cursor and VS Code use IDE `safeStorage`. Files that hold keys are owner-only.
-- `nexus configure --unset <key>` clears a saved Anthropic/OpenAI key and removes it from
-  every harness that stored a copy (Claude Code keeps an Anthropic key it signs in with).
-- `--home <path>` overrides HOME for config lookup; `--data-dir <path>` moves the
-  backup/state folder — handy for sandboxes and tests.
+- `nexus auto --unset <key>` clears a saved Anthropic/OpenAI key and removes it from every
+  harness that stored a copy (Claude Code keeps an Anthropic key it signs in with).
+- `--home <path>` overrides HOME for config lookup. `--data-dir <path>` moves the backup/state folder, but only on harnesses that take it (Claude Code, OpenCode, Codex/`chatgpt`, Pi, Copilot CLI, and DeepSeek). Handy for sandboxes and tests.
 
 **`FIREWORKS_API_KEY` interaction.** When it's set, `login` uses it without copying it into
 secret storage, and combining `login` with a key-saving option fails before changing
@@ -565,9 +607,9 @@ anything. Unset it first. `<harness> on` may still read, save, and bake it into 
 | Claude Code shows a scary cost estimate | It uses [Anthropic list prices](#pricing-estimates). Check `nexus claude status` for Fireworks rates. |
 | Claude session breaks after pasting an image | A [text-only](#text-only-models-and-images) model was active. `/rewind`, then pick a vision model. |
 | A harness gets 401s after you rotated your key | Run `nexus login` — it re-saves the new key everywhere. Quit VS Code first. |
-| `login` fails with a key-storage conflict | `FIREWORKS_API_KEY` is set. Unset it so Nexus can store a key. |
+| `login` fails with a key-storage conflict | `FIREWORKS_API_KEY` is set. Unset it so Nexus CLI can store a key. |
 | ChatGPT app thread ignores Fireworks models | Threads keep the provider they started on. Start a new thread (see [Codex](#codex)). |
-| Something else | `nexus status` shows sign-in, environment, storage, and every harness's state. |
+| Something else | `nexus status` shows sign-in, environment, storage, and whether each harness is on and installed. |
 
 ### Text-only models and images
 
@@ -584,7 +626,8 @@ nexus uninstall --force   # no questions (CI / scripts)
 ```
 
 Upgrades leave your settings alone apart from re-saving keys and small forward migrations
-(VS Code's provider `apiType`, Claude's `ENABLE_TOOL_SEARCH`, catalog refresh in each
+(VS Code's provider `apiType`, Claude's `ENABLE_TOOL_SEARCH`, removing the Claude telemetry
+opt-outs older versions set, catalog refresh in each
 picker, Codex's sign-in mode, and moving retired-router selections to `auto`). The final
 step runs in a fresh process, so migrations come from the new version.
 

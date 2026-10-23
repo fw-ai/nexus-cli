@@ -35,7 +35,7 @@ export const HARNESS_ALIASES = Object.freeze({
 
 /**
  * Every command that connects a harness, in help order. `featured` rows are the
- * ones `login` suggests next; `nexus harnesses` lists them all.
+ * ones `login` suggests next; `nexus status` lists them all.
  * @type {ReadonlyArray<Readonly<{ command: string, name: string, featured?: boolean }>>}
  */
 export const HARNESS_COMMANDS = Object.freeze([

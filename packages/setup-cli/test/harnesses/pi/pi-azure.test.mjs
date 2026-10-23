@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 
 import { PI_AZURE_PROVIDER, piSettingsPath, piModelsPath } from "../../../lib/harnesses/pi/core.mjs";
 import { lookupAzureFoundryModelLimits } from "../../../lib/fireworks/azure-core.mjs";
-import { isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
+import { harnessTestArgs, isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
 
 const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "nexus.mjs");
 const AZURE_ENDPOINT = "https://msft-fw-foundry-resource.services.ai.azure.com";
@@ -17,7 +17,7 @@ const AZURE_KEY = "azure-test-key-1234567890";
 function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) { seedOnCommandCatalog(env.HOME, args); }
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [CLI, ...harnessTestArgs(args)], {
       env: { ...process.env, FIREWORKS_API_KEY: "", AZURE_API_KEY: "", NEXUS_SECRET_STORE: "memory", NEXUS_TEST: "1", ...env, HOME: isolatedChildHome(env) },
       stdio: ["ignore", "pipe", "pipe"],
     });

@@ -1033,7 +1033,7 @@ describe("cursor harness integration", () => {
         { home, env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(result.stderr, /is no longer supported/);
       assert.notEqual(cursorCurrentModelId(readBlob(dbPath), CURSOR_DEFAULT_MODE), "firerouter");
     });
   });
@@ -1073,7 +1073,7 @@ describe("cursor harness integration", () => {
         { home, env: { FIREWORKS_API_KEY: "" } },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /FireRouter is not supported in Cursor Azure mode/);
+      assert.match(result.stderr, /--model firerouter is no longer supported\. Use --model auto instead/);
       assert.doesNotMatch(result.stderr, /needs workspace BYOK/);
     });
   });
@@ -1090,7 +1090,7 @@ describe("cursor harness integration", () => {
         { home, env: { FIREWORKS_API_KEY: "" } },
       );
       assert.notEqual(selectOn.code, 0);
-      assert.match(selectOn.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(selectOn.stderr, /is no longer supported/);
       assert.notEqual(
         cursorCurrentModelId(readBlob(dbPath), CURSOR_DEFAULT_MODE),
         "firerouter/kimi-k3",
@@ -1110,7 +1110,7 @@ describe("cursor harness integration", () => {
           { home, env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
         );
         assert.notEqual(result.code, 0, model);
-        assert.match(result.stderr, /is a FireRouter route, which is no longer supported/, model);
+        assert.match(result.stderr, /is no longer supported/, model);
         assert.notEqual(cursorCurrentModelId(readBlob(dbPath), CURSOR_DEFAULT_MODE), model);
       }
     });
@@ -1128,7 +1128,7 @@ describe("cursor harness integration", () => {
         { home, env: { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "sk-ant-configured-0000", OPENAI_API_KEY: "" } },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(result.stderr, /is no longer supported/);
       assert.notEqual(cursorCurrentModelId(readBlob(dbPath), CURSOR_DEFAULT_MODE), "firerouter");
     });
   });
@@ -1207,6 +1207,10 @@ describe("migrateCursorFirerouterOnUpgrade", () => {
       }), { openAIKey: "fw_test_key_12345" });
       await writeGlobalConfig(home, { harnesses: { cursor: { enabled: true, provider: "fireworks" } } });
 
+      await assert.rejects(
+        migrateCursorFirerouterOnUpgrade(home, { isRunning: () => true }),
+        /Cursor is running/,
+      );
       assert.equal(await migrateCursorFirerouterOnUpgrade(home, { isRunning: () => false }), true);
       const blob = readBlob(dbPath);
       assert.equal(cursorCurrentModelId(blob, CURSOR_DEFAULT_MODE), "nexus/auto");

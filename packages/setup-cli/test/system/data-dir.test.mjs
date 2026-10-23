@@ -7,8 +7,10 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
+import * as dataDirModule from "../../lib/system/data-dir.mjs";
 import {
   dataDirMigrationNote,
+  hasForeignDataDir,
   isNexusDataDir,
   migrateLegacyDataDir,
 } from "../../lib/system/data-dir.mjs";
@@ -151,7 +153,9 @@ describe("migrateLegacyDataDir", () => {
       await mkdir(path.join(home, ".nexus"));
       await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
 
+      assert.equal(hasForeignDataDir(home), true);
       assert.equal(migrateLegacyDataDir(home), "foreign");
+      assert.equal(hasForeignDataDir(home), true, "the peek does not change anything");
       assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"]);
       assert.ok((await lstat(path.join(home, ".fireconnect"))).isDirectory());
 
@@ -159,6 +163,16 @@ describe("migrateLegacyDataDir", () => {
       assert.equal(result.code, 1);
       assert.match(result.stderr, /~\/\.nexus belongs to another program/);
       assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"]);
+    });
+  });
+
+  it("does not report a foreign directory once the rename can proceed", async () => {
+    await withTempHome("data-dir-not-foreign-", async (home) => {
+      assert.equal(hasForeignDataDir(home), false, "nothing installed");
+      await mkdir(path.join(home, ".fireconnect"));
+      assert.equal(hasForeignDataDir(home), false, "no ~/.nexus yet");
+      await mkdir(path.join(home, ".nexus"));
+      assert.equal(hasForeignDataDir(home), false, "an empty ~/.nexus is ours to fill");
     });
   });
 
@@ -177,6 +191,115 @@ describe("migrateLegacyDataDir", () => {
     });
   });
 
+  it("recognizes the cache and state files its own writers leave in a fresh ~/.nexus", async () => {
+    await withTempHome("data-dir-owned-files-", async (home) => {
+      const dir = path.join(home, ".nexus");
+      await mkdir(dir);
+      // Each name can be the whole directory when a writer runs before the
+      // rename migration does: the catalog and price caches
+      // refresh on ordinary commands, so either can create ~/.nexus first.
+      // The names are pinned literally here, not read back from the export,
+      // so dropping one from the lib list fails this test instead of
+      // silently shrinking it; the fallback keeps the test runnable (and
+      // failing) against code that predates the export.
+      const ownedFilenames = [
+        "key-storage.json",
+        "secret-backend.json",
+        "rename-complete",
+        "rename-announced",
+        "catalog-cache.json",
+        "list-price-cache.json",
+        "codex-stock-models.json",
+        "update-check.json",
+        "update-check.lock",
+        "release-notes.json",
+        "minted-key.json",
+        "demo.json",
+        ".api-key",
+        ".secret-memory",
+      ];
+      assert.deepEqual(
+        [...(dataDirModule.NEXUS_OWNED_FILENAMES ?? ownedFilenames)].filter((name) => !["cli", "claude-desktop", "statusline-refresh"].includes(name)),
+        ownedFilenames,
+      );
+      for (const filename of ownedFilenames) {
+        await rm(dir, { recursive: true, force: true });
+        await mkdir(dir);
+        await writeFile(path.join(dir, filename), "{}\n");
+        assert.equal(isNexusDataDir(dir), true, `a lone ${filename} is ours`);
+      }
+      // Account-suffixed memory stores are ours too.
+      await rm(dir, { recursive: true, force: true });
+      await mkdir(dir);
+      await writeFile(path.join(dir, ".secret-memory-example-account"), "{}\n");
+      assert.equal(isNexusDataDir(dir), true, "a suffixed .secret-memory file is ours");
+      // Directories left by writers that never run the migration — the
+      // installer checkout, the Claude Desktop shim, the status line
+      // helper — count the same way.
+      for (const dirname of ["cli", "claude-desktop", "statusline-refresh"]) {
+        await rm(dir, { recursive: true, force: true });
+        await mkdir(path.join(dir, dirname), { recursive: true });
+        assert.equal(isNexusDataDir(dir), true, `a lone ${dirname}/ is ours`);
+      }
+      // A name no Nexus writer produces is still someone else's directory.
+      await rm(dir, { recursive: true, force: true });
+      await mkdir(dir);
+      await writeFile(path.join(dir, "settings.ini"), "other=1\n");
+      assert.equal(isNexusDataDir(dir), false, "an unrecognized file stays foreign");
+      // A generic owned name beside foreign files does not claim the dir:
+      // another program's demo.json must not let Nexus merge into it (and
+      // later delete it on uninstall). A distinctive name still does.
+      await writeFile(path.join(dir, "demo.json"), "{}\n");
+      assert.equal(isNexusDataDir(dir), false, "a generic name beside foreign files stays foreign");
+      await writeFile(path.join(dir, "key-storage.json"), "{}\n");
+      assert.equal(isNexusDataDir(dir), true, "a distinctive name claims the dir");
+      // A harness-less config shape does not claim the dir on its own.
+      await rm(dir, { recursive: true, force: true });
+      await mkdir(dir);
+      await writeFile(path.join(dir, "config.json"), JSON.stringify({ harnesses: null }));
+      await writeFile(path.join(dir, "settings.ini"), "other=1\n");
+      assert.equal(isNexusDataDir(dir), false, "harnesses: null is not our config shape");
+      await rm(path.join(dir, "settings.ini"));
+      await writeFile(path.join(dir, "config.json"), "{oops");
+      await writeFile(path.join(dir, "catalog-cache.json"), "{}\n");
+      assert.equal(isNexusDataDir(dir), true, "a malformed config beside our cache does not poison the dir");
+    });
+  });
+
+  it("migrates when the status line helper beat the rename to ~/.nexus", async () => {
+    await withTempHome("data-dir-statusline-race-", async (home) => {
+      // The status line helper runs under Claude Code, never through the
+      // CLI entry that migrates, and claims its session marker under
+      // ~/.nexus/statusline-refresh before any cache refresh succeeds.
+      await mkdir(path.join(home, ".fireconnect"));
+      await writeFile(path.join(home, ".fireconnect/config.json"), NEXUS_CONFIG);
+      await mkdir(path.join(home, ".nexus/statusline-refresh"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/statusline-refresh/session.refreshed"), "{}\n");
+
+      assert.equal(migrateLegacyDataDir(home), "moved");
+      assert.equal(await readFile(path.join(home, ".nexus/config.json"), "utf8"), NEXUS_CONFIG);
+      assert.equal(await readlink(path.join(home, ".fireconnect")), ".nexus");
+    });
+  });
+
+  it("migrates when the caches beat the rename to ~/.nexus instead of wedging the upgrade", async () => {
+    await withTempHome("data-dir-cache-race-", async (home) => {
+      // The observed machine's state: the only ~/.nexus contents were the
+      // two caches an early 0.10.0 command wrote, and every later upgrade
+      // failed with "belongs to another program".
+      await mkdir(path.join(home, ".fireconnect"));
+      await writeFile(path.join(home, ".fireconnect/config.json"), NEXUS_CONFIG);
+      await mkdir(path.join(home, ".nexus"));
+      await writeFile(path.join(home, ".nexus/catalog-cache.json"), "{}\n");
+      await writeFile(path.join(home, ".nexus/list-price-cache.json"), "{}\n");
+
+      assert.equal(migrateLegacyDataDir(home), "moved");
+      assert.equal(await readFile(path.join(home, ".nexus/config.json"), "utf8"), NEXUS_CONFIG);
+      assert.equal(await readlink(path.join(home, ".fireconnect")), ".nexus");
+      assert.equal(migrateLegacyDataDir(home), "none");
+    });
+  });
+
   it("finishes a rename whose earlier steps failed on the next command, then stops", async () => {
     await withTempHome("data-dir-rename-retry-", async (home) => {
       await mkdir(path.join(home, ".nexus"), { recursive: true });
@@ -192,7 +315,7 @@ describe("migrateLegacyDataDir", () => {
       assert.doesNotMatch(await readFile(opencodePath, "utf8"), /fireconnect\/v/);
       assert.equal(await lstat(path.join(home, ".nexus/rename-complete")).then(() => true), true);
       const again = await runFireconnect(["status"], { HOME: home });
-      assert.doesNotMatch(again.stderr, /identify as Nexus/);
+      assert.doesNotMatch(again.stderr, /identify as Nexus CLI/);
     });
   });
 

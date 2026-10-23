@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { after, before, describe, it } from "node:test";
+import { HARNESSES } from "../../lib/harness/id.mjs";
 import { runCli, runCliJson, seedKeychainConfig, withTempHome, writeClaudeSettings } from "../helpers.mjs";
 
 const VALID_KEY = "fw_status_test_key_0000000000000000";
@@ -152,7 +153,7 @@ describe("fireconnect status", () => {
   it("help lists status and has a status topic", async () => {
     await withTempHome("status-help-", async (home) => {
       const help = await runCli(["help"], { home });
-      assert.match(help.stdout, /status\s+Show sign-in state, machine environment/);
+      assert.match(help.stdout, /status\s+Show sign-in state, environment, key storage, and each harness/);
       const topic = await runCli(["help", "status"], { home });
       assert.match(topic.stdout, /--json/);
     });
@@ -172,13 +173,94 @@ describe("fireconnect status", () => {
       assert.match(result.stdout, /Harnesses:/);
       // The summary lists each harness with a plain on/off state (no key-source
       // detail). Claude is on via ground truth despite the stale flag.
-      assert.match(result.stdout, /^\s+claude\s+Claude Code\s+on$/m);
+      assert.match(result.stdout, /^\s+claude\s+Claude Code\s+on\s+(installed|not detected)$/m);
       assert.doesNotMatch(result.stdout, /X-Fireworks-Api-Key header in settings\.json/);
 
       // The --json path reports the same ground-truth `enabled: true`.
       const json = await runCliJson(["status", "--json"], { home, env: gatewayEnv });
       const claude = json.json.perHarness.find((h) => h.id === "claude");
       assert.equal(claude?.enabled, true);
+    });
+  });
+
+  it("--json prints every harness with a boolean `installed` even when signed out", async () => {
+    // Callers read install state from this JSON regardless of the exit code.
+    await withTempHome("status-json-signed-out-", async (home) => {
+      const bin = path.join(home, "bin");
+      await mkdir(bin);
+      await mkdir(path.join(home, ".pi", "agent", "sessions"), { recursive: true });
+      await writeFile(path.join(home, ".pi", "agent", "sessions", "s.jsonl"), "");
+      const env = {
+        ...gatewayEnv,
+        PATH: bin,
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+      };
+      const result = await runCliJson(["status", "--json"], { home, env });
+      assert.equal(result.code, 1, "signed out exits 1");
+      assert.equal(result.json.auth.signedIn, false);
+      assert.deepEqual(result.json.perHarness.map((h) => h.id).sort(), [...HARNESSES].sort());
+      for (const h of result.json.perHarness) {
+        assert.equal(typeof h.installed, "boolean", `${h.id}.installed`);
+        assert.equal(typeof h.enabled, "boolean", `${h.id}.enabled`);
+      }
+      assert.equal(result.json.perHarness.find((h) => h.id === "pi").installed, true);
+    });
+  });
+
+  it("--json still prints every harness's `installed` when the gateway is unreachable", async () => {
+    await withTempHome("status-json-offline-", async (home) => {
+      await seedKeychainConfig(home, VALID_KEY);
+      const bin = path.join(home, "bin");
+      await mkdir(bin);
+      const env = {
+        ...gatewayEnv,
+        // Nothing listens on port 9 (discard), so the key check can't connect.
+        NEXUS_GATEWAY_URL: "http://127.0.0.1:9",
+        PATH: bin,
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+      };
+      const result = await runCliJson(["status", "--json"], { home, env });
+      assert.equal(result.code, 0, result.stderr);
+      assert.equal(result.json.auth.signedIn, null);
+      assert.equal(result.json.auth.reason, "unreachable");
+      assert.deepEqual(result.json.perHarness.map((h) => h.id).sort(), [...HARNESSES].sort());
+      for (const h of result.json.perHarness) {
+        assert.equal(typeof h.installed, "boolean", `${h.id}.installed`);
+      }
+    });
+  });
+
+  it("shows whether each harness is installed, next to on/off", async () => {
+    await withTempHome("status-installed-", async (home) => {
+      await seedKeychainConfig(home, VALID_KEY);
+      const bin = path.join(home, "bin");
+      await mkdir(bin);
+      // Session history only Pi writes; an empty ~/.dsh is a leftover, not an install.
+      await mkdir(path.join(home, ".pi", "agent", "sessions"), { recursive: true });
+      await writeFile(path.join(home, ".pi", "agent", "sessions", "s.jsonl"), "");
+      await mkdir(path.join(home, ".dsh"));
+      const env = {
+        ...gatewayEnv,
+        PATH: bin,
+        XDG_CONFIG_HOME: path.join(home, ".config"),
+        XDG_DATA_HOME: path.join(home, ".local", "share"),
+        DSH_HOME: "",
+      };
+
+      const result = await runCli(["status"], { home, env });
+      assert.equal(result.code, 0, result.stderr);
+      assert.match(result.stdout, /^\s+pi\s+Pi\s+off\s+installed$/m);
+      assert.match(result.stdout, /^\s+deepseek\s+DeepSeek Harness \(dsh\)\s+off\s+not detected$/m);
+
+      const json = await runCliJson(["status", "--json"], { home, env });
+      const byId = new Map(json.json.perHarness.map((h) => [h.id, h]));
+      assert.equal(byId.get("pi")?.installed, true);
+      assert.equal(byId.get("deepseek")?.installed, false);
+      for (const h of json.json.perHarness) {
+        assert.equal(typeof h.installed, "boolean", h.id);
+      }
     });
   });
 });

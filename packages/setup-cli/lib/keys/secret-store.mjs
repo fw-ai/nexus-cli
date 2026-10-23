@@ -37,6 +37,7 @@ export {
 
 import { writeFileAtomic } from "../io/atomic-write.mjs";
 import { KeyringTimeoutError, withKeyringTimeout } from "./keyring-timeout.mjs";
+import { macKeychainItemExists } from "./keychain-item-probe.mjs";
 import { shouldPreferFileBackendOnLinux } from "../config/secret-storage-policy.mjs";
 import { fileBackendDetectionResult } from "./secret-backend-detect.mjs";
 import { createSecretFallbackHandlers } from "./secret-fallbacks.mjs";
@@ -59,6 +60,7 @@ const CROSS_KEYCHAIN_BACKEND_ENV = "TS_KEYRING_BACKEND";
 
 /** Backend ids cross-keychain exposes. */
 const NATIVE_BACKEND_IDS = ["native-macos", "macos", "native-windows", "windows", "native-linux", "secret-service"];
+const MACOS_BACKEND_IDS = ["native-macos", "macos"];
 const FILE_BACKEND_ID = "file";
 const NULL_BACKEND_ID = "null";
 
@@ -411,7 +413,7 @@ async function storeSecretInSecureBackend(value, home, account = SECRET_ACCOUNT)
         return;
       }
       throw new Error(
-        "Nexus's secret-storage module (cross-keychain) could not be loaded "
+        "Nexus CLI's secret-storage module (cross-keychain) could not be loaded "
           + "and the encrypted-file fallback is unavailable (set HOME or XDG_DATA_HOME).",
       );
     }
@@ -512,10 +514,56 @@ async function readSecretFromSecureBackend(home, account = SECRET_ACCOUNT) {
 }
 
 /**
+ * Whether the macOS keychain holds the item, answered without reading its
+ * data (see macKeychainItemExists). null whenever the key may live elsewhere —
+ * the encrypted file, another OS's keychain, a backend picked by
+ * TS_KEYRING_BACKEND — or the lookup can't answer; callers then read instead.
+ * @param {string} resolvedHome
+ * @returns {Promise<boolean | null>}
+ */
+async function probeMacKeychainItem(resolvedHome, account) {
+  return withHomeScopedEnv(resolvedHome, async () => {
+    if (await fileFallbackCommitted(resolvedHome)) {
+      return null;
+    }
+    const keychain = await loadKeychainModule();
+    if (!keychain || (await secureBackendKind(resolvedHome)) !== "keychain") {
+      return null;
+    }
+    try {
+      await ensureBackendEnv(keychain);
+    } catch {
+      return null;
+    }
+    let backendId = process.env[CROSS_KEYCHAIN_BACKEND_ENV];
+    if (!backendId) {
+      try {
+        backendId = pickNativeBackendId(await keychain.listBackends());
+      } catch {
+        return null;
+      }
+    }
+    if (!MACOS_BACKEND_IDS.includes(backendId ?? "")) {
+      return null;
+    }
+    return macKeychainItemExists(SECRET_SERVICE, account);
+  });
+}
+
+/**
  * @param {string} [home]
  * @returns {Promise<boolean>}
  */
 async function hasSecretInSecureBackend(home, account = SECRET_ACCOUNT) {
+  const resolvedHome = resolveHome(home);
+  const cacheKey = secureCacheKey(resolvedHome, account);
+  if (!secureReadCache.has(cacheKey)) {
+    const exists = await probeMacKeychainItem(resolvedHome, account);
+    if (exists !== null) {
+      lastReadError = null;
+      return exists;
+    }
+  }
   const value = await readSecretFromSecureBackend(home, account);
   return Boolean(value?.trim());
 }
@@ -527,18 +575,21 @@ async function deleteSecretFromSecureBackend(home, account = SECRET_ACCOUNT) {
   const resolvedHome = resolveHome(home);
   secureReadCache.delete(secureCacheKey(resolvedHome, account));
   await withHomeScopedEnv(resolvedHome, async () => {
-    const keychain = await fileFallbackCommitted(resolvedHome) ? null : await loadKeychainModule();
-    if (!keychain) {
-      if (builtinFileStoreAvailable()) {
-        try {
-          await builtinDeletePassword(SECRET_SERVICE, account);
-        } catch {
-          // Missing entry is fine.
-        }
+    // Delete from both stores unconditionally: a write that fell back to the
+    // file after the keychain accepted (then failed readback) leaves a copy
+    // in each, and deleting only the cached backend resurrects the other
+    // once the storage cache is cleared. Each delete is best-effort.
+    if (builtinFileStoreAvailable()) {
+      try {
+        await builtinDeletePassword(SECRET_SERVICE, account);
+      } catch {
+        // Missing entry is fine.
       }
+    }
+    const keychain = await loadKeychainModule();
+    if (!keychain) {
       return;
     }
-
     try {
       await ensureBackendEnv(keychain);
       await withKeyringTimeout(
@@ -850,13 +901,13 @@ export async function detectSecretBackend(home = process.env.HOME ?? "") {
   if (!keychain) {
     if (builtinFileStoreAvailable()) {
       return fileBackendDetectionResult(secretsFilePath(), {
-        error: "The cross-keychain secret module could not be loaded; using the built-in encrypted-file fallback. Reinstall Nexus (`nexus update`) to restore full keychain support.",
+        error: "The cross-keychain secret module could not be loaded; using the built-in encrypted-file fallback. Reinstall Nexus CLI (`nexus update`) to restore full keychain support.",
       });
     }
     return {
       backend: "unavailable",
       label: "Unavailable",
-      error: "The cross-keychain secret module could not be loaded. Reinstall Nexus (`nexus update`).",
+      error: "The cross-keychain secret module could not be loaded. Reinstall Nexus CLI (`nexus update`).",
     };
   }
 
@@ -864,7 +915,7 @@ export async function detectSecretBackend(home = process.env.HOME ?? "") {
   const explicit = readKeyStorageOverride();
   if (!forced && cached === FILE_BACKEND_ID && builtinFileStoreAvailable()) {
     return fileBackendDetectionResult(secretsFilePath(), {
-      error: "The OS keychain could not store the key, so Nexus uses the encrypted file. Run `nexus update` once the keychain works to move the key there.",
+      error: "The OS keychain could not store the key, so Nexus CLI uses the encrypted file. Run `nexus update` once the keychain works to move the key there.",
     });
   }
   // Prefer cross-keychain's own data root so the reported location matches

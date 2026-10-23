@@ -49,14 +49,13 @@ export default defineHarnessProfile({
   // The provider row carries a headersJson map, so attribution rides along with
   // the Authorization header.
   telemetryHeaders: true,
-  enable: async ({ ctx, paths, effectiveKey, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
+  enable: async ({ ctx, paths, effectiveKey, modelId, telemetryHeaders = {} }) => {
     // Register the preferred catalog; a TTL-cached snapshot serves offline. A
     // cold start with no network must fail the `on` rather than register from
     // an empty model list. When no catalog entries are available at all, treat
     // it as unavailable so a previous online run's registered models are kept.
     const { ids: extraModels, available: catalogAvailable } = await loadRegisterableModels({
       apiKey: effectiveKey,
-      includeFirerouter,
     });
     await ensureCopilotStopped({ force: ctx.force });
     return enableCopilotFireworks({

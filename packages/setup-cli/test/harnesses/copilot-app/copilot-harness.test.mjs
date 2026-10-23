@@ -285,6 +285,24 @@ describeIf(HAS_SQLITE, "copilot enable/disable (core)", () => {
     });
   });
 
+  itIfSqlite("re-on drops retired rows even when the catalog is unavailable", async () => {
+    await withCopilotDb(async (dbPath) => {
+      const { providerId } = await enableCopilotFireworks({
+        dbPath, apiKey: FW_OPENCODE_KEY, extraModels: ["glm-5p2"],
+      });
+      const { insertCopilotProviderModel } = await import("../../../lib/harnesses/copilot-app/sqlite.mjs");
+      await insertCopilotProviderModel(dbPath, {
+        providerId,
+        model: { id: "firerouter/opus", displayName: "FireRouter", wireModel: "firerouter/opus" },
+      });
+      const again = await enableCopilotFireworks({
+        dbPath, apiKey: FW_OPENCODE_KEY, extraModels: [], catalogUnavailable: true,
+      });
+      assert.ok(!providerModels(dbPath, again.providerId).some((id) => id.startsWith("firerouter")));
+      assert.ok(providerModels(dbPath, again.providerId).includes("glm-5p2"));
+    });
+  });
+
   itIfSqlite("plain re-on prunes delisted rows and adds newly served ones", async () => {
     await withCopilotDb(async (dbPath) => {
       await enableCopilotFireworks({
@@ -551,11 +569,19 @@ describe("migrateCopilotAppFirerouterOnUpgrade", () => {
       });
       await writeGlobalConfig(home, { harnesses: { "copilot-app": { enabled: true, provider: "fireworks" } } });
 
+      // Work to do while the app is running: skip loudly, change nothing.
+      await assert.rejects(
+        migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => true }),
+        /Copilot app is running/,
+      );
+      assert.ok(providerModels(dbPath, providerId).some((id) => id.startsWith("firerouter")));
+
       assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => false }), true);
       const remaining = providerModels(dbPath, providerId);
       assert.ok(remaining.includes("glm-5p2"), remaining.join(","));
       assert.ok(!remaining.some((id) => id.startsWith("firerouter")), remaining.join(","));
       assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => false }), false);
+      // Nothing left to do while running: a quiet no-op, not a skip.
       assert.equal(await migrateCopilotAppFirerouterOnUpgrade(home, { isRunning: () => true }), false);
     });
   });

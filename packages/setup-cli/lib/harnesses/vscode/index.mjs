@@ -122,14 +122,12 @@ export default defineHarnessProfile({
     modelId,
     byokHeaders,
     telemetryHeaders,
-    includeFirerouter,
   }) => {
     // Register the preferred catalog; firerouter registers only when explicitly requested. A
     // TTL-cached snapshot serves offline; a cold start with no network must
     // fail the `on` rather than register from an empty model list.
     const { ids: catalogModelIds, available: catalogAvailable } = await loadRegisterableModels({
       apiKey: effectiveKey,
-      includeFirerouter,
     });
     await relocateLegacyVscodeBackups({ home: ctx.home, dataDir: paths.dataDir });
     await ensureVscodeStopped({ force: ctx.force });
@@ -151,7 +149,7 @@ export default defineHarnessProfile({
       printNote(
         "Warning: VS Code will obfuscate (not encrypt) the key because Secret Service / libsecret is unavailable for VS Code's Electron safeStorage. "
           + "Install gnome-keyring + secret-service for real encryption. "
-          + "(Nexus's own API key storage shown in `nexus status` is separate.)",
+          + "(Nexus CLI's own API key storage shown in `nexus status` is separate.)",
       );
     } else if (result.obfuscatedKey) {
       printNote(linuxSafeStorageObfuscatedKeyNote(result.variant ?? "stable"));

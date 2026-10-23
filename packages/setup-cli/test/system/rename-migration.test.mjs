@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, readlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, readFile, readlink, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 
@@ -10,6 +10,9 @@ import {
   findFireconnectProvider,
   upsertFireconnectProvider,
 } from "../../lib/harnesses/copilot-app/sqlite.mjs";
+import { RENAME_KEY_MESSAGE, renameHeadline } from "../../lib/system/data-dir.mjs";
+
+const RENAME_HEADLINE = renameHeadline();
 import { runRenameMigration } from "../../lib/system/rename-migration.mjs";
 import { telemetryReferer } from "../../lib/telemetry/request-headers.mjs";
 import { itIfSqlite, runFireconnect, withTempHome } from "../helpers.mjs";
@@ -46,7 +49,7 @@ describe("runRenameMigration", () => {
         "Replaced the `fireconnect` command with `nexus`.",
         "Removed the old fireconnect shell hook from your shell profile. Open a new terminal to pick up the change.",
         "Pointed Claude Code's status line at ~/.nexus.",
-        "Updated your harness configs to identify as Nexus — restart them to pick it up.",
+        "Updated your harness configs to identify as Nexus CLI — restart them to pick it up.",
       ]);
       const opencode = JSON.parse(await readFile(path.join(home, ".config/opencode/opencode.json"), "utf8"));
       assert.equal(opencode.provider["fireworks-ai"].options.headers["HTTP-Referer"], telemetryReferer());
@@ -138,7 +141,7 @@ describe("runRenameMigration", () => {
 
       const notes = await runRenameMigration(home, { isCopilotAppRunning: () => false });
 
-      assert.deepEqual(notes, ["Updated your harness configs to identify as Nexus — restart them to pick it up."]);
+      assert.deepEqual(notes, ["Updated your harness configs to identify as Nexus CLI — restart them to pick it up."]);
       const provider = await findFireconnectProvider(dbPath);
       const headers = JSON.parse(JSON.parse(provider.settings_json).headersJson);
       assert.deepEqual(headers, {
@@ -163,8 +166,60 @@ describe("runRenameMigration", () => {
 
       const notes = await runRenameMigration(home, { isCopilotAppRunning: () => true });
 
-      assert.deepEqual(notes, ["Quit GitHub Copilot and run `nexus copilot-app on` once so it identifies as Nexus too."]);
+      assert.deepEqual(notes, ["Quit GitHub Copilot and run `nexus copilot-app on` once so it identifies as Nexus CLI too."]);
       assert.equal((await findFireconnectProvider(dbPath)).settings_json, before);
+    });
+  });
+
+  it("stops at a foreign ~/.nexus without repointing anything or marking completion", async () => {
+    await withTempHome("rename-migration-foreign-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
+      await mkdir(path.join(home, ".local/bin"), { recursive: true });
+      await writeFile(
+        path.join(home, ".local/bin/fireconnect"),
+        `exec node "${home}/.fireconnect/cli/packages/setup-cli/bin/fireconnect.mjs" "$@"\n`,
+      );
+
+      const notes = await runRenameMigration(home);
+
+      assert.deepEqual(notes, [
+        "~/.nexus belongs to another program, so your FireConnect settings stay in ~/.fireconnect. "
+        + "Rename or remove ~/.nexus, then upgrade again.",
+      ]);
+      assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"], "no marker written into the other program's directory");
+      assert.equal(await exists(path.join(home, ".local/bin/nexus")), false, "launcher not replaced");
+      assert.equal(await exists(path.join(home, ".local/bin/fireconnect")), true);
+      assert.ok((await lstat(path.join(home, ".fireconnect"))).isDirectory(), "legacy data stays put");
+
+      // And again: the foreign directory must not be misrecognized as ours
+      // on a later run (the completion marker used to flip that check).
+      assert.deepEqual(await runRenameMigration(home), notes);
+      assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"]);
+    });
+  });
+
+  it("lets finalize-install and update report the block instead of dead-ending on it", async () => {
+    await withTempHome("rename-migration-foreign-cli-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
+
+      const finalize = await runFireconnect(["finalize-install"], { HOME: home });
+      assert.equal(finalize.code, 1);
+      assert.match(finalize.stderr, /~\/\.nexus belongs to another program/);
+      assert.match(finalize.stderr, /Finalize stopped: rename or remove ~\/\.nexus/);
+      assert.doesNotMatch(finalize.stderr, /Command failed/);
+
+      const update = await runFireconnect(["update"], { HOME: home });
+      assert.equal(update.code, 1);
+      assert.match(update.stderr, /Update stopped before changing anything/);
+      assert.doesNotMatch(update.stderr, /Command failed/);
+
+      assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"]);
     });
   });
 
@@ -194,7 +249,7 @@ describe("runRenameMigration", () => {
 
       const result = await runFireconnect(["status"], { HOME: home });
 
-      assert.match(result.stderr, /FireConnect is now Nexus; use `nexus` from now on\./);
+      assert.match(result.stderr, /FireConnect is now Nexus CLI\. Use `nexus` from now on\.\nYour harnesses, key, and settings carry over unchanged\.\nFireRouter is now Nexus Auto: use the `auto` model\./);
       assert.match(result.stderr, /Replaced the `fireconnect` command with `nexus`\./);
       assert.equal(await exists(path.join(home, ".local/bin/fireconnect")), false);
       assert.equal(await exists(path.join(home, ".local/bin/nexus")), true);
@@ -202,6 +257,84 @@ describe("runRenameMigration", () => {
 
       const again = await runFireconnect(["status"], { HOME: home });
       assert.doesNotMatch(again.stderr, /FireConnect is now Nexus/);
+    });
+  });
+
+  it("paints the key message primary and the command accent when color is on", async () => {
+    await withTempHome("rename-migration-heading-color-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      await mkdir(path.join(home, ".local/bin"), { recursive: true });
+      await writeFile(
+        path.join(home, ".local/bin/fireconnect"),
+        `exec node "${home}/.fireconnect/cli/packages/setup-cli/bin/fireconnect.mjs" "$@"\n`,
+      );
+
+      const result = await runFireconnect(["status"], { HOME: home, FORCE_COLOR: "1", NEXUS_THEME: "dark" });
+
+      assert.ok(
+        result.stderr.includes(`\u001b[38;2;252;114;147m${RENAME_KEY_MESSAGE}\u001b[39m Use \u001b[38;2;240;172;214mnexus\u001b[39m from now on.\n`),
+        result.stderr,
+      );
+    });
+  });
+
+  it("uses the light-theme colors for the rename headline when NEXUS_THEME=light", async () => {
+    await withTempHome("rename-migration-heading-light-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+
+      const result = await runFireconnect(["status"], { HOME: home, FORCE_COLOR: "1", NEXUS_THEME: "light" });
+
+      assert.ok(
+        result.stderr.includes(`\u001b[38;2;191;17;83m${RENAME_KEY_MESSAGE}\u001b[39m Use \u001b[38;2;167;30;126mnexus\u001b[39m from now on.\n`),
+        result.stderr,
+      );
+    });
+  });
+
+  it("announces the rename during an older upgrader's finalize-install, then never again", async () => {
+    await withTempHome("rename-migration-headline-finalize-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      await mkdir(path.join(home, ".local/bin"), { recursive: true });
+      await writeFile(
+        path.join(home, ".local/bin/fireconnect"),
+        `exec node "${home}/.fireconnect/cli/packages/setup-cli/bin/fireconnect.mjs" "$@"\n`,
+      );
+
+      const result = await runFireconnect(["finalize-install"], { HOME: home });
+
+      const output = result.stdout + result.stderr;
+      assert.equal(output.split(RENAME_HEADLINE).length - 1, 1, output);
+      assert.ok(output.indexOf(RENAME_HEADLINE) < output.indexOf("Moved ~/.fireconnect to ~/.nexus."), output);
+      assert.match(output, /Replaced the `fireconnect` command with `nexus`\./);
+
+      const again = await runFireconnect(["status"], { HOME: home });
+      assert.ok(!again.stderr.includes(RENAME_HEADLINE), again.stderr);
+    });
+  });
+
+  it("announces the rename when the installer already moved ~/.fireconnect", async () => {
+    await withTempHome("rename-migration-headline-installer-", async (home) => {
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/config.json"), "{}\n");
+      await symlink(".nexus", path.join(home, ".fireconnect"));
+
+      const result = await runFireconnect(["finalize-install"], { HOME: home });
+
+      assert.ok((result.stdout + result.stderr).includes(RENAME_HEADLINE), result.stdout + result.stderr);
+    });
+  });
+
+  it("never announces the rename on a fresh Nexus CLI install", async () => {
+    await withTempHome("rename-migration-headline-fresh-", async (home) => {
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/config.json"), "{}\n");
+
+      const result = await runFireconnect(["finalize-install"], { HOME: home });
+
+      assert.ok(!(result.stdout + result.stderr).includes("FireConnect"), result.stdout + result.stderr);
     });
   });
 });

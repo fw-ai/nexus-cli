@@ -239,7 +239,7 @@ describe("install.sh Claude upgrade preflight", () => {
       );
       assert.match(
         result.stdout,
-        /Reconnect Claude Code through Nexus: nexus claude/,
+        /Reconnect Claude Code through Nexus CLI: nexus claude/,
       );
     });
   });
@@ -575,6 +575,17 @@ describe("install.sh names that belong to another program", () => {
     });
   });
 
+  it("stops when a generic Nexus name sits beside another program's files", async () => {
+    await withHome(async (home) => {
+      await mkdir(path.join(home, ".nexus"));
+      await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
+      await writeFile(path.join(home, ".nexus/demo.json"), "{}\n");
+      const result = await runCheck(home);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /~\/\.nexus belongs to another program/);
+    });
+  });
+
   it("goes ahead over our own launchers and data directory", async () => {
     await withHome(async (home) => {
       const ours = `#!/usr/bin/env bash\nexec node "${home}/.nexus/cli/packages/setup-cli/bin/nexus.mjs" "$@"\n`;
@@ -584,6 +595,40 @@ describe("install.sh names that belong to another program", () => {
       const result = await runCheck(home);
       assert.equal(result.status, 0, result.stderr);
     });
+  });
+
+  it("goes ahead when only the CLI's caches beat the rename to ~/.nexus", async () => {
+    await withHome(async (home) => {
+      // The same state as the data-dir test, through the installer this time:
+      // the catalog and price caches created ~/.nexus before any rename ran.
+      await mkdir(path.join(home, ".nexus"));
+      await writeFile(path.join(home, ".nexus/catalog-cache.json"), "{}\n");
+      await writeFile(path.join(home, ".nexus/list-price-cache.json"), "{}\n");
+      const result = await runCheck(home);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  });
+
+  it("goes ahead when only the status line helper's directory is in ~/.nexus", async () => {
+    await withHome(async (home) => {
+      await mkdir(path.join(home, ".nexus/statusline-refresh"), { recursive: true });
+      const result = await runCheck(home);
+      assert.equal(result.status, 0, result.stderr);
+    });
+  });
+
+  it("keeps the installer's owned list in step with the CLI's", async () => {
+    const { NEXUS_OWNED_FILENAMES } = await import("../../lib/system/data-dir.mjs");
+    const source = await readFile(INSTALL_PATH, "utf8");
+    const embedded = source.match(/const OWNED = \[([\s\S]*?)\];/)?.[1];
+    assert.ok(embedded, "foreign_data_dir embeds an OWNED list");
+    const installerNames = [...embedded.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(installerNames, [...NEXUS_OWNED_FILENAMES]);
+    const { NEXUS_STRONG_FILENAMES } = await import("../../lib/system/data-dir.mjs");
+    const embeddedStrong = source.match(/const STRONG = \[([\s\S]*?)\];/)?.[1];
+    assert.ok(embeddedStrong, "foreign_data_dir embeds a STRONG list");
+    const installerStrong = [...embeddedStrong.matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+    assert.deepEqual(installerStrong, [...NEXUS_STRONG_FILENAMES]);
   });
 });
 

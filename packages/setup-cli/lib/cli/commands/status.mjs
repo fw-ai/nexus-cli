@@ -3,9 +3,10 @@ import { keyStatusSummary, resolveFireworksKeyWithSource } from "../../keys/api-
 import { identityLabel, verifyFireworksApiKey } from "../../keys/verify-api-key.mjs";
 import { detectEnvironment } from "../../system/environment.mjs";
 import { accent } from "../../ui/term.mjs";
-import { cyan, muted, symbols } from "../../ui.mjs";
+import { muted, primary, symbols } from "../../ui.mjs";
 import { printBoolField, printField, printSectionHeader } from "../../harness/status-display.mjs";
 import { listHarnesses } from "../../harness/registry.mjs";
+import { detectInstalledHarnessesAsync } from "../../harness/detect.mjs";
 import { harnessRows, printHarnessRows } from "./harnesses.mjs";
 
 /**
@@ -32,10 +33,17 @@ export async function runStatusCommand(ctx) {
   // adapters never flip it), so it drifts from ground truth. Override each
   // entry's `enabled` from the adapter's real config — the same source
   // `<harness> status` reports — so the summary reflects what's actually routed.
-  const rows = await harnessRows(ctx, home);
+  const [connectedRows, installedIds] = await Promise.all([
+    harnessRows(ctx, home),
+    detectInstalledHarnessesAsync(home),
+  ]);
+  const installed = new Set(installedIds);
+  const rows = connectedRows.map((row) => ({ ...row, installed: installed.has(row.id) }));
   const routed = new Set(rows.filter((row) => row.connected).map((row) => row.id));
   for (const h of summary.perHarness) {
     h.enabled = routed.has(h.id);
+    // false also covers "can't tell on this platform" (see checkHarnessInstall).
+    h.installed = installed.has(h.id);
   }
   // Present harnesses in stable registry order (claude, opencode, …).
   const adapters = listHarnesses();
@@ -145,7 +153,7 @@ function printAuthLine(auth, fromEnv) {
  */
 function formatSignedInLine(auth) {
   const { email, accountId } = auth;
-  const mark = cyan(symbols.ok);
+  const mark = primary(symbols.ok);
   if (email && accountId) {
     return `${mark} Signed in as ${email} (account: ${accountId}).`;
   }
@@ -165,7 +173,7 @@ function printEnvironment(environment) {
   printField("Platform", `${environment.kind} (${environment.os.platform}/${environment.os.arch})${distro}`);
   printField("Node", environment.node.version);
   printField("Shell", environment.shell || "(unknown)");
-  printField("Nexus", `v${version}${gitInstall}`);
+  printField("Nexus CLI", `v${version}${gitInstall}`);
 }
 
 /**

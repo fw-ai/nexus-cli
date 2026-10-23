@@ -100,7 +100,7 @@ describe("Claude subagent slot carries the 1M context tag", () => {
     // New selections: resolveClaudeModelMapping is the admission gate.
     assert.throws(
       () => resolveClaudeModelMapping({ subagent: "firerouter" }),
-      /is a FireRouter route, which is no longer supported/,
+      /is no longer supported/,
     );
     // Legacy configs an earlier release wrote are still recognized (and
     // stripped) as FireRouter-owned.

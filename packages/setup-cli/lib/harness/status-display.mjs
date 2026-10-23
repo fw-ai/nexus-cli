@@ -1,4 +1,4 @@
-import { bold, dim, cyan, muted, yesNo } from "../ui.mjs";
+import { bold, dim, muted, yesNo } from "../ui.mjs";
 import { AZURE_PROVIDER_LABEL } from "../fireworks/azure-core.mjs";
 import { isFirerouterModel, isFirerouterModelPattern } from "../fireworks/model-id.mjs";
 
@@ -31,7 +31,7 @@ export function formatHarnessTitle(harnessId) {
 /** Provider is the transport/account boundary (fireworks, azure, custom, default, none). */
 export function formatProvider(provider) {
   if (provider === "fireworks") {
-    return cyan("Fireworks");
+    return "Fireworks";
   }
   if (provider === "azure") {
     return AZURE_PROVIDER_LABEL;
@@ -175,7 +175,7 @@ export function printMappingRow(slot, value, { dimValue = false, detail = "" } =
 }
 
 export function formatOnOff(enabled) {
-  return enabled ? cyan("on") : dim("off");
+  return enabled ? "on" : dim("off");
 }
 
 export function printMutedNote(text) {

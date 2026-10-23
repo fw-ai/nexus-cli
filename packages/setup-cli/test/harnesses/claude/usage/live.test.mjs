@@ -11,7 +11,7 @@ import {
   shouldRunClaudeUsageLive,
   summarizePeerAgents,
 } from "../../../../lib/harnesses/claude/usage/live.mjs";
-import { METER } from "../../../../lib/ui/palette.mjs";
+import { ANSI, DATA, METER } from "../../../../lib/ui/palette.mjs";
 import { runFireconnect } from "../../../helpers.mjs";
 
 const temps = [];
@@ -101,36 +101,26 @@ describe("shouldRunClaudeUsageLive", () => {
 describe("liveMeterKeyHint", () => {
   it("advertises the session-list key when a picker exists", () => {
     assert.equal(
-      liveMeterKeyHint({ canPickSession: true, liveSplit: false }),
+      liveMeterKeyHint({ canPickSession: true }),
       "Tab agents · Esc sessions · q quit",
     );
   });
 
   it("omits the session-list key when the meter is locked to one session", () => {
     assert.equal(
-      liveMeterKeyHint({ canPickSession: false, liveSplit: false }),
+      liveMeterKeyHint({ canPickSession: false }),
       "Tab agents · q quit",
-    );
-  });
-
-  it("says 'quit layout' in a live tmux split, since q tears down Claude too", () => {
-    assert.equal(
-      liveMeterKeyHint({ canPickSession: false, liveSplit: true }),
-      "Tab agents · q quit layout",
-    );
-    assert.equal(
-      liveMeterKeyHint({ canPickSession: true, liveSplit: true }),
-      "Tab agents · Esc sessions · q quit layout",
     );
   });
 });
 
-describe("meter palette uses the Fireworks brand purple accent", () => {
+describe("meter palette uses the color guide primary accent", () => {
   it("exposes the shared METER accent/gold/ghost codes", () => {
-    assert.equal(METER.accent, "\u001b[38;2;103;32;255m");
-    assert.equal(METER.gold, "\u001b[38;5;220m");
+    assert.equal(METER.accent, ANSI.primary);
+    assert.equal(METER.gold, DATA.cost);
     assert.equal(METER.ghost, "\u001b[38;5;245m");
-    assert.equal(METER.modelPalette.length, 7);
+    assert.equal(METER.modelPalette.length, 9);
+    assert.equal(METER.modelPalette[0], "38;2;49;212;211", "badges use the Design System V2 data colors");
   });
 });
 
@@ -219,8 +209,7 @@ describe("fireconnect claude usage help", () => {
     const result = await runFireconnect(["claude", "help"]);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /live cost meter|Live per-turn cost meter|Pick session|live Main|Main meter|← agents|subagent/i);
-    assert.match(result.stdout, /\blive\b/i);
-    assert.match(result.stdout, /tmux/i);
+    assert.doesNotMatch(result.stdout, /tmux/i, "the retired `claude live` split is not advertised");
     assert.doesNotMatch(result.stdout, /--live/);
     assert.doesNotMatch(result.stdout, /--once/);
   });

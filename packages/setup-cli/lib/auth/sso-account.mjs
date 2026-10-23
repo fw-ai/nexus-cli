@@ -86,10 +86,10 @@ export async function getOAuthArgumentsForAccount(accountId, { baseUrl = GATEWAY
 /**
  * JIT self-provisioning after an SSO sign-in (mirrors firectl signin):
  * CreateUser{parent: accounts/<id>, user: {}} — the server fills the email
- * in from the SSO token. Three meaningful outcomes:
+ * in from the SSO token. Outcomes:
  *   created / AlreadyExists  → ok (member, proceed)
- *   PermissionDenied         → not a member and JIT can't add them — the
- *                              account admin has to. Actionable, not retryable.
+ *   PermissionDenied         → ok: the gateway denies JIT to shared-pool tokens
+ *                              even for members, so minting decides membership.
  * @param {string} idToken
  * @param {string} accountId  bare id, e.g. "my-company"
  * @param {{ baseUrl?: string }} [options]
@@ -106,14 +106,8 @@ export async function createUserJit(idToken, accountId, { baseUrl = GATEWAY_GRPC
   } catch (error) {
     return { ok: false, failure: `Couldn't reach the Fireworks control plane (${error?.message ?? "network error"}).` };
   }
-  if (result.status === 0 || result.status === GRPC_ALREADY_EXISTS) {
+  if (result.status === 0 || result.status === GRPC_ALREADY_EXISTS || result.status === GRPC_PERMISSION_DENIED) {
     return { ok: true, failure: "" };
-  }
-  if (result.status === GRPC_PERMISSION_DENIED) {
-    return {
-      ok: false,
-      failure: `You signed in, but you're not a member of "${accountId}" yet — ask your account admin to add you.`,
-    };
   }
   return {
     ok: false,

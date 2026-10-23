@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import { describe, it } from "node:test";
 import { pbDecode, pbString, pbStringAt } from "../../lib/auth/grpc-web.mjs";
 import { createUserJit, getOAuthArgumentsForAccount } from "../../lib/auth/sso-account.mjs";
+import { mintApiKeyForAccount } from "../../lib/keys/mint-api-key.mjs";
 
 const ID_TOKEN = "header.payload.sig";
 
@@ -97,33 +98,60 @@ describe("createUserJit", () => {
     return startServer((req, res, body) => {
       assert.equal(req.headers.authorization, `bearer ${ID_TOKEN}`);
       const request = pbDecode(body.subarray(5));
-      assert.equal(pbStringAt(request, 1), "accounts/uber");
+      assert.equal(pbStringAt(request, 1), "accounts/example-account");
       assert.ok(request.get(2), "carries an (empty) user message");
       res.writeHead(200, { "Content-Type": "application/grpc-web+proto" });
       res.end(grpcWebFrames(null, { status }));
     });
   }
 
-  it("treats created and AlreadyExists as membership", async () => {
-    for (const status of [0, 6]) {
+  it("proceeds on created, AlreadyExists, and PermissionDenied (minting decides membership)", async () => {
+    for (const status of [0, 6, 7]) {
       const { server, url } = await startJitGateway(status);
-      const result = await createUserJit(ID_TOKEN, "uber", { baseUrl: url });
+      const result = await createUserJit(ID_TOKEN, "example-account", { baseUrl: url });
       assert.equal(result.ok, true, `status ${status}: ${result.failure}`);
       server.close();
     }
   });
 
-  it("maps PermissionDenied to an ask-your-admin line", async () => {
-    const { server, url } = await startJitGateway(7);
-    const result = await createUserJit(ID_TOKEN, "uber", { baseUrl: url });
+  it("stops on other errors and shows the server's reason", async () => {
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/grpc-web+proto" });
+      res.end(grpcWebFrames(null, { status: 9 }));
+    });
+    const result = await createUserJit(ID_TOKEN, "example-account", { baseUrl: url });
     assert.equal(result.ok, false);
-    assert.match(result.failure, /ask your account admin/);
+    assert.match(result.failure, /status 9/);
     server.close();
   });
 
   it("fails softly when the control plane is unreachable", async () => {
-    const result = await createUserJit(ID_TOKEN, "uber", { baseUrl: "http://127.0.0.1:1" });
+    const result = await createUserJit(ID_TOKEN, "example-account", { baseUrl: "http://127.0.0.1:1" });
     assert.equal(result.ok, false);
     assert.match(result.failure, /Couldn't reach/);
+  });
+
+  it("combined sequence: JIT denial then bare ListUsers denial never reaches CreateApiKey", async () => {
+    const calls = [];
+    const { server, url } = await startServer((req, res) => {
+      calls.push(req.url.split("/").at(-1));
+      res.writeHead(200, { "Content-Type": "application/grpc-web+proto" });
+      // Both denials are bare (no grpc-message), the gateway's non-member shape.
+      res.end(grpcWebFrames(null, { status: 7 }));
+    });
+    try {
+      // The exact sequence flows.mjs runs: JIT first, mint only if it proceeds.
+      const jit = await createUserJit(ID_TOKEN, "example-account", { baseUrl: url });
+      assert.equal(jit.ok, true, jit.failure);
+      const mint = await mintApiKeyForAccount(ID_TOKEN, "accounts/example-account", {
+        email: "user@example.com",
+        baseUrl: url,
+      });
+      assert.equal(mint.ok, false);
+      assert.match(mint.failure, /not a member of "example-account"/);
+      assert.deepEqual(calls, ["CreateUser", "ListUsers"]);
+    } finally {
+      server.close();
+    }
   });
 });

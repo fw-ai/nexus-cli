@@ -16,7 +16,7 @@ function displayModel(model) {
   return stripped.split("/").at(-1);
 }
 
-/** `Label: nexus …` with cyan command highlight. */
+/** `Label: nexus …` with the command in accent. */
 export function printCommandHint(label, command) {
   const prefix = label.endsWith(":") ? label : `${label}:`;
   console.log(`${prefix} ${accent(command)}`);
@@ -27,7 +27,7 @@ export function printDetail(label, value) {
   console.log(`  ${muted(`${label}: ${value}`)}`);
 }
 
-/** Green ✓ headline. */
+/** Primary ✓ headline. */
 export function printSuccess(message) {
   console.log(ok(message));
 }

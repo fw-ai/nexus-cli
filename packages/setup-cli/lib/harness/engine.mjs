@@ -1,5 +1,6 @@
 import {
   printAzureConnected,
+  printNote,
   printHarnessRestored,
   printHarnessUnchanged,
   printHarnessOnFootnotes,
@@ -11,18 +12,14 @@ import { resolveAzureBaseUrl, resolveAzureOnApiKey } from "../fireworks/azure-co
 import {
   resolveHarnessOnApiKey,
 } from "../keys/harness-api-key.mjs";
-import {
-  resolveExplicitFirerouterCredential,
-  resolveFirerouterByokHeaders,
-  resolveFirerouterPlan,
-} from "../firerouter/flag.mjs";
+import { resolveAutoProviderKeyHeaders } from "../firerouter/flag.mjs";
 import {
   isHarnessEnabled,
   readGlobalConfig,
   readProviderSettings,
   setHarnessEnabled,
 } from "../config/global-config.mjs";
-import { nexusProvidersHeaders } from "../config/auto-providers.mjs";
+import { autoHarnessSupported, nexusProvidersHeaders } from "../config/auto-providers.mjs";
 import { reconcileShellEnvHook } from "../io/shell-env-hook.mjs";
 import { ensureHomeForHarness } from "./context.mjs";
 import { defineHarness } from "./types.mjs";
@@ -43,8 +40,8 @@ import { buildFireconnectTelemetryHeaders } from "../telemetry/request-headers.m
  *   Resolve state-dependent defaults for `on`; the result is validated and dispatched.
  * @property {(ctx: import("./types.mjs").HarnessContext) => object} paths
  * @property {string} keyEnvRef
- * @property {import("../firerouter/flag.mjs").FirerouterCapability|null} [firerouter]
- *   Complete FireRouter capability; null/omitted means unsupported.
+ * @property {{ byok?: "none"|"value", autoCatalog?: boolean, catalogByok?: boolean, customHeaderOpenaiKey?: boolean }|null} [firerouter]
+ *   How the harness carries provider keys; null/omitted means it can't.
  * @property {boolean} [telemetryHeaders] Whether this harness can send static request headers.
  * @property {(ctx: import("./types.mjs").HarnessContext, paths: object) => Promise<Record<string,string>>} [readByokEnv]
  *   For `byok: "value"` harnesses: return a settingsEnv-shaped object (with
@@ -61,7 +58,7 @@ import { buildFireconnectTelemetryHeaders } from "../telemetry/request-headers.m
  * @property {(modelId: string) => boolean} [servedOutsideCatalog]  `--model` ids this harness
  *   serves that the serverless catalog never lists (Codex's sign-in GPT models); they skip
  *   the catalog check.
- * @property {(args: { ctx: object, paths: object, apiKeyRef: string, effectiveKey: string, modelId: string, byokHeaders: Record<string,string>, telemetryHeaders: Record<string,string>, includeFirerouter: boolean, flags: object }) => Promise<{ model: string, modelsAdded?: string[] }>} enable
+ * @property {(args: { ctx: object, paths: object, apiKeyRef: string, effectiveKey: string, modelId: string, byokHeaders: Record<string,string>, telemetryHeaders: Record<string,string>, flags: object }) => Promise<{ model: string, modelsAdded?: string[] }>} enable
  * @property {(ctx: import("./types.mjs").HarnessContext, effectiveKey: string) => Promise<void>} [envHookOn]
  * @property {(args: { ctx: object, paths: object, result: object, reusedExistingKey: boolean }) => void} [printConnected]
  *   Full success-output override (default: connected + restartHint).
@@ -106,45 +103,12 @@ export async function engineOn(profile, ctx) {
   const paths = profile.paths(ctx);
   const { apiKeyRef = "", effectiveKey, reusedExistingKey = false } = await resolveOnKey(profile, ctx, paths);
 
-  // Admit the id before FireRouter credential setup, so a junk path cannot
-  // collapse to `firerouter` or prompt for an Anthropic key.
-  let modelId = canonicalRequestedModelId(ctx.main);
+  const modelId = canonicalRequestedModelId(ctx.main);
   let byokHeaders = {};
-  let isFirerouterRequested = false;
-  let preResolvedAnthropicKey;
-  if (profile.firerouter) {
-    const plan = resolveFirerouterPlan({ ...ctx, main: modelId });
-    modelId = plan.mainModel;
-    isFirerouterRequested = plan.isFirerouter;
+  if (profile.firerouter?.byok === "value") {
+    // Re-reading the harness's own headers keeps a provider key added by hand.
     const settingsEnv = profile.readByokEnv ? await profile.readByokEnv(ctx, paths) : {};
-    // Direct Fireworks gateway `on` only (Azure returns above).
-    // Harnesses that cannot forward a key (`byok: "none"`) skip credential
-    // resolution entirely: they connect without BYOK headers and FireRouter
-    // routes the Fireworks mix.
-    const needsCredential = profile.firerouter.byok !== "none"
-      && plan.requiresAnthropicKey;
-    if (needsCredential) {
-      ({ anthropicKey: preResolvedAnthropicKey } = await resolveExplicitFirerouterCredential({
-        firerouter: profile.firerouter,
-        ctx,
-        settingsEnv,
-      }));
-    }
-    // FireRouter registers only when explicitly requested (`--model firerouter...`).
-    const catalogFirerouter = isFirerouterRequested && profile.firerouter.catalogByok === true;
-    if (profile.firerouter.byok === "value") {
-      // Recover BYOK keys that live only in the harness's existing config
-      // headers, so a repeat `on` without re-supplying them doesn't drop them.
-      // VS Code alone uses catalogByok: firerouter BYOK belongs on the model
-      // entry, not the provider (OpenCode/Pi attach at provider level).
-      byokHeaders = await resolveFirerouterByokHeaders({
-        plan,
-        catalogFirerouter,
-        ctx,
-        settingsEnv,
-        preResolvedAnthropicKey,
-      });
-    }
+    byokHeaders = await resolveAutoProviderKeyHeaders({ home: ctx.home, settingsEnv });
   }
 
   if (!profile.servedOutsideCatalog?.(modelId)) {
@@ -169,7 +133,6 @@ export async function engineOn(profile, ctx) {
     telemetryHeaders: profile.telemetryHeaders
       ? { ...buildFireconnectTelemetryHeaders(profile.id), ...autoHeaders }
       : {},
-    includeFirerouter: isFirerouterRequested,
   });
 
   await setHarnessEnabled(ctx.home, profile.id, true, "fireworks");
@@ -179,6 +142,14 @@ export async function engineOn(profile, ctx) {
   // An upgrade's re-`on` reports through its own note.
   if (ctx.quiet) {
     return;
+  }
+
+  if (!autoHarnessSupported(profile.id)
+    && (await readGlobalConfig(ctx.home)).auto.providers) {
+    printNote(
+      `Your \`nexus auto\` provider scope doesn't apply in ${profile.label}: it can't carry the scope, `
+      + "so auto there runs at the default scope. Saved Anthropic and OpenAI keys aren't sent from it either.",
+    );
   }
 
   const modelsAdded = result.modelsAdded ?? [result.model];
@@ -388,5 +359,8 @@ export function defineHarnessProfile(profile) {
     ...(profile.usage ? { usage: profile.usage } : {}),
     ...(profile.live ? { live: profile.live } : {}),
     ...(profile.resolveOnContext ? { resolveOnContext: profile.resolveOnContext } : {}),
+    // The provider-key headers this harness's config carries now, in
+    // `settingsEnv` shape (see byokEnvFromHeaders).
+    ...(profile.readByokEnv ? { readByokEnv: (ctx) => profile.readByokEnv(ctx, profile.paths(ctx)) } : {}),
   });
 }

@@ -1,7 +1,7 @@
 import process, { stdin, stdout } from "node:process";
 import path from "node:path";
-import { colorEnabled, bold, accent } from "../../../ui/term.mjs";
-import { ANSI } from "../../../ui/palette.mjs";
+import { colorEnabled, bold } from "../../../ui/term.mjs";
+import { ANSI, DATA } from "../../../ui/palette.mjs";
 import {
   UNPRICED_TEXT,
   addUsage,
@@ -13,13 +13,14 @@ const ANTHROPIC_PRICING_DOCS_URL = "https://platform.claude.com/docs/en/about-cl
 
 const RESET = ANSI.reset;
 const DIM = ANSI.muted;
-const CYAN = ANSI.cyan;
-const GREEN = ANSI.green;
-const WHITE = ANSI.white;
-const ORANGE = ANSI.orange;
-const BLUE = ANSI.blue;
-const VIOLET = ANSI.violet;
-const PURPLE = ANSI.purple;
+const EMPHASIS = ANSI.bold;
+const INPUT = DATA.input;
+const OUTPUT = DATA.output;
+const CLAUDE_MODEL = DATA.claudeModel;
+const FIREWORKS_MODEL = DATA.fireworksModel;
+const SPEND = DATA.spend;
+const ACCENT = ANSI.accent;
+const PRIMARY = ANSI.primary;
 const SELECTED_BG = ANSI.selectedBg;
 const HIDE_CURSOR = ANSI.hideCursor;
 const SHOW_CURSOR = ANSI.showCursor;
@@ -171,7 +172,7 @@ function formatSessionNameLines(report, width, stream = stdout) {
   const label = dim("NAME", stream);
   const prefix = `    ${label}  `;
   const budget = Math.max(8, width - visibleWidth(prefix));
-  return [`${prefix}${paint(WHITE, truncateLabel(name, budget), stream)}`];
+  return [`${prefix}${paint(EMPHASIS, truncateLabel(name, budget), stream)}`];
 }
 
 function lineWidth(stream = stdout) {
@@ -214,7 +215,7 @@ export function renderSegmentedBar(segments, width, stream = stdout) {
 function renderShareBar(fraction, width, stream = stdout) {
   const safeWidth = Math.max(0, Math.floor(width));
   const filled = Math.min(safeWidth, Math.max(fraction > 0 ? 1 : 0, Math.round(fraction * safeWidth)));
-  return `${paint(ORANGE, "█".repeat(filled), stream)}${dim("░".repeat(safeWidth - filled), stream)}`;
+  return `${paint(SPEND, "█".repeat(filled), stream)}${dim("░".repeat(safeWidth - filled), stream)}`;
 }
 
 function summarizeRows(report) {
@@ -269,8 +270,8 @@ function aggregateModels(reports) {
 }
 
 function formatHero({ totals, calls, sessions }, width, stream = stdout) {
-  const spend = bold(accent(fmtCostUsd(totals.cost), stream), stream);
-  const tokenSummary = `${paint(CYAN, fmtCompact(totals.input), stream)} in · ${paint(GREEN, fmtCompact(totals.output), stream)} out`;
+  const spend = bold(paint(PRIMARY, fmtCostUsd(totals.cost), stream), stream);
+  const tokenSummary = `${paint(INPUT, fmtCompact(totals.input), stream)} in · ${paint(OUTPUT, fmtCompact(totals.output), stream)} out`;
 
   if (width < 68) {
     return [
@@ -291,7 +292,7 @@ function formatHero({ totals, calls, sessions }, width, stream = stdout) {
 }
 
 function formatSessionRow(report, stream = stdout) {
-  const id = paint(WHITE, shortSessionId(sessionId(report)), stream);
+  const id = paint(EMPHASIS, shortSessionId(sessionId(report)), stream);
   const name = sessionName(report);
   if (!name) {
     return `${dim("▾", stream)} ${id}`;
@@ -315,7 +316,7 @@ function sessionSummaryLayout(width, { hasNames = false } = {}) {
 }
 
 function formatSessionLabel(report, width, stream = stdout, { expanded = false } = {}) {
-  const idColor = expanded ? WHITE : CYAN;
+  const idColor = expanded ? EMPHASIS : ACCENT;
   const id = paint(idColor, shortSessionId(sessionId(report)), stream);
   const name = sessionName(report);
   if (!name || width < 14) {
@@ -380,7 +381,7 @@ function formatModelBreakdown(report, width, stream = stdout) {
       ? `${model.displayModel.slice(0, nameWidth - 1)}…`
       : model.displayModel;
     const share = totalCost > 0 ? model.cost / totalCost : 0;
-    const modelColor = model.model.includes("claude") ? ORANGE : CYAN;
+    const modelColor = model.model.includes("claude") ? CLAUDE_MODEL : FIREWORKS_MODEL;
     lines.push(`   ${padRight(paint(modelColor, name, stream), nameWidth)} ${padLeft(fmtCostUsd(model.cost), 9)} ${renderShareBar(maxCost > 0 ? model.cost / maxCost : 0, barWidth, stream)} ${padLeft(dim(`${Math.round(share * 100)}%`, stream), 4)}`);
     lines.push(dim(`     ${fmtInt(model.calls)} call${model.calls === 1 ? "" : "s"} · ${fmtCompact(model.input)} in · ${fmtCompact(model.output)} out${model.cacheRead ? ` · ${fmtCompact(model.cacheRead)} cache read` : ""}`, stream));
   }
@@ -406,7 +407,7 @@ function formatInteractiveModelBreakdown(report, width, stream = stdout) {
       ? `${model.displayModel.slice(0, nameWidth - 1)}…`
       : model.displayModel;
     const share = totalCost > 0 ? model.cost / totalCost : 0;
-    const modelColor = model.model.includes("claude") ? ORANGE : CYAN;
+    const modelColor = model.model.includes("claude") ? CLAUDE_MODEL : FIREWORKS_MODEL;
     lines.push(fitLine(`${indent}${padRight(paint(modelColor, name, stream), nameWidth)}  ${padLeft(fmtCostUsd(model.cost), costWidth)}  ${renderShareBar(maxCost > 0 ? model.cost / maxCost : 0, barWidth, stream)}  ${padLeft(dim(`${Math.round(share * 100)}%`, stream), percentWidth)}`, width));
   }
   return lines;
@@ -495,16 +496,16 @@ function formatSourceBreakdown(report, width, stream = stdout, { offset = 0, lim
     const source = sourceLabel(row.source);
     const sourceText = source.length > sourceWidth ? `${source.slice(0, sourceWidth - 1)}…` : source;
     const modelText = row.displayModel.length > modelWidth ? `${row.displayModel.slice(0, modelWidth - 1)}…` : row.displayModel;
-    const modelColor = row.model.includes("claude") ? ORANGE : BLUE;
+    const modelColor = row.model.includes("claude") ? CLAUDE_MODEL : FIREWORKS_MODEL;
     const line = fitLine(
-      `${indent}${padRight(dim(sourceText, stream), sourceWidth)}  ${padRight(paint(modelColor, modelText, stream), modelWidth)}  ${padLeft(fmtInt(row.calls), callsWidth)}  ${padLeft(paint(CYAN, fmtInt(row.input), stream), tokenWidth)}  ${padLeft(fmtInt(row.cacheWrite5m), tokenWidth)}  ${padLeft(fmtInt(row.cacheWrite1h), tokenWidth)}  ${padLeft(fmtInt(row.cacheRead), tokenWidth)}  ${padLeft(paint(GREEN, fmtInt(row.output), stream), tokenWidth)}  ${padLeft(fmtCost(row.cost), costWidth)}`,
+      `${indent}${padRight(dim(sourceText, stream), sourceWidth)}  ${padRight(paint(modelColor, modelText, stream), modelWidth)}  ${padLeft(fmtInt(row.calls), callsWidth)}  ${padLeft(paint(INPUT, fmtInt(row.input), stream), tokenWidth)}  ${padLeft(fmtInt(row.cacheWrite5m), tokenWidth)}  ${padLeft(fmtInt(row.cacheWrite1h), tokenWidth)}  ${padLeft(fmtInt(row.cacheRead), tokenWidth)}  ${padLeft(paint(OUTPUT, fmtInt(row.output), stream), tokenWidth)}  ${padLeft(fmtCost(row.cost), costWidth)}`,
       width,
     );
     lines.push(safeOffset + index === safeFocus ? selectedLine(line, width, stream) : line);
   });
 
   lines.push(fitLine(`${indent}${"─".repeat(Math.max(8, Math.min(48, width - visibleWidth(indent))))}`, width));
-  lines.push(fitLine(`${indent}${padRight("TOTAL", sourceWidth + 2 + modelWidth)}  ${padLeft(fmtInt(report.grandRequests), callsWidth)}  ${padLeft(paint(CYAN, fmtInt(report.grandTotals.input), stream), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheWrite5m ?? 0), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheWrite1h ?? 0), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheRead ?? 0), tokenWidth)}  ${padLeft(paint(GREEN, fmtInt(report.grandTotals.output), stream), tokenWidth)}  ${padLeft(fmtCost(report.grandTotals.cost), costWidth)}`, width));
+  lines.push(fitLine(`${indent}${padRight("TOTAL", sourceWidth + 2 + modelWidth)}  ${padLeft(fmtInt(report.grandRequests), callsWidth)}  ${padLeft(paint(INPUT, fmtInt(report.grandTotals.input), stream), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheWrite5m ?? 0), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheWrite1h ?? 0), tokenWidth)}  ${padLeft(fmtInt(report.grandTotals.cacheRead ?? 0), tokenWidth)}  ${padLeft(paint(OUTPUT, fmtInt(report.grandTotals.output), stream), tokenWidth)}  ${padLeft(fmtCost(report.grandTotals.cost), costWidth)}`, width));
   if (rows.length > visibleRows.length) {
     const first = safeOffset + 1;
     const last = safeOffset + visibleRows.length;
@@ -540,15 +541,15 @@ function formatRequestDetailRows(report, width, stream = stdout, { source = "", 
     const sourceText = source.length > sourceWidth ? `${source.slice(0, sourceWidth - 1)}…` : source;
     const model = item.row.displayModel ?? displayModelName(item.row.model);
     const modelText = model.length > modelWidth ? `${model.slice(0, modelWidth - 1)}…` : model;
-    const modelColor = item.row.model.includes("claude") ? ORANGE : BLUE;
+    const modelColor = item.row.model.includes("claude") ? CLAUDE_MODEL : FIREWORKS_MODEL;
     lines.push(fitLine(
-      `${indent}${padLeft(`#${item.request}`, reqWidth)}  ${padRight(dim(sourceText, stream), sourceWidth)}  ${padRight(paint(modelColor, modelText, stream), modelWidth)}  ${padLeft(paint(CYAN, fmtInt(item.row.input), stream), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheWrite5m ?? 0), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheWrite1h ?? 0), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheRead ?? 0), tokenWidth)}  ${padLeft(paint(GREEN, fmtInt(item.row.output), stream), tokenWidth)}  ${padLeft(fmtCost(item.row.cost), costWidth)}`,
+      `${indent}${padLeft(`#${item.request}`, reqWidth)}  ${padRight(dim(sourceText, stream), sourceWidth)}  ${padRight(paint(modelColor, modelText, stream), modelWidth)}  ${padLeft(paint(INPUT, fmtInt(item.row.input), stream), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheWrite5m ?? 0), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheWrite1h ?? 0), tokenWidth)}  ${padLeft(fmtInt(item.row.cacheRead ?? 0), tokenWidth)}  ${padLeft(paint(OUTPUT, fmtInt(item.row.output), stream), tokenWidth)}  ${padLeft(fmtCost(item.row.cost), costWidth)}`,
       width,
     ));
   }
 
   lines.push(fitLine(`${indent}${"─".repeat(Math.max(8, Math.min(48, width - visibleWidth(indent))))}`, width));
-  lines.push(fitLine(`${indent}${padRight(`TOTAL ${sourceLabel(source)}`, reqWidth + 2 + sourceWidth + 2 + modelWidth)}  ${padLeft(paint(CYAN, fmtInt(totals.input), stream), tokenWidth)}  ${padLeft(fmtInt(totals.cacheWrite5m), tokenWidth)}  ${padLeft(fmtInt(totals.cacheWrite1h), tokenWidth)}  ${padLeft(fmtInt(totals.cacheRead), tokenWidth)}  ${padLeft(paint(GREEN, fmtInt(totals.output), stream), tokenWidth)}  ${padLeft(fmtCost(totals.cost), costWidth)}`, width));
+  lines.push(fitLine(`${indent}${padRight(`TOTAL ${sourceLabel(source)}`, reqWidth + 2 + sourceWidth + 2 + modelWidth)}  ${padLeft(paint(INPUT, fmtInt(totals.input), stream), tokenWidth)}  ${padLeft(fmtInt(totals.cacheWrite5m), tokenWidth)}  ${padLeft(fmtInt(totals.cacheWrite1h), tokenWidth)}  ${padLeft(fmtInt(totals.cacheRead), tokenWidth)}  ${padLeft(paint(OUTPUT, fmtInt(totals.output), stream), tokenWidth)}  ${padLeft(fmtCost(totals.cost), costWidth)}`, width));
   if (rows.length > visibleRows.length) {
     const first = safeOffset + 1;
     const last = safeOffset + visibleRows.length;
@@ -661,7 +662,7 @@ export function formatClaudeUsageInteractiveFrame(input, state = {}, { stream = 
       lines.push(...formatInteractiveModelBreakdown(report, width, stream));
       lines.push("");
       const sourceCount = sourceModelRows(report).length;
-      lines.push(`    ${paint(VIOLET, `${detailed ? "▾ hide" : "▸ show"} ${sourceCount} source/model row${sourceCount === 1 ? "" : "s"}`, stream)}`);
+      lines.push(`    ${paint(ACCENT, `${detailed ? "▾ hide" : "▸ show"} ${sourceCount} source/model row${sourceCount === 1 ? "" : "s"}`, stream)}`);
       if (detailed) {
         if (requestMode) {
           lines.push(dim(`      requests for ${sourceLabel(view.requestSource)}`, stream));
@@ -1055,7 +1056,7 @@ function formatSummary({ sessions, totals, calls, estimated, unpriced = 0 }, str
   return lines.join("\n");
 }
 
-/** Brief, deterministic version of the designer's purple pixel firework. */
+/** Brief, deterministic version of the designer's pixel firework. */
 export async function playUsageIntroAnimation(stream = stdout) {
   if (!stream.isTTY || !useColor(stream) || process.env.NEXUS_NO_USAGE_ANIMATION) return;
 
@@ -1075,7 +1076,7 @@ export async function playUsageIntroAnimation(stream = stdout) {
 
   for (let index = 0; index < frames.length; index += 1) {
     if (index > 0) stream.write("\u001b[5A");
-    for (const line of frames[index]) stream.write(`${paint(PURPLE, line, stream)}\u001b[K\n`);
+    for (const line of frames[index]) stream.write(`${paint(PRIMARY, line, stream)}\u001b[K\n`);
     await new Promise((resolve) => setTimeout(resolve, 85));
   }
   stream.write("\u001b[5A");
