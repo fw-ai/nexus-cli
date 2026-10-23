@@ -4,6 +4,7 @@ import { isEnabledFireworksHarness, readGlobalConfig } from "../../config/global
 import { isRetiredModelId } from "../../fireworks/model-id.mjs";
 import { copilotAppPathsFor } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
+import { MigrationSkippedError } from "../../system/migration-skip.mjs";
 import { copilotModelIds } from "../copilot-shared.mjs";
 import {
   deleteCopilotProviderModels,
@@ -31,7 +32,7 @@ export async function migrateCopilotAppFirerouterOnUpgrade(home, { isRunning = i
     return false;
   }
   const dbPath = copilotAppPathsFor({ home }).dbPath;
-  if (!existsSync(dbPath) || isRunning()) {
+  if (!existsSync(dbPath)) {
     return false;
   }
   const provider = await findFireconnectProvider(dbPath);
@@ -43,6 +44,9 @@ export async function migrateCopilotAppFirerouterOnUpgrade(home, { isRunning = i
   ).filter((id) => isRetiredModelId(id));
   if (!ids.length) {
     return false;
+  }
+  if (isRunning()) {
+    throw new MigrationSkippedError("the Copilot app is running");
   }
   await deleteCopilotProviderModels(dbPath, provider.id, ids);
   return true;

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
@@ -67,6 +68,77 @@ describe("finalizeInstallOrUpgrade", () => {
       assert.ok(calls.some(([name, msg]) => name === "log" && /Moved Fireworks API key/.test(String(msg))));
       assert.ok(calls.some(([name, msg]) => name === "log" && /ENABLE_TOOL_SEARCH/.test(String(msg))));
       assert.ok(calls.some(([name, msg]) => name === "log" && /Rebaked Claude Code/.test(String(msg))));
+    });
+  });
+
+  it("stops before touching ~/.nexus when it belongs to another program", async () => {
+    await withTempHome("finalize-foreign-", async (home) => {
+      await mkdir(path.join(home, ".fireconnect"), { recursive: true });
+      await writeFile(path.join(home, ".fireconnect/config.json"), "{}\n");
+      await mkdir(path.join(home, ".nexus"), { recursive: true });
+      await writeFile(path.join(home, ".nexus/settings.ini"), "other=1\n");
+      const calls = [];
+      const spy = (name) => async () => {
+        calls.push(name);
+        return { migrated: false, backend: { backend: "keychain" } };
+      };
+
+      const result = await finalizeInstallOrUpgrade({
+        home,
+        installDir: `${home}/.nexus/cli`,
+        setupDir: "/nonexistent-setup-for-test",
+        log: () => {},
+        ensureDeps: () => {
+          calls.push("ensureDeps");
+          return true;
+        },
+        reprobe: spy("reprobe"),
+        refreshCatalog: spy("refreshCatalog"),
+        migrate: spy("migrate"),
+        reconcile: spy("reconcile"),
+        codexSignIn: spy("codexSignIn"),
+      });
+
+      assert.equal(result.renameBlocked, true);
+      assert.deepEqual(result.notes, [
+        "~/.nexus belongs to another program, so your FireConnect settings stay in ~/.fireconnect. "
+        + "Rename or remove ~/.nexus, then upgrade again.",
+      ]);
+      assert.deepEqual(calls, [], "no deps, key, catalog, or harness step runs against the other program's directory");
+      assert.deepEqual(await readdir(path.join(home, ".nexus")), ["settings.ini"]);
+    });
+  });
+
+  it("prints the per-harness moves off FireRouter once, as one block at the end", async () => {
+    await withTempHome("finalize-nexus-auto-moves-", async (home) => {
+      const logged = [];
+      const result = await finalizeInstallOrUpgrade({
+        home,
+        setupDir: "/nonexistent-setup-for-test",
+        log: (line) => logged.push(line),
+        ensureDeps: () => true,
+        reprobe: async () => ({ migrated: false }),
+        refreshCatalog: async () => {},
+        rename: async () => [],
+        migrate: async () => [
+          "FireRouter is now Nexus Auto: moved OpenCode to `auto`. Restart OpenCode to pick it up.",
+          "Refreshed Claude Code's /model picker.",
+          "FireRouter is now Nexus Auto: moved Claude Code to `auto`. Restart Claude Code to pick it up.",
+        ],
+        reconcile: async () => [],
+        codexSignIn: async () => [
+          "FireRouter is now Nexus Auto: moved Codex to `auto` and removed the FireRouter rows from its model list. Restart Codex to pick it up.",
+        ],
+        providerKeys: async () => [],
+      });
+      const block = [
+        "Nexus Auto replaces FireRouter:",
+        "  - Moved OpenCode to `auto`. Restart OpenCode to pick it up.",
+        "  - Moved Claude Code to `auto`. Restart Claude Code to pick it up.",
+        "  - Moved Codex to `auto` and removed the FireRouter rows from its model list. Restart Codex to pick it up.",
+      ].join("\n");
+      assert.deepEqual(logged, ["Refreshed Claude Code's /model picker.", block]);
+      assert.deepEqual(result.notes, logged);
     });
   });
 

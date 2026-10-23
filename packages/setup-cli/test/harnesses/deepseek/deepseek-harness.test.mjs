@@ -91,7 +91,7 @@ describe("deepseek harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /is no longer supported/);
     const { settings } = await readDeepseekSettingsIfExists(deepseekSettingsPath(home));
     assert.equal(deepseekCurrentModelId(settings), null);
   });
@@ -104,7 +104,7 @@ describe("deepseek harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /is no longer supported/);
     const { settings } = await readDeepseekSettingsIfExists(deepseekSettingsPath(home));
     assert.equal(deepseekCurrentModelId(settings), null);
   });
@@ -485,6 +485,35 @@ describe("migrateDeepseekFirerouterModel", () => {
     assert.equal(await readFile(backupPath, "utf8"), backupBefore, "off snapshot untouched");
 
     assert.equal(await migrateDeepseekFirerouterModel({ settingsPath }), false, "second run no-ops");
+  });
+
+  it("migrates retired patch layers even when the settings layer is current", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-deepseek-firerouter-mixed-"));
+    const settingsPath = deepseekSettingsPath(home);
+    await mkdir(path.join(home, ".dsh", "profiles", "p1"), { recursive: true });
+    await writeFile(path.join(home, ".dsh", "profiles", "p1", "cordis.yml"), "{}\n");
+    await enableDeepseekFireworks({
+      settingsPath,
+      credentialsPath: deepseekCredentialsPath(home),
+      dataDir: deepseekDataDir(home),
+      effectiveApiKey: "fw_test_key_12345",
+      modelId: "firerouter",
+    });
+    // The winning (settings) layer moves on; the patch layers stay retired.
+    const { settings } = await readDeepseekSettingsIfExists(settingsPath);
+    await writeFile(settingsPath, JSON.stringify(patchDeepseekFireworksSettings(settings, {
+      modelId: "deepseek-v4-flash",
+      headers: {},
+    })));
+
+    assert.equal(await migrateDeepseekFirerouterModel({ settingsPath }), true);
+    const patchPath = path.join(home, ".dsh", "cordis.patch.yml");
+    assert.doesNotMatch(await readFile(patchPath, "utf8"), /firerouter/);
+    assert.equal(
+      deepseekCurrentModelId((await readDeepseekSettingsIfExists(settingsPath)).settings),
+      "deepseek-v4-flash",
+      "current settings layer untouched",
+    );
   });
 
   it("no-ops when DeepSeek is not on a FireRouter selection", async () => {

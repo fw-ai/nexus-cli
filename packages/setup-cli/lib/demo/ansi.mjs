@@ -9,8 +9,10 @@ import { ANSI } from "../ui/palette.mjs";
 export const ESC = "\x1b[";
 export const RESET = ANSI.reset;
 export const BOLD = ANSI.bold;
-export const GREEN = ANSI.green;
-export const CYAN = ANSI.cyan;
+/** Color guide: `✓` and the one key message. */
+export const PRIMARY = ANSI.primary;
+/** Color guide: only what the user can type or open (keys, URLs, choices). */
+export const ACCENT = ANSI.accent;
 export const YELLOW = ANSI.yellow;
 export const RED = ANSI.red;
 export const REVERSE = `${ESC}7m`;

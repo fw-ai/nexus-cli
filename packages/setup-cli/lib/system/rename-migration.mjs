@@ -114,12 +114,12 @@ const REPOINT_STEPS = [
   },
   {
     run: retargetHarnessReferers,
-    success: "Updated your harness configs to identify as Nexus — restart them to pick it up.",
-    failure: "Couldn't update every harness to identify as Nexus — re-run `nexus <harness> on` for each one.",
+    success: "Updated your harness configs to identify as Nexus CLI — restart them to pick it up.",
+    failure: "Couldn't update every harness to identify as Nexus CLI — re-run `nexus <harness> on` for each one.",
   },
   {
     run: copilotAppNeedsReconnect,
-    success: "Quit GitHub Copilot and run `nexus copilot-app on` once so it identifies as Nexus too.",
+    success: "Quit GitHub Copilot and run `nexus copilot-app on` once so it identifies as Nexus CLI too.",
     failure: "",
   },
   {
@@ -146,6 +146,14 @@ export async function runRenameMigration(home, { migrateDataDir = migrateLegacyD
   const dataDirStatus = migrateDataDir(home);
   const dataDirNote = dataDirMigrationNote(dataDirStatus);
   const notes = dataDirNoteShown(dataDirNote) ? [] : [dataDirNote];
+  if (dataDirStatus === "foreign") {
+    // Nothing was moved, so there is nothing to repoint — and the rename is
+    // not complete. Running the steps below would point launchers and
+    // harness configs at a directory this CLI does not own, and marking
+    // completion would write its marker into that directory, after which
+    // it would be misrecognized as ours.
+    return notes.filter(Boolean);
+  }
   let complete = dataDirStatus !== "deferred" && dataDirStatus !== "failed";
   try {
     notes.push(...await migrateLegacyLaunchers(home));

@@ -200,6 +200,32 @@ describe("parseCli", () => {
     assert.equal(parsed.ctx.anthropicKey, "sk-ant-test");
   });
 
+  it("parses a bare provider-key flag as a prompt request", () => {
+    const bare = parseCli(["auto", "--anthropic-api-key"]);
+    assert.equal(bare.ctx.anthropicKeyFromFlag, true);
+    assert.equal(bare.ctx.anthropicKeyPrompt, true);
+    assert.equal(bare.ctx.anthropicKey, "");
+
+    const followed = parseCli(["auto", "--openai-api-key", "--providers", "fireworks"]);
+    assert.equal(followed.ctx.openaiKeyPrompt, true);
+    assert.equal(followed.ctx.providers, "fireworks");
+
+    const valued = parseCli(["auto", "--anthropic-api-key", "sk-ant-test"]);
+    assert.equal(valued.ctx.anthropicKey, "sk-ant-test");
+    assert.equal(valued.ctx.anthropicKeyPrompt, undefined);
+  });
+
+  it("parses repeated --unset flags for both provider keys", () => {
+    const parsed = parseCli(["auto", "--unset", "anthropic-api-key", "--unset", "openai-api-key"]);
+    assert.equal(parsed.ctx.unsetAnthropicKey, true);
+    assert.equal(parsed.ctx.unsetOpenaiKey, true);
+  });
+
+  it("rejects a bare provider-key flag on unrelated commands", () => {
+    assert.throws(() => parseCli(["status", "--anthropic-api-key"]), /--anthropic-api-key requires a value/);
+    assert.throws(() => parseCli(["claude", "on", "--openai-api-key"]), /--openai-api-key requires a value/);
+  });
+
   it("parses Claude's non-interactive onboarding opt-out", () => {
     const parsed = parseCli(["claude", "on", "--non-interactive"]);
     assert.equal(parsed.ctx.onboardingMode, "skip");

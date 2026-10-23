@@ -25,14 +25,14 @@ import {
   mockServerlessModel,
   mockServerlessModelRows,
 } from "../../helpers.mjs";
-import { isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
+import { harnessTestArgs, isolatedChildHome, seedOnCommandCatalog } from "../../helpers.mjs";
 
 const CLI = path.join(import.meta.dirname, "..", "..", "..", "bin", "nexus.mjs");
 
 function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) { seedOnCommandCatalog(env.HOME, args); }
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, [CLI, ...harnessTestArgs(args)], {
       env: {
         ...process.env,
         NEXUS_SECRET_STORE: "memory",
@@ -323,7 +323,7 @@ describe("opencode harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(on.code, 0);
-    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(on.stderr, /is no longer supported/);
     assert.equal(existsSync(configPath), false);
   });
 
@@ -343,7 +343,7 @@ describe("opencode harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(on.code, 0);
-    assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(on.stderr, /is no longer supported/);
     assert.equal(existsSync(configPath), false);
   });
 
@@ -381,11 +381,11 @@ describe("opencode harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" },
     );
     assert.notEqual(on.code, 0);
-    assert.match(on.stderr, /--model firerouter\/sol is a FireRouter route, which is no longer supported/);
+    assert.match(on.stderr, /--model firerouter\/sol is no longer supported/);
     assert.equal(existsSync(configPath), false);
   });
 
-  it("drops a stored FireRouter selection and its BYOK headers on plain re-on", async () => {
+  it("moves a stored FireRouter selection to auto on plain re-on and keeps its provider key for Nexus Auto", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-opencode-firerouter-openai-reen-"));
     const configPath = opencodeConfigPath(home);
     await mkdir(path.dirname(configPath), { recursive: true });
@@ -416,7 +416,7 @@ describe("opencode harness integration", () => {
     assert.equal(config.model, `${OPENCODE_FIREWORKS_PROVIDER_ID}/auto`);
     assert.equal(
       config.provider[OPENCODE_FIREWORKS_PROVIDER_ID].options.headers?.["x-openai-api-key"],
-      undefined,
+      openaiKey,
     );
   });
 

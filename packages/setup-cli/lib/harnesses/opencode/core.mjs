@@ -692,7 +692,7 @@ export async function refreshOpencodeGatewayKey({ configPath, fireworksKey }) {
 
 /**
  * Drop saved provider keys from the gateway `fireworks-ai` provider's
- * `options.headers`, after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * `options.headers`, after `nexus auto --unset anthropic-api-key` / `--unset openai-api-key`.
  * @param {{ configPath: string, headerNames: string[] }} opts
  * @returns {Promise<boolean>} whether opencode.json changed
  */

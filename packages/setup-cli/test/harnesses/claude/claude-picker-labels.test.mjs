@@ -10,11 +10,11 @@ describe("Claude picker labels", () => {
   it("uses Claude-style per Mtok pricing in descriptions", () => {
     assert.equal(
       fireworksModelPickerDescription("auto"),
-      "Routes each user turn across Fireworks open models.",
+      "Smart routing: automatically picks the best model for the task.",
     );
     assert.equal(
       fireworksModelPickerDescription("firerouter"),
-      "Routes each user turn between open models and the closed models you have access to.",
+      "Smart routing: automatically picks the best model for the task.",
     );
     const flash = fireworksModelPickerDescription("deepseek-v4-flash");
     assert.equal(flash, "Fireworks serverless · $0.22/$0.66 per Mtok");
@@ -28,20 +28,10 @@ describe("Claude picker labels", () => {
     assert.match(fireworksModelPickerName("glm-latest"), /GLM/);
   });
 
-  it("labels firerouter compounds with their pinned members", () => {
-    assert.equal(fireworksModelPickerName("firerouter"), "FireRouter");
-    assert.equal(fireworksModelPickerName("firerouter/astra"), "FireRouter · Astra");
-    assert.equal(
-      fireworksModelPickerName("firerouter/claude-opus-5/kimi-k3"),
-      "FireRouter · Claude Opus 5 · Kimi K3",
-    );
-    assert.equal(
-      fireworksModelPickerDescription("firerouter/astra"),
-      "Routes each user turn between this closed model and Fireworks open models.",
-    );
-    assert.equal(
-      fireworksModelPickerDescription("firerouter/opus"),
-      "Routes each user turn between this closed model and Fireworks open models.",
-    );
+  it("labels a leftover FireRouter id like auto, which is how the gateway serves it", () => {
+    for (const id of ["firerouter", "firerouter/astra", "firerouter/claude-opus-5/kimi-k3"]) {
+      assert.equal(fireworksModelPickerName(id), "Auto", id);
+      assert.equal(fireworksModelPickerDescription(id), "Smart routing: automatically picks the best model for the task.", id);
+    }
   });
 });

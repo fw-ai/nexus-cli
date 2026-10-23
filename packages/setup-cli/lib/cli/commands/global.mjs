@@ -48,6 +48,7 @@ import { runtimeDepsInstalled } from "../../system/ensure-cli-deps.mjs";
 import { COMMAND, ownedLaunchers } from "../../system/launchers.mjs";
 import {
   DATA_DIRNAME,
+  hasForeignDataDir,
   LEGACY_ASIDE_DIRNAME,
   LEGACY_DATA_DIRNAME,
 } from "../../system/data-dir.mjs";
@@ -98,12 +99,12 @@ const HARNESS_ROWS = Object.entries(HARNESS_NAME);
 const OPT_HOME = ["--home <path>", "Override HOME for config resolution."];
 const OPT_DATA_DIR = ["--data-dir <path>", "Override backup/state directory."];
 
+const OPT_SKIP_INSTALL_CHECK = ["--skip-install-check", "Turn on even when the harness doesn't look installed."];
+
 /**
- * Options for `<harness> on`. The BYOK flags (`--anthropic-api-key`,
- * `--openai-api-key`) are not listed: they only ever served FireRouter
- * routes, which `on` now rejects, so advertising them would offer flags
- * that always fail. (Claude's help lists `--openai-api-key` separately —
- * `claude on` still accepts it to store the key.)
+ * Options for `<harness> on`. Provider keys for Nexus Auto are not harness
+ * options: `nexus auto --anthropic-api-key` / `--openai-api-key` saves them
+ * once for every harness that can send them.
  */
 function standardOnOpts({ azure = true, modelNote = "" } = {}) {
   const opts = [
@@ -116,6 +117,7 @@ function standardOnOpts({ azure = true, modelNote = "" } = {}) {
     );
   }
   opts.push(["--model <id>", `Model to use${modelNote ? ` (${modelNote})` : ""}.`]);
+  opts.push(OPT_SKIP_INSTALL_CHECK);
   return opts;
 }
 
@@ -130,7 +132,6 @@ function claudeHelp() {
       ["off", "Restore your previous Claude Code settings."],
       ["status", "Show provider, auth, and model mapping."],
       ["usage", "Pick session → live meter (Tab for the agents pane); snapshot with --json / --last-n."],
-      ["live", "tmux split: Claude Code left, live usage meter right (exit Claude to close)."],
       ["demo", "Race two models on a prompt (requires claude on)."],
       ["help", "Show this help."],
     ]),
@@ -145,7 +146,7 @@ function claudeHelp() {
       ["--fable <id>", "Pin the Fable tier slot (`native` = Claude default)."],
       ["--subagent <id>", "Pin the subagent model (`native` = Claude default)."],
       ["--non-interactive", "Non-interactive connect (default)."],
-      ["--openai-api-key <key>", "Optional: store an OpenAI key in Nexus's saved keys."],
+      OPT_SKIP_INSTALL_CHECK,
     ]),
     "",
     optBlock("Options for usage", [
@@ -173,7 +174,7 @@ function claudeHelp() {
 function configHarnessHelp(id, label, { configPath, configPathNote = "", codexNote = "", displayId = id, force = false } = {}) {
   const onOpts = standardOnOpts({
     azure: Boolean(getHarness(id).azure),
-    modelNote: id === "deepseek" ? "default: auto" : id === "codex" ? "default: auto; a re-on keeps the current model, except FireRouter selections, which move to auto" : "",
+    modelNote: id === "deepseek" ? "default: auto" : id === "codex" ? "default: auto; a re-on keeps the current model" : "",
   });
   if (force) {
     onOpts.push(["--force", "Write while the ChatGPT app is running (not recommended)."]);
@@ -208,7 +209,7 @@ function configHarnessHelp(id, label, { configPath, configPathNote = "", codexNo
 }
 
 function ideHarnessHelp(id, label, { pathFlag, pathDesc, note }) {
-  const onOpts = standardOnOpts({});
+  const onOpts = standardOnOpts({ azure: Boolean(getHarness(id).azure) });
   onOpts.push(["--force", `Write while ${label} is running (not recommended).`]);
 
   return helpLines(
@@ -240,7 +241,7 @@ function ideHarnessHelp(id, label, { pathFlag, pathDesc, note }) {
 
 export function mainCommandsHelp() {
   return helpLines(
-    "Nexus — use Fireworks models in AI coding tools.",
+    "Nexus CLI: use Fireworks models in AI coding tools.",
     "",
     cmdBlock("Get started", [
       ["login", "Sign in to Fireworks."],
@@ -256,11 +257,10 @@ export function mainCommandsHelp() {
     ]),
     "",
     cmdBlock("Other", [
-      ["status", "Sign-in state and key storage."],
-      ["harnesses", "Supported harnesses and which are connected."],
-      ["configure", "Provider and BYOK keys."],
-      ["auto", "Customize the auto router (which providers it may use)."],
-      ["update", "Update Nexus."],
+      ["status", "Sign-in state, key storage, and each harness (on/off, installed)."],
+      ["configure", "Provider (Fireworks or Microsoft Foundry)."],
+      ["auto", "Customize the auto router: providers, and Anthropic and OpenAI keys."],
+      ["update", "Update Nexus CLI."],
       ["help", "Full command reference."],
       ["help <harness>", "All options for one harness."],
     ]),
@@ -348,12 +348,12 @@ export function printHelp(topic = "") {
       "",
       "  mcp list|add|remove|sync",
       "                     Manage connectors in the 3p profile. sync re-detects",
-      "                     from Desktop sessions, the pre-Nexus config, and",
+      "                     from Desktop sessions, the pre-Nexus CLI config, and",
       "                     the org's claude.ai connector registry (via the Claude",
       "                     Code CLI when installed).",
       "",
-      "`off` restores only what Nexus changed (profiles, device config,",
-      "services) and removes only Nexus-owned artifacts.",
+      "`off` restores only what Nexus CLI changed (profiles, device config,",
+      "services) and removes only Nexus CLI-owned artifacts.",
       "Quit and reopen Claude Desktop after on/off.",
       "",
       "What stays with your claude.ai subscription:",
@@ -389,7 +389,7 @@ export function printHelp(topic = "") {
     status: helpLines(
       `Usage: ${CLI_NAME} status [options]`,
       "",
-      "Show sign-in state (validated live), machine environment, key storage, and per-harness key sources. Exits non-zero when signed out.",
+      "Show sign-in state (validated live), machine environment, key storage, per-harness key sources, and whether each harness is on and installed. Exits non-zero when signed out.",
       "",
       optBlock("Options", [
         ["--json", "Machine-readable JSON output."],
@@ -399,7 +399,9 @@ export function printHelp(topic = "") {
     harnesses: helpLines(
       `Usage: ${CLI_NAME} harnesses [options]`,
       "",
-      "List every supported harness and whether Nexus has connected it on this machine.",
+      `Deprecated: \`${CLI_NAME} status\` lists every harness with whether it's on and installed.`,
+      "",
+      "List every supported harness and whether Nexus CLI has connected it on this machine.",
       "",
       optBlock("Options", [
         ["--json", "Machine-readable JSON output."],
@@ -409,22 +411,23 @@ export function printHelp(topic = "") {
     configure: helpLines(
       `Usage: ${CLI_NAME} configure [options]`,
       "",
-      "Set default provider and saved BYOK keys. Use `nexus login` for your Fireworks key.",
+      "Set the default provider. Use `nexus login` for your Fireworks key, and `nexus auto` for Anthropic and OpenAI keys.",
       "",
       optBlock("Options", [
         ["--provider <name>", "fireworks (default) or azure."],
         ["--base-url <url>", "Foundry URL (with --provider azure)."],
         ["--api-key <key>", "Foundry endpoint key (azure only)."],
-        ["--anthropic-api-key <key>", "Anthropic key to save."],
-        ["--openai-api-key <key>", "OpenAI key to save."],
-        ["--unset <key>", "Clear a saved key (anthropic-api-key or openai-api-key), here and in every harness."],
+        ["--anthropic-api-key <key>", "Deprecated: use `nexus auto --anthropic-api-key`."],
+        ["--openai-api-key <key>", "Deprecated: use `nexus auto --openai-api-key`."],
+        ["--unset <key>", "Deprecated: use `nexus auto --unset <key>`."],
         OPT_HOME,
       ]),
     ),
     auto: helpLines(
       `Usage: ${CLI_NAME} auto [options]`,
       "",
-      "Customize the auto router. Bare `nexus auto` shows the current settings.",
+      "Customize the auto router and save the Anthropic and OpenAI keys it may use.",
+      "Bare `nexus auto` shows the current settings.",
       "",
       "In the default, Auto-selects the best model for each turn,",
       "based on your setup. Use this command to narrow that down:",
@@ -437,6 +440,9 @@ export function printHelp(topic = "") {
       optBlock("Options", [
         ["--providers <list>", "Providers auto may route to, comma-separated (fireworks means models hosted on Fireworks; the only one supported today)."],
         ["--reset", "Remove the extra filter and go back to the default."],
+        ["--anthropic-api-key <key>", "Save an Anthropic key so auto can use Anthropic models. Sent from every harness that can carry it; run `nexus <harness>` again to apply."],
+        ["--openai-api-key <key>", "Save an OpenAI key so auto can use OpenAI models. Same reach as above."],
+        ["--unset <key>", "Clear a saved key (anthropic-api-key or openai-api-key), here and in every harness."],
         ["--json", "Machine-readable output."],
         OPT_HOME,
       ]),
@@ -445,12 +451,12 @@ export function printHelp(topic = "") {
     uninstall: helpLines(
       `Usage: ${CLI_NAME} uninstall`,
       "",
-      "Disable all harnesses and remove Nexus (~/.nexus/, CLI launcher).",
+      "Disable all harnesses and remove Nexus CLI (~/.nexus/, CLI launcher).",
     ),
     update: helpLines(
       `Usage: ${CLI_NAME} update`,
       "",
-      "Update Nexus (curl/git install only). `upgrade` is an alias.",
+      "Update Nexus CLI (curl/git install only). `upgrade` is an alias.",
     ),
   };
   harnessHelp.upgrade = harnessHelp.update;
@@ -461,7 +467,7 @@ export function printHelp(topic = "") {
   }
 
   console.log(colorizeHelp(helpLines(
-    "Nexus — use Fireworks models in AI coding tools.",
+    "Nexus CLI: use Fireworks models in AI coding tools.",
     "",
     `Usage: ${CLI_NAME} [<harness> [command]] [options]`,
     "",
@@ -472,7 +478,6 @@ export function printHelp(topic = "") {
       ["off", "Restore previous provider settings."],
       ["status", "Show provider, auth, and models."],
       ["usage", "Claude-only: session usage report."],
-      ["live", "Claude-only: tmux split with live usage meter."],
       ["demo", "Claude-only: race two models on a prompt."],
       ["help", "Show harness-specific options."],
     ]),
@@ -480,15 +485,14 @@ export function printHelp(topic = "") {
     cmdBlock("Global commands", [
       ["login", "Sign in to Fireworks."],
       ["logout", "Clear stored credentials."],
-      ["status", "Show sign-in state, machine environment, and key storage."],
-      ["harnesses", "List every supported harness and whether it is connected."],
+      ["status", "Show sign-in state, environment, key storage, and each harness (on/off, installed)."],
       ["model list", "Browse serverless models."],
       ["models", "Alias for model list."],
-      ["configure", "Set provider and BYOK keys."],
-      ["auto", "Customize the auto router (which providers it may use)."],
-      ["update", "Update Nexus."],
+      ["configure", "Set the provider (Fireworks or Microsoft Foundry)."],
+      ["auto", "Customize the auto router: providers, and Anthropic and OpenAI keys."],
+      ["update", "Update Nexus CLI."],
       ["upgrade", "Alias for update."],
-      ["uninstall", "Remove Nexus."],
+      ["uninstall", "Remove Nexus CLI."],
       ["help", "Show help (`help <topic>` or `<harness> help`)."],
     ]),
     "",
@@ -518,7 +522,7 @@ async function readInstalledVersion(installDir) {
 export function runVersionCommand(ctx) {
   const version = readLocalVersion();
   if (!version) {
-    throw new Error("Unable to determine Nexus version.");
+    throw new Error("Unable to determine Nexus CLI version.");
   }
 
   if (ctx.json) {
@@ -546,7 +550,10 @@ export function runBannerCommand() {
 export async function runFinalizeInstallCommand(ctx = {}) {
   const home = ctx.home || process.env.HOME || "";
   const installDir = home ? path.join(home, DATA_DIRNAME, "cli") : "";
-  await finalizeInstallOrUpgrade({ home, installDir });
+  const result = await finalizeInstallOrUpgrade({ home, installDir });
+  if (result.renameBlocked) {
+    throw new Error("Finalize stopped: rename or remove ~/.nexus, then run the update again.");
+  }
 }
 
 /**
@@ -568,6 +575,7 @@ export async function runFinalizeInstallCommand(ctx = {}) {
  *   successFn?: typeof success,
  *   log?: (...args: unknown[]) => void,
  *   runtimeDepsPresent?: (setupDir: string) => boolean,
+ *   dataDirBlocked?: (home: string) => boolean,
  * }} [dependencies]
  */
 export async function runUpgradeCommand({
@@ -585,6 +593,7 @@ export async function runUpgradeCommand({
   successFn = success,
   log = console.log,
   runtimeDepsPresent = runtimeDepsInstalled,
+  dataDirBlocked = hasForeignDataDir,
 } = {}) {
   if (!home) {
     throw new Error("HOME is not set; update requires HOME to be set.");
@@ -593,8 +602,21 @@ export async function runUpgradeCommand({
 
   printBannerFn();
 
+  // The rename to ~/.nexus is part of this update, and a ~/.nexus owned by
+  // another program blocks it. Discover that before fetch/reset/npm — and
+  // before any "Updated" output — so a blocked update changes nothing and
+  // the installed version keeps working. (install.sh checks the same thing
+  // before it changes anything.)
+  if (dataDirBlocked(home)) {
+    throw new Error(
+      `Update stopped before changing anything: ~/${DATA_DIRNAME} belongs to another program, `
+      + `so your FireConnect settings stay in ~/${LEGACY_DATA_DIRNAME}. `
+      + `Rename or remove ~/${DATA_DIRNAME}, then run the update again.`,
+    );
+  }
+
   if (!exists(path.join(installDir, ".git"))) {
-    infoFn("Nothing to update: Nexus was not installed via the curl installer.");
+    infoFn("Nothing to update: Nexus CLI was not installed via the curl installer.");
     infoFn("Re-run the installer to get the latest version:");
     infoFn("  curl -fsSL https://nexus.fireworks.ai/install.sh | bash");
     await finalize(home, installDir);
@@ -652,13 +674,13 @@ export async function runUpgradeCommand({
   if (beforeHash && beforeHash === targetHash) {
     infoFn(`Already up to date${before ? ` (v${before})` : ""}.`);
     installRuntimeDeps(false);
+    await finalize(home, installDir);
     await printNotes({
       home,
       fromVersion: "",
       toVersion: before,
       installDir,
     });
-    await finalize(home, installDir);
     return;
   }
 
@@ -702,11 +724,16 @@ export async function runUpgradeCommand({
   }
   installRuntimeDeps(depsChanged);
 
+  // Finalize first: it runs the rename and the harness migrations the new
+  // version needs. Only once it completes is the update done, so success
+  // and the release notes print after it, not before.
+  await finalize(home, installDir);
+
   if (!claudePreflight.restored) {
     if (before && after && before !== after) {
       successFn(`Updated v${before} → v${after}.`);
     } else {
-      successFn(`Nexus updated successfully${after ? ` (v${after})` : ""}.`);
+      successFn(`Nexus CLI updated successfully${after ? ` (v${after})` : ""}.`);
     }
   }
 
@@ -716,11 +743,10 @@ export async function runUpgradeCommand({
     toVersion: after,
     installDir,
   });
-  await finalize(home, installDir);
 
   if (claudePreflight.restored) {
     log("Update complete. Your original Claude Code settings were restored.");
-    log(`To reconnect with Nexus v${after || before || "unknown"}:\n  nexus claude`);
+    log(`To reconnect with Nexus CLI v${after || before || "unknown"}:\n  nexus claude`);
   }
 }
 
@@ -842,7 +868,7 @@ async function removeFireConnectFiles(home, removeCatalog, { skipPerHarnessDirs,
       removalFailures.push(failure);
     }
   }
-  await reportStep?.("Nexus files");
+  await reportStep?.("Nexus CLI files");
   return removalFailures;
 }
 
@@ -871,7 +897,7 @@ async function pace(interactive, ms = 220) {
  */
 function printUninstallAborted(offErrors, restoredLabels) {
   console.log("");
-  console.log("  Stopped before removing Nexus.");
+  console.log("  Stopped before removing Nexus CLI.");
   console.log("");
   for (const { label, message } of offErrors) {
     console.log(`  ${label} could not be restored:`);
@@ -882,11 +908,11 @@ function printUninstallAborted(offErrors, restoredLabels) {
     console.log(`  Already restored, and left that way: ${restoredLabels.join(", ")}.`);
   }
   console.log("");
-  console.log("  Nexus is still installed and your backups are intact, so it");
+  console.log("  Nexus CLI is still installed and your backups are intact, so it");
   console.log("  is safe to resolve the above and run the same command again:");
   console.log(`    ${accent(`${CLI_NAME} uninstall`)}`);
   console.log("");
-  console.log("  To remove Nexus regardless, without waiting on an editor");
+  console.log("  To remove Nexus CLI regardless, without waiting on an editor");
   console.log("  (a running editor may overwrite the restore):");
   console.log(`    ${accent(`${CLI_NAME} uninstall --force`)}`);
   console.log("");
@@ -922,7 +948,7 @@ function printFarewell(restoredLabels) {
 function printUninstallSummary({ offErrors, removalFailures }) {
   const hasErrors = offErrors.length > 0 || removalFailures.length > 0;
   if (!hasErrors) {
-    console.log("Nexus has been uninstalled. Restart any running harnesses (Claude Code, OpenCode, Codex, Pi, Cursor, VS Code, Copilot, DeepSeek Harness) to fully apply.");
+    console.log("Nexus CLI has been uninstalled. Restart any running harnesses (Claude Code, OpenCode, Codex, Pi, Cursor, VS Code, Copilot, DeepSeek Harness) to fully apply.");
     return;
   }
   for (const { harnessId, label, message } of offErrors) {
@@ -930,12 +956,12 @@ function printUninstallSummary({ offErrors, removalFailures }) {
     console.error(`Restart ${label} manually to clear any Fireworks settings.`);
   }
   if (removalFailures.length > 0) {
-    console.error("Nexus uninstall completed with file removal errors:");
+    console.error("Nexus CLI uninstall completed with file removal errors:");
     for (const { path: failedPath, message } of removalFailures) {
       console.error(`  ${failedPath}: ${message}`);
     }
   } else {
-    console.log("Nexus files removed. Restart any running harnesses to fully apply.");
+    console.log("Nexus CLI files removed. Restart any running harnesses to fully apply.");
   }
   process.exitCode = 1;
 }
@@ -986,13 +1012,13 @@ export async function runUninstallCommand(ctx) {
       // fall through to file removal. Only say "not installed" when there
       // are no harnesses AND no Nexus files on disk.
       if (!(await installFootprint(home)).some((file) => existsSync(file))) {
-        console.log("Nexus is not installed.");
+        console.log("Nexus CLI is not installed.");
         return;
       }
     }
 
     console.log("");
-    console.log(`  Uninstalling ${accent("Nexus")}`);
+    console.log(`  Uninstalling ${accent("Nexus CLI")}`);
 
     if (harnessIds.length > 0) {
       console.log("");

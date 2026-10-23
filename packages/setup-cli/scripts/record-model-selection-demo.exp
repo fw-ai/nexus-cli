@@ -9,7 +9,7 @@ set env(COLUMNS) 100
 set env(LINES) 40
 set env(TERM) xterm-256color
 
-cd /agent/repos/fireconnect-internal/packages/setup-cli
+cd [file dirname [file dirname [file normalize [info script]]]]
 
 spawn -noecho bash -c {stty cols 100 rows 40 2>/dev/null; exec node bin/nexus.mjs demo --no-open --out /tmp/fc-model-select-out}
 

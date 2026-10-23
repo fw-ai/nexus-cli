@@ -9,15 +9,11 @@ import {
   findClaudeSessionLogs,
   formatClaudeUsageReport,
   formatClaudeUsageReports,
-  listTopLevelSessionLogPaths,
   parseClaudeSessionName,
   parseClaudeUsageLog,
   readClaudeUsage,
   readClaudeUsages,
-  snapshotLiveSessionLogs,
   usageReportFromText,
-  waitForLiveSessionLog,
-  waitForNewSessionLog,
 } from "../../../../lib/harnesses/claude/usage/report.mjs";
 import { runFireconnect } from "../../../helpers.mjs";
 
@@ -817,87 +813,5 @@ describe("claude usage", () => {
     assert.equal(parsed.requests, 1);
     assert.equal(parsed.rows[0].model, "claude-opus-4-8");
     assert.equal(parsed.rows[0].rates.inputPerMillion, 5);
-  });
-});
-
-describe("waitForNewSessionLog", () => {
-  it("returns the first session log that was not in the snapshot", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-live-wait-"));
-    const projectDir = path.join(home, ".claude", "projects", "repo");
-    await mkdir(projectDir, { recursive: true });
-    const existingId = "11111111-1111-4111-8111-111111111111";
-    await writeFile(path.join(projectDir, `${existingId}.jsonl`), "\n");
-
-    const beforePaths = await listTopLevelSessionLogPaths(home);
-    assert.equal(beforePaths.length, 1);
-
-    let polls = 0;
-    const sessionPath = await waitForNewSessionLog({
-      home,
-      beforePaths,
-      pollMs: 0,
-      sleep: async () => {
-        polls += 1;
-        if (polls === 2) {
-          const newId = "22222222-2222-4222-8222-222222222222";
-          await writeFile(path.join(projectDir, `${newId}.jsonl`), "\n");
-        }
-      },
-    });
-
-    assert.equal(path.basename(sessionPath, ".jsonl"), "22222222-2222-4222-8222-222222222222");
-    assert.ok(polls >= 2);
-  });
-});
-
-describe("waitForLiveSessionLog", () => {
-  it("returns a new session log that was not in the snapshot", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-live-wait-resume-"));
-    const projectDir = path.join(home, ".claude", "projects", "repo");
-    await mkdir(projectDir, { recursive: true });
-    const existingId = "11111111-1111-4111-8111-111111111111";
-    await writeFile(path.join(projectDir, `${existingId}.jsonl`), "\n");
-
-    const snapshot = await snapshotLiveSessionLogs(home);
-    let polls = 0;
-    const sessionPath = await waitForLiveSessionLog({
-      home,
-      beforeLogs: snapshot.logs,
-      pollMs: 0,
-      sleep: async () => {
-        polls += 1;
-        if (polls === 2) {
-          const newId = "22222222-2222-4222-8222-222222222222";
-          await writeFile(path.join(projectDir, `${newId}.jsonl`), "\n");
-        }
-      },
-    });
-
-    assert.equal(path.basename(sessionPath, ".jsonl"), "22222222-2222-4222-8222-222222222222");
-  });
-
-  it("returns an existing log when it is resumed and mtime advances", async () => {
-    const home = await mkdtemp(path.join(os.tmpdir(), "fc-live-wait-resume-"));
-    const projectDir = path.join(home, ".claude", "projects", "repo");
-    await mkdir(projectDir, { recursive: true });
-    const existingId = "11111111-1111-4111-8111-111111111111";
-    const existingPath = path.join(projectDir, `${existingId}.jsonl`);
-    await writeFile(existingPath, "\n");
-
-    const snapshot = await snapshotLiveSessionLogs(home);
-    let polls = 0;
-    const sessionPath = await waitForLiveSessionLog({
-      home,
-      beforeLogs: snapshot.logs,
-      pollMs: 0,
-      sleep: async () => {
-        polls += 1;
-        if (polls === 2) {
-          await writeFile(existingPath, "{\"type\":\"user\"}\n", { flag: "a" });
-        }
-      },
-    });
-
-    assert.equal(sessionPath, existingPath);
   });
 });

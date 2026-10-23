@@ -57,7 +57,7 @@ function currentLauncher(home, content) {
     .replaceAll("bin\\fireconnect.mjs", "bin\\nexus.mjs")
     .replaceAll("FIRECONNECT_NODE_BIN", "NEXUS_NODE_BIN")
     .replaceAll("fireconnect: Node.js was not found", "nexus: Node.js was not found")
-    .replaceAll("FireConnect installer", "Nexus installer");
+    .replaceAll("FireConnect installer", "Nexus CLI installer");
   const installed = existsSync(path.join(home, DATA_DIRNAME, "cli", "packages", "setup-cli", "bin", "nexus.mjs"));
   return installed ? retargetLegacyPath(renamed) : renamed;
 }

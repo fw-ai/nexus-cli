@@ -19,7 +19,7 @@ import {
 import { SplitPaneRenderer, isTtyCapable } from "./tui.mjs";
 import { confirmYesNo, pressAnyKeyToExit } from "./key-prompt.mjs";
 import { buildCompareHtml, serveStatic, openInBrowser } from "./browser.mjs";
-import { GREEN, CYAN, YELLOW, BOLD, RESET } from "./ansi.mjs";
+import { ACCENT, PRIMARY, YELLOW, BOLD, RESET } from "./ansi.mjs";
 import {
   demoModelLabel,
   demoSideDisplayLabel,
@@ -388,11 +388,11 @@ export async function runDemoCommand(ctx) {
     if (handoffUrl) {
       const opened = openInBrowser(handoffUrl);
       if (opened) {
-        console.log(`\n  ${GREEN}✓${RESET} ${BOLD}Opening comparison in your browser…${RESET}`);
-        console.log(`    ${CYAN}${handoffUrl}${RESET}`);
+        console.log(`\n  ${PRIMARY}✓${RESET} ${BOLD}Opening comparison in your browser…${RESET}`);
+        console.log(`    ${ACCENT}${handoffUrl}${RESET}`);
       } else {
         console.log(`\n  ${YELLOW}⚠${RESET} Couldn't open a browser. View it at:`);
-        console.log(`    ${CYAN}${handoffUrl}${RESET}`);
+        console.log(`    ${ACCENT}${handoffUrl}${RESET}`);
       }
     } else {
       const fileUrl = `file://${path.join(outDir, "compare.html")}`;
@@ -400,17 +400,17 @@ export async function runDemoCommand(ctx) {
       // must not print a green success line.
       const openedFile = openInBrowser(fileUrl);
       if (openedFile) {
-        console.log(`\n  ${GREEN}✓${RESET} ${BOLD}Opening comparison in your browser…${RESET}`);
+        console.log(`\n  ${PRIMARY}✓${RESET} ${BOLD}Opening comparison in your browser…${RESET}`);
       } else {
         console.log(`\n  ${YELLOW}⚠${RESET} Couldn't open a browser. View it at:`);
       }
-      console.log(`    ${CYAN}${fileUrl}${RESET}`);
+      console.log(`    ${ACCENT}${fileUrl}${RESET}`);
     }
     console.log(`  ${DIM(`On-disk copy: ${path.join(outDir, "compare.html")}`)}`);
   } else if (useTui) {
     // TTY but --no-open: skip the browser, just point at the on-disk page.
     console.log(`\n  ${BOLD}Comparison page${RESET}`);
-    console.log(`    ${CYAN}${path.join(outDir, "compare.html")}${RESET}`);
+    console.log(`    ${ACCENT}${path.join(outDir, "compare.html")}${RESET}`);
   }
 
   // ── json output ───────────────────────────────────────────────────────────
@@ -604,7 +604,7 @@ function sideHeader(proto, rates, costLabel) {
 
 function printFraming(leftLabel, rightLabel) {
   console.log("");
-  console.log("  Nexus Demo");
+  console.log("  Nexus CLI Demo");
   console.log("  Same prompt, two models. Let's build something and race.");
   console.log("");
   console.log(`  Left:   ${leftLabel}`);
@@ -626,11 +626,11 @@ function printVerdict(result, leftLabel, rightLabel) {
   const bothOk = result.incumbent.ok && result.fireworks.ok;
   const bothRunnable = bothOk && result.incumbent.appRunnable && result.fireworks.appRunnable;
   console.log("");
-  console.log(`  ${CYAN}${"─".repeat(58)}${RESET}`);
+  console.log(`  ${"─".repeat(58)}`);
   // The headline verdict — bold, with the winning side's name in green.
   console.log(`  ${BOLD}${speedPart} · ${costPart}${RESET}`);
   if (bothRunnable) {
-    console.log(`  ${GREEN}✓${RESET} Both built a working app. ${DIM("See for yourself →")}`);
+    console.log(`  ${PRIMARY}✓${RESET} Both built a working app. ${DIM("See for yourself →")}`);
   } else if (!bothOk) {
     const failed = !result.incumbent.ok ? left : right;
     console.log(`  ${YELLOW}⚠${RESET} The run was incomplete (${failed} failed). No winner declared on a partial result.`);
@@ -638,7 +638,7 @@ function printVerdict(result, leftLabel, rightLabel) {
     console.log(`  ${YELLOW}⚠${RESET} One build didn't run. ${DIM("See for yourself →")}`);
   }
   console.log(`  ${DIM("Costs are what Claude Code reported for each run, not estimates.")}`);
-  console.log(`  ${CYAN}${"─".repeat(58)}${RESET}`);
+  console.log(`  ${"─".repeat(58)}`);
 }
 
 function verdictSpeed(result, leftLabel, rightLabel) {

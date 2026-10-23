@@ -27,16 +27,31 @@ const RENAMED_FLAGS = {
 const RETIRED_FLAG_MESSAGES = {};
 
 export const ROUTING_PREFERENCE_DEPRECATION_MESSAGE =
-  "--routing-preference is deprecated and has no effect: FireRouter routes are no longer supported.";
+  "--routing-preference is deprecated and has no effect. Set effort in your harness instead.";
+
+/**
+ * Flags that point a harness at its own config file or store, mapped to their
+ * context key. `on` skips its install check when any is set, so a new path
+ * flag goes here and both the parser and the check pick it up. (`--data-dir`
+ * only moves Nexus's backups, so it isn't one.)
+ */
+export const HARNESS_PATH_FLAGS = Object.freeze({
+  "--settings-path": "settingsPath",
+  "--config-path": "configPath",
+  "--db-path": "dbPath",
+  "--vscode-path": "vscodePath",
+  "--providers-path": "providersPath",
+});
 
 /** Every flag the parser understands — used only for typo suggestions. */
 const KNOWN_FLAGS = [
-  "--help", "--version", "--json", "--home", "--settings-path", "--config-path",
+  ...Object.keys(HARNESS_PATH_FLAGS),
+  "--help", "--version", "--json", "--home",
   "--data-dir", "--api-key", "--base-url", "--azure", "--provider",
   "--anthropic-api-key", "--openai-api-key", "--unset", "--model", "--opus",
   "--sonnet", "--haiku", "--fable", "--subagent", "--search", "--refresh",
   "--providers", "--reset",
-  "--db-path", "--vscode-path", "--providers-path", "--force", "--stored-only",
+  "--force", "--skip-install-check", "--stored-only",
   "--last-n", "--plain", "--verbose", "--routing-preference", "--session", "--days",
   "--account", "--anthropic", "--openai", "--paste", "--revoke", "--with-token",
   "--interactive", "--non-interactive", "--client-id", "--client-secret",
@@ -103,6 +118,7 @@ export function createBaseContext() {
     json: false,
     dbPath: "",
     force: false,
+    skipInstallCheck: false,
     storedOnly: false,
     vscodePath: "",
     withToken: false,
@@ -151,6 +167,10 @@ function requireDays(flag, value) {
  *   false = boolean flag; null = not a global flag (caller decides).
  */
 export function applyGlobalFlag(ctx, arg, next) {
+  if (Object.hasOwn(HARNESS_PATH_FLAGS, arg)) {
+    ctx[HARNESS_PATH_FLAGS[arg]] = requireValue(arg, next);
+    return true;
+  }
   switch (arg) {
     case "--json": ctx.json = true; return false;
     case "--verbose":
@@ -160,6 +180,7 @@ export function applyGlobalFlag(ctx, arg, next) {
     case "--routing-preference": requireValue(arg, next); ctx.routingPreferenceDeprecated = true; return true;
     case "--azure": ctx.azure = true; ctx.provider = "azure"; return false;
     case "--force": ctx.force = true; return false;
+    case "--skip-install-check": ctx.skipInstallCheck = true; return false;
     case "--client-id": ctx.clientId = requireValue(arg, next); return true;
     case "--client-secret": ctx.clientSecret = requireValue(arg, next); return true;
     case "--stored-only": ctx.storedOnly = true; return false;
@@ -193,14 +214,31 @@ export function applyGlobalFlag(ctx, arg, next) {
     case "--providers": ctx.providers = requireValue(arg, next); ctx.providersFromFlag = true; return true;
     case "--reset": ctx.autoReset = true; return false;
     case "--home": ctx.home = requireValue(arg, next); return true;
-    case "--settings-path": ctx.settingsPath = requireValue(arg, next); return true;
-    case "--config-path": ctx.configPath = requireValue(arg, next); return true;
     case "--data-dir": ctx.dataDir = requireValue(arg, next); return true;
     case "--api-key": ctx.apiKey = requireValue(arg, next); ctx.apiKeyFromFlag = true; return true;
     case "--base-url": ctx.baseUrl = requireValue(arg, next); ctx.baseUrlFromFlag = true; return true;
     case "--provider": ctx.provider = requireValue(arg, next); return true;
-    case "--anthropic-api-key": ctx.anthropicKey = requireValue(arg, next); ctx.anthropicKeyFromFlag = true; return true;
-    case "--openai-api-key": ctx.openaiKey = requireValue(arg, next); ctx.openaiKeyFromFlag = true; return true;
+    // A bare provider-key flag (no value, or followed by another flag) asks
+    // the command to prompt on the TTY instead of taking the key from argv,
+    // keeping it out of shell history and the process list.
+    case "--anthropic-api-key":
+      ctx.anthropicKeyFromFlag = true;
+      if (next && !next.startsWith("--")) {
+        ctx.anthropicKey = next;
+        return true;
+      }
+      ctx.anthropicKey = "";
+      ctx.anthropicKeyPrompt = true;
+      return false;
+    case "--openai-api-key":
+      ctx.openaiKeyFromFlag = true;
+      if (next && !next.startsWith("--")) {
+        ctx.openaiKey = next;
+        return true;
+      }
+      ctx.openaiKey = "";
+      ctx.openaiKeyPrompt = true;
+      return false;
     case "--model": ctx.main = requireValue(arg, next); return true;
     case "--opus": ctx.opus = requireValue(arg, next); return true;
     case "--sonnet": ctx.sonnet = requireValue(arg, next); return true;
@@ -212,9 +250,6 @@ export function applyGlobalFlag(ctx, arg, next) {
     case "--session": ctx.session = requireValue(arg, next); return true;
     case "--days": ctx.days = requireDays(arg, next); return true;
     case "--last-n": ctx.lastN = requireValue(arg, next); return true;
-    case "--db-path": ctx.dbPath = requireValue(arg, next); return true;
-    case "--vscode-path": ctx.vscodePath = requireValue(arg, next); return true;
-    case "--providers-path": ctx.providersPath = requireValue(arg, next); return true;
     default: return null;
   }
 }
@@ -327,6 +362,12 @@ export function parseCli(argv) {
   if ((ctx.providersFromFlag || ctx.autoReset) && positional[0] !== "auto") {
     const flag = ctx.providersFromFlag ? "--providers" : "--reset";
     throw new Error(`${flag} applies only to \`nexus auto\`. Run: nexus auto --help`);
+  }
+
+  if ((ctx.anthropicKeyPrompt || ctx.openaiKeyPrompt)
+    && positional[0] !== "auto" && positional[0] !== "configure") {
+    const flag = ctx.anthropicKeyPrompt ? "--anthropic-api-key" : "--openai-api-key";
+    throw new Error(`${flag} requires a value`);
   }
 
   if (version) {

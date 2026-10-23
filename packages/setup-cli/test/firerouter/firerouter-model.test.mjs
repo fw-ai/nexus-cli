@@ -12,26 +12,15 @@ import {
   normalizeModelId,
 } from "../../lib/fireworks/model-id.mjs";
 import {
-  anthropicKeyPromptCopy,
   buildClaudeCustomHeaders,
-  evaluateAnthropicKeyPrompt,
-  firerouterByokHeaders,
   firerouterStatusFromEnv,
-  resolveFirerouterByokKeys,
 } from "../../lib/firerouter/core.mjs";
 import {
   catalogWithAutomaticAuto,
-  catalogWithAutomaticFirerouter,
   firerouterDisplayName,
   preferLatestAliases,
   registerableModelIds,
 } from "../../lib/fireworks/models.mjs";
-import {
-  firerouterCredentialsRequiredMessage,
-  resolveExplicitFirerouterCredential,
-  resolveFirerouterByokHeaders,
-  resolveFirerouterPlan,
-} from "../../lib/firerouter/flag.mjs";
 
 describe("firerouter model recognition", () => {
   it("recognizes firerouter regardless of prefix or context suffix", () => {
@@ -133,26 +122,16 @@ describe("firerouter model recognition", () => {
     }
   });
 
-  it("firerouterDisplayName constructs a label from the slash path", () => {
-    assert.equal(firerouterDisplayName("firerouter"), "FireRouter");
-    assert.equal(firerouterDisplayName("firerouter[1m]"), "FireRouter");
-    assert.equal(firerouterDisplayName("accounts/fireworks/routers/firerouter"), "FireRouter");
-    assert.equal(
-      firerouterDisplayName("firerouter/claude-opus-5/kimi-k3-fast"),
-      "FireRouter · Claude Opus 5 · Kimi K3 Fast",
-    );
-    assert.equal(
-      firerouterDisplayName("firerouter/kimi-k3/glm-5p2-fast"),
-      "FireRouter · Kimi K3 · GLM 5.2 Fast",
-    );
-    // Canonical multi-segment ref: the accounts/fireworks/routers prefix is
-    // stripped, not pretty-named.
-    assert.equal(
-      firerouterDisplayName("accounts/fireworks/routers/firerouter/kimi-k3"),
-      "FireRouter · Kimi K3",
-    );
-    // Non-firerouter ids fall back to the bare brand label.
-    assert.equal(firerouterDisplayName("kimi-fast-latest"), "FireRouter");
+  it("firerouterDisplayName labels every FireRouter id like auto", () => {
+    for (const id of [
+      "firerouter",
+      "firerouter[1m]",
+      "accounts/fireworks/routers/firerouter",
+      "firerouter/claude-opus-5/kimi-k3-fast",
+      "accounts/fireworks/routers/firerouter/kimi-k3",
+    ]) {
+      assert.equal(firerouterDisplayName(id), "Auto", id);
+    }
   });
 
   it("normalizeModelId keeps gateway slugs short (no accounts/fireworks expansion)", () => {
@@ -196,125 +175,7 @@ describe("firerouter model recognition", () => {
   });
 });
 
-describe("firerouter routing plan", () => {
-  it("resolveFirerouterPlan selects firerouter only for --model firerouter", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter" }), {
-      mainModel: "firerouter",
-      isFirerouter: true,
-      requiresAnthropicKey: true,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-    assert.deepEqual(resolveFirerouterPlan({ main: "accounts/fireworks/routers/firerouter" }), {
-      mainModel: "accounts/fireworks/routers/firerouter",
-      isFirerouter: true,
-      requiresAnthropicKey: true,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-    // A multi-model slug is a firerouter selection; requiresAnthropicKey and
-    // namesAnthropicModel track whether an Anthropic model is in the path.
-    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter/claude-opus-5/kimi-k3-fast" }), {
-      mainModel: "firerouter/claude-opus-5/kimi-k3-fast",
-      isFirerouter: true,
-      requiresAnthropicKey: true,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: true,
-    });
-    assert.deepEqual(resolveFirerouterPlan({ main: "firerouter/kimi-k3/glm-5p2-fast" }), {
-      mainModel: "firerouter/kimi-k3/glm-5p2-fast",
-      isFirerouter: true,
-      requiresAnthropicKey: false,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-  });
-
-  it("resolveFirerouterPlan keeps an explicit non-firerouter model", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "glm-fast-latest" }), {
-      mainModel: "glm-fast-latest",
-      isFirerouter: false,
-      requiresAnthropicKey: false,
-      requiresOpenaiKey: false,
-      namesAnthropicModel: false,
-    });
-  });
-
-  it("resolveFirerouterPlan never auto-defaults to firerouter (no --model → harness default)", () => {
-    assert.deepEqual(resolveFirerouterPlan({ main: "" }), { mainModel: "", isFirerouter: false, requiresAnthropicKey: false, requiresOpenaiKey: false, namesAnthropicModel: false });
-    assert.deepEqual(resolveFirerouterPlan({}), { mainModel: "", isFirerouter: false, requiresAnthropicKey: false, requiresOpenaiKey: false, namesAnthropicModel: false });
-  });
-
-  it("resolveExplicitFirerouterCredential never throws for byok:none harnesses", async () => {
-    // A harness that can't forward a local key still connects: the credential
-    // resolves best-effort (empty here) and FireRouter routes the Fireworks mix.
-    const savedAnthropic = process.env.ANTHROPIC_API_KEY;
-    delete process.env.ANTHROPIC_API_KEY;
-    try {
-      assert.deepEqual(
-        await resolveExplicitFirerouterCredential({ firerouter: { byok: "none" } }),
-        { anthropicKey: "" },
-      );
-    } finally {
-      if (savedAnthropic !== undefined) process.env.ANTHROPIC_API_KEY = savedAnthropic;
-    }
-  });
-
-  it("pure-Fireworks firerouter selections attach no Anthropic key even when catalog-registered", async () => {
-    // VS Code registers firerouter in the catalog (catalogFirerouter: true);
-    // a pure-Fireworks path must not prompt for or attach an Anthropic key.
-    const purePlan = resolveFirerouterPlan({ main: "firerouter/kimi-k3/glm-5p2-fast" });
-    assert.equal(purePlan.requiresAnthropicKey, false);
-    assert.deepEqual(
-      await resolveFirerouterByokHeaders({
-        plan: purePlan,
-        catalogFirerouter: true,
-        ctx: { home: "" },
-      }),
-      {},
-    );
-  });
-
-  it("firerouterCredentialsRequiredMessage matches harness BYOK mode", () => {
-    assert.match(
-      firerouterCredentialsRequiredMessage({ byok: "value" }),
-      /Anthropic API key/,
-    );
-    assert.match(
-      firerouterCredentialsRequiredMessage({ byok: "none" }),
-      /Ask the Fireworks team to enable FireRouter/,
-    );
-  });
-
-  it("distinguishes required Claude auth copy from optional BYOK copy", () => {
-    const required = anthropicKeyPromptCopy({ explicit: true, allowSkip: false });
-    assert.match(required.intro, /requires an Anthropic API key/);
-    assert.match(required.prompt, /required/);
-    assert.doesNotMatch(`${required.intro} ${required.prompt} ${required.invalid}`, /skip/i);
-
-    const optional = anthropicKeyPromptCopy({ explicit: true, allowSkip: true });
-    assert.match(optional.prompt, /Enter to skip/);
-  });
-
-  it("retries empty and malformed required Anthropic keys", () => {
-    assert.deepEqual(
-      evaluateAnthropicKeyPrompt("", { allowSkip: false }),
-      { key: "", retry: true },
-    );
-    assert.deepEqual(
-      evaluateAnthropicKeyPrompt("not-a-key", { allowSkip: false }),
-      { key: "", retry: true },
-    );
-    assert.deepEqual(
-      evaluateAnthropicKeyPrompt("", { allowSkip: true }),
-      { key: "", retry: false },
-    );
-    assert.deepEqual(
-      evaluateAnthropicKeyPrompt("sk-ant-valid", { allowSkip: false }),
-      { key: "sk-ant-valid", retry: false },
-    );
-  });
-
+describe("model catalog", () => {
   it("preferLatestAliases keeps aliases or only the newest concrete family version", () => {
     const catalog = [
       { shortId: "deepseek-v3", id: "accounts/fireworks/models/deepseek-v3" },
@@ -421,7 +282,7 @@ describe("firerouter routing plan", () => {
     assert.deepEqual(kept, ["gpt-oss-20b", "gpt-oss-120b"]);
   });
 
-  it("registerableModelIds passes the served list through, firerouter only when requested", () => {
+  it("registerableModelIds passes the served list through, never a FireRouter row", () => {
     const catalog = [
       {
         shortId: "glm-latest",
@@ -432,17 +293,6 @@ describe("firerouter routing plan", () => {
       registerableModelIds(catalog),
       ["accounts/fireworks/routers/glm-latest"],
       "registerableModelIds passes the served list through; loadServerlessCatalog adds auto",
-    );
-    assert.deepEqual(
-      registerableModelIds(
-        [{ shortId: "auto", id: "auto" }, ...catalog],
-        { includeFirerouter: true },
-      ),
-      [
-        FIREROUTER_ROUTER_ID,
-        "auto",
-        "accounts/fireworks/routers/glm-latest",
-      ],
     );
     assert.deepEqual(
       registerableModelIds(
@@ -460,15 +310,6 @@ describe("firerouter routing plan", () => {
       { shortId: "", id: "accounts/fireworks/routers/auto" },
     ]) {
       const catalog = [glmLatest, autoRow];
-      assert.deepEqual(
-        registerableModelIds(catalog, { includeFirerouter: true }),
-        [
-          FIREROUTER_ROUTER_ID,
-          "accounts/fireworks/routers/glm-latest",
-          autoRow.id,
-        ],
-        autoRow.id,
-      );
       assert.deepEqual(
         registerableModelIds(catalog),
         ["accounts/fireworks/routers/glm-latest", autoRow.id],
@@ -488,20 +329,13 @@ describe("firerouter routing plan", () => {
     assert.deepEqual(catalogWithAutomaticAuto([]), [], "empty stays empty");
   });
 
-  it("keeps a catalog-supplied firerouter row when auto is also present", () => {
-    // Auto is a list member now, so it stays in place alongside a carried
-    // firerouter row instead of being stripped before the picker pass.
+  it("never registers a FireRouter row the gateway still lists", () => {
     const catalog = [
       { shortId: "auto", id: "auto" },
       { shortId: "firerouter", id: FIREROUTER_ROUTER_ID },
       { shortId: "glm-latest", id: "accounts/fireworks/routers/glm-latest" },
     ];
-    assert.deepEqual(
-      catalogWithAutomaticFirerouter(catalog, { includeFirerouter: true })
-        .map((entry) => entry.id),
-      ["auto", FIREROUTER_ROUTER_ID, "accounts/fireworks/routers/glm-latest"],
-    );
+    assert.deepEqual(registerableModelIds(catalog), ["auto", "accounts/fireworks/routers/glm-latest"]);
   });
-
 });
 

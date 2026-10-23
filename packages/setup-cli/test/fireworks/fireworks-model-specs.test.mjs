@@ -405,14 +405,14 @@ describe("fireworks-model-specs", () => {
 
   it("resolves firerouter from the shared model spec like other routers", () => {
     const spec = lookupModelSpec("accounts/fireworks/routers/firerouter");
-    assert.equal(spec?.label, "FireRouter");
+    assert.equal(spec?.label, "Auto");
     assert.equal(spec?.capabilities.vision, true);
     assert.equal(lookupFireworksModelLimits("firerouter").contextWindow, 1_048_575);
   });
 
   it("shares firerouter spec metadata for firerouter* model ids", () => {
     const spec = lookupModelSpec("firerouter/x");
-    assert.equal(spec?.label, "FireRouter");
+    assert.equal(spec?.label, "Auto");
     assert.equal(spec?.capabilities.vision, true);
     const limits = lookupFireworksModelLimits("firerouter/x");
     assert.equal(limits.contextWindow, 1_048_575);

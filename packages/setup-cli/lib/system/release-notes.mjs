@@ -4,6 +4,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 import { readJsonIfExists, writeJson } from "../io/json.mjs";
+import { primary } from "../ui/style.mjs";
 
 export const RELEASE_NOTES_STATE_RELATIVE_PATH = ".nexus/release-notes.json";
 
@@ -60,11 +61,19 @@ export function releaseNotesForRange(releases, fromVersion, toVersion) {
     .sort((left, right) => compareVersions(left.version, right.version));
 }
 
-export function formatReleaseNotes(release) {
+/**
+ * @param {{ version: string, highlights: string[], improvements?: string[], footer?: string, emphasis?: string }} release
+ * @param {{ emphasize?: (text: string) => string }} [options]
+ *   `emphasize` styles the release's `emphasis` text wherever it appears.
+ */
+export function formatReleaseNotes(release, { emphasize } = {}) {
+  const emphasized = (item) => (
+    emphasize && release.emphasis ? item.replaceAll(release.emphasis, emphasize(release.emphasis)) : item
+  );
   const lines = [
-    `What's new in Nexus v${release.version}`,
+    `What's new in Nexus CLI v${release.version}`,
     "",
-    ...release.highlights.map((item) => `• ${item}`),
+    ...release.highlights.map((item) => `• ${emphasized(item)}`),
   ];
   if (release.improvements?.length) {
     lines.push("", "Also improved:");
@@ -102,7 +111,8 @@ async function printUnseenReleaseNotes({
     return false;
   }
 
-  output.write(`\n${releases.map(formatReleaseNotes).join("\n\n")}\n\n`);
+  const emphasize = (text) => primary(text, output);
+  output.write(`\n${releases.map((release) => formatReleaseNotes(release, { emphasize })).join("\n\n")}\n\n`);
   await writeJson(statePath, {
     ...state,
     lastShownVersion: latestVersion,

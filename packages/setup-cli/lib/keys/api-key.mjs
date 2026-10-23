@@ -44,7 +44,7 @@ export function assertNoFireworksEnvForStorage() {
     return;
   }
   throw new Error(
-    "FIREWORKS_API_KEY is already set. Nexus will use it without storing another key. "
+    "FIREWORKS_API_KEY is already set. Nexus CLI will use it without storing another key. "
       + "Omit the key option to use the environment value, or run `unset FIREWORKS_API_KEY` "
       + "and retry to store a key.",
   );
@@ -112,6 +112,9 @@ export async function assertFireworksKeyUsable(key) {
 const HARNESS_KEY_SOURCE = {
   claude: {
     readsFrom: "X-Fireworks-Api-Key header in settings.json",
+  },
+  "claude-desktop": {
+    readsFrom: "the stored key, via the Nexus loopback shim",
   },
   codex: {
     readsFrom: "experimental_bearer_token in config.toml",
@@ -322,6 +325,32 @@ export async function resolveFireworksKeyWithSource({
   }
 
   return { key: "", source: "none" };
+}
+
+/**
+ * Whether `resolveFireworksKeyWithSource` would find a key, answered without
+ * reading the stored one: the keychain is only asked whether the item exists
+ * (see `hasSecret`), so status-style callers that report presence don't cost
+ * the user a keychain prompt. Same precedence and config refs as the resolver;
+ * it doesn't migrate a legacy literal (the next real resolve does).
+ * @param {{ apiKey?: string, home?: string }} args
+ * @returns {Promise<boolean>}
+ */
+export async function fireworksKeyPresent({
+  apiKey = "",
+  home = process.env.HOME ?? "",
+}) {
+  if (apiKey?.trim() || process.env.FIREWORKS_API_KEY?.trim()) {
+    return true;
+  }
+  if (!home) {
+    return false;
+  }
+  const stored = (await readGlobalConfig(home)).apiKey;
+  if (isKeychainConfigRef(stored)) {
+    return hasSecret(home);
+  }
+  return isLegacyLiteralConfigRef(stored) && isFireworksShapedKey(stored);
 }
 
 /**

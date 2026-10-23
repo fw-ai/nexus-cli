@@ -87,43 +87,44 @@ function parseBannerMarkup(line) {
   return root;
 }
 
+/** Art tags painted with the logo gradient; the rest (`core`, `brand`, `fuse`) keep the default color. */
+const LOGO_TAGS = new Set(["spark", "burst", "trail", "ember"]);
+
 /**
  * @param {ReturnType<typeof parseBannerMarkup>} nodes
- * @param {Record<string, (text: string) => string>} styles
+ * @param {{ column: number, axisWidth: number, logo: Theme["logo"] }} state
+ * @param {boolean} painted
  * @returns {string}
  */
-function renderBannerNodes(nodes, styles) {
+function renderBannerNodes(nodes, state, painted = false) {
   return nodes
     .map((node) => {
-      if (typeof node === "string") {
+      if (typeof node !== "string") {
+        return renderBannerNodes(node.children, state, painted || LOGO_TAGS.has(node.tag));
+      }
+      if (!painted) {
+        state.column += node.length;
         return node;
       }
-      const inner = renderBannerNodes(node.children, styles);
-      const style = styles[node.tag];
-      return style ? style(inner) : inner;
+      return [...node].map((char) => {
+        const position = state.axisWidth > 1 ? state.column / (state.axisWidth - 1) : 0;
+        state.column += 1;
+        return char === " " ? char : state.logo(position)(char);
+      }).join("");
     })
     .join("");
 }
 
 /**
+ * Render one centered art line. With color, the art is painted left to right
+ * with the logo gradient across `axisWidth` columns.
  * @param {string} line
  * @param {Theme} theme
+ * @param {number} [axisWidth] width of the widest art line
  */
-export function renderBannerLine(line, theme) {
+export function renderBannerLine(line, theme, axisWidth = stripBannerMarkup(line).length) {
   if (!theme.color) {
     return stripBannerMarkup(line);
   }
-
-  /** @type {Record<string, (text: string) => string>} */
-  const styles = {
-    spark: theme.spark,
-    burst: theme.burst,
-    core: theme.core,
-    trail: theme.trail,
-    ember: theme.ember,
-    brand: theme.brand,
-    fuse: theme.muted,
-  };
-
-  return renderBannerNodes(parseBannerMarkup(line), styles);
+  return renderBannerNodes(parseBannerMarkup(line), { column: 0, axisWidth, logo: theme.logo });
 }

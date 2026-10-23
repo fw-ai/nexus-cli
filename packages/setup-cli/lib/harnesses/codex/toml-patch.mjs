@@ -13,7 +13,7 @@ const ROOT_MODEL_PROVIDER_LINE = /^model_provider\s*=.+$/;
 const ROOT_MODEL_LINE = /^model\s*=.+$/;
 const ROOT_MODEL_CATALOG_LINE = /^model_catalog_json\s*=.+$/;
 // fireconnect-owned cleanup: removes only the stale web_search = "disabled"
-// override written by earlier releases (#320) so re-enabling restores defaults.
+// override written by earlier releases so re-enabling restores defaults.
 // User-set values (live, cached, …) are not fireconnect-owned and are kept.
 const ROOT_WEB_SEARCH_DISABLED_LINE = /^web_search\s*=\s*["']disabled["']\s*(#.*)?$/;
 const CODEX_BEARER_AUTH_LINE = /^experimental_bearer_token\s*=.+$/;

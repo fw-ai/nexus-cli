@@ -13,9 +13,8 @@ export {
   isStyleEnabled,
   muted,
   ok,
-  orange,
   paint,
-  cyan,
+  primary,
   red,
   symbols,
   warn,
@@ -24,7 +23,7 @@ export {
 } from "./ui/style.mjs";
 
 export { colorsEnabled, isColorEnabled, isInteractiveColorEnabled } from "./ui/color.mjs";
-export { ANSI, BRAND, BRAND_RGB, METER } from "./ui/palette.mjs";
+export { ANSI, METER } from "./ui/palette.mjs";
 export { sanitize } from "./ui/sanitize.mjs";
 export { withSpinner };
 

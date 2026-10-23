@@ -1,6 +1,6 @@
 {
   "name": "@nexus/cli",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "Nexus CLI for using Fireworks models in AI coding tools",
   "type": "module",
   "bin": {

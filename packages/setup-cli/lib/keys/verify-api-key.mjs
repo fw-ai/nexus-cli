@@ -20,10 +20,12 @@ import { fireworksGatewayFetchSignal } from "../fireworks/gateway-fetch.mjs";
  * Never throws — callers map the result to one-line recovery copy.
  *
  * @param {string} apiKey
- * @param {{ gatewayUrl?: string }} [options]
+ * @param {{ gatewayUrl?: string, timeoutMs?: number }} [options]
+ *   `timeoutMs` bounds the request for display paths that must paint
+ *   quickly; the default stays the gateway-wide 30s budget.
  * @returns {Promise<VerifyResult>}
  */
-export async function verifyFireworksApiKey(apiKey, { gatewayUrl = "" } = {}) {
+export async function verifyFireworksApiKey(apiKey, { gatewayUrl = "", timeoutMs = 0 } = {}) {
   const base = gatewayUrl
     || process.env.NEXUS_GATEWAY_URL?.trim()
     || FIREWORKS_GATEWAY_URL;
@@ -32,7 +34,7 @@ export async function verifyFireworksApiKey(apiKey, { gatewayUrl = "" } = {}) {
   try {
     response = await fetch(`${base}/verifyApiKey`, {
       headers: { Authorization: `Bearer ${apiKey}` },
-      signal: fireworksGatewayFetchSignal(),
+      signal: timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : fireworksGatewayFetchSignal(),
     });
   } catch (error) {
     const cause = error?.cause;

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
@@ -12,6 +13,7 @@ import {
 import { FIREWORKS_BASE_URL } from "../../../lib/fireworks/model-id.mjs";
 import {
   providerBackupPath,
+  providerStatePath,
   resolveDataDir,
   userSettingsPath,
 } from "../../../lib/harnesses/claude/core.mjs";
@@ -21,6 +23,8 @@ import {
   migrateClaudeModelPickerOnUpgrade,
   migrateClaudeNativeWebSearchOnUpgrade,
   migrateClaudeRetiredAutoModeServerPinOnUpgrade,
+  migrateClaudeRetiredAutoUpdatePinOnUpgrade,
+  migrateClaudeTelemetryOptOutsOnUpgrade,
   migrateClaudeToolSearchOnUpgrade,
 } from "../../../lib/harnesses/claude/upgrade-migrations.mjs";
 import { buildServerlessCatalogSnapshot } from "../../../lib/fireworks/models.mjs";
@@ -162,6 +166,24 @@ describe("migrateClaudeRetiredAutoModeServerPinOnUpgrade", () => {
     });
   });
 
+  it("restores a different value the user had before connecting", async () => {
+    await withTempHome("claude-auto-mode-server-restore-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          CLAUDE_CODE_AUTO_MODE_SERVER: "0",
+        },
+      });
+      const backupPath = providerBackupPath(resolveDataDir({ home }));
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, JSON.stringify({ values: { CLAUDE_CODE_AUTO_MODE_SERVER: "1" } }));
+
+      assert.equal(await migrateClaudeRetiredAutoModeServerPinOnUpgrade(home), true);
+      const { env } = JSON.parse(await readFile(settingsPath, "utf8"));
+      assert.equal(env.CLAUDE_CODE_AUTO_MODE_SERVER, "1");
+    });
+  });
+
   it("keeps a pin recorded in a legacy values-only backup", async () => {
     await withTempHome("claude-auto-mode-server-legacy-", async (home) => {
       const { raw } = await seedSettings(home, {
@@ -218,6 +240,208 @@ describe("migrateClaudeRetiredAutoModeServerPinOnUpgrade", () => {
 
       assert.equal(await migrateClaudeRetiredAutoModeServerPinOnUpgrade(home), false);
       assert.equal(await readFile(userSettingsPath(home), "utf8"), raw);
+    });
+  });
+});
+
+describe("migrateClaudeRetiredAutoUpdatePinOnUpgrade", () => {
+  it("removes the retired pin from managed settings, preserving everything else", async () => {
+    await withTempHome("claude-auto-update-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0",
+          MY_CUSTOM_VAR: "keep-me",
+        },
+      });
+
+      assert.equal(await migrateClaudeRetiredAutoUpdatePinOnUpgrade(home), true);
+
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      assert.equal(Object.hasOwn(settings.env, "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE"), false);
+      assert.equal(settings.env.MY_CUSTOM_VAR, "keep-me");
+      assert.equal((await stat(settingsPath)).mode & 0o077, 0);
+    });
+  });
+
+  it("keeps a pin the user had before connecting, and any other value", async () => {
+    await withTempHome("claude-auto-update-own-", async (home) => {
+      const { settingsPath, raw } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0",
+        },
+      });
+      const backupPath = providerBackupPath(resolveDataDir({ home }));
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, JSON.stringify({
+        configPath: settingsPath,
+        snapshot: {
+          existed: true,
+          raw: JSON.stringify({ env: { CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0" } }),
+        },
+      }));
+      assert.equal(await migrateClaudeRetiredAutoUpdatePinOnUpgrade(home), false);
+      assert.equal(await readFile(settingsPath, "utf8"), raw);
+    });
+    await withTempHome("claude-auto-update-on-", async (home) => {
+      const { settingsPath, raw } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "1",
+        },
+      });
+      assert.equal(await migrateClaudeRetiredAutoUpdatePinOnUpgrade(home), false);
+      assert.equal(await readFile(settingsPath, "utf8"), raw);
+    });
+  });
+
+  it("leaves settings alone when the harness is off", async () => {
+    await withTempHome("claude-auto-update-off-", async (home) => {
+      const { raw } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE: "0",
+        },
+      }, { enabled: false });
+
+      assert.equal(await migrateClaudeRetiredAutoUpdatePinOnUpgrade(home), false);
+      assert.equal(await readFile(userSettingsPath(home), "utf8"), raw);
+    });
+  });
+});
+
+describe("migrateClaudeTelemetryOptOutsOnUpgrade", () => {
+  const OPT_OUTS = {
+    DISABLE_TELEMETRY: "1",
+    DO_NOT_TRACK: "1",
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+  };
+
+  async function seedBackup(home, settingsPath, env) {
+    const backupPath = providerBackupPath(resolveDataDir({ home }));
+    await mkdir(path.dirname(backupPath), { recursive: true });
+    await writeFile(backupPath, JSON.stringify({
+      configPath: settingsPath,
+      snapshot: { existed: true, raw: JSON.stringify({ env }) },
+    }));
+  }
+
+  it("removes the opt-outs Nexus wrote, preserving everything else", async () => {
+    await withTempHome("claude-telemetry-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          ANTHROPIC_CUSTOM_HEADERS: "X-Fireworks-Api-Key: fw_test_key_12345",
+          ...OPT_OUTS,
+          MY_CUSTOM_VAR: "keep-me",
+        },
+      });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), true);
+
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      for (const key of Object.keys(OPT_OUTS)) {
+        assert.equal(Object.hasOwn(settings.env, key), false, key);
+      }
+      assert.equal(settings.env.MY_CUSTOM_VAR, "keep-me");
+      assert.equal((await stat(settingsPath)).mode & 0o077, 0);
+    });
+  });
+
+  it("keeps or restores the user's own pre-Nexus values", async () => {
+    await withTempHome("claude-telemetry-own-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL, ...OPT_OUTS },
+      });
+      await seedBackup(home, settingsPath, { DISABLE_TELEMETRY: "1", DO_NOT_TRACK: "true" });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), true);
+
+      const { env } = JSON.parse(await readFile(settingsPath, "utf8"));
+      assert.equal(env.DISABLE_TELEMETRY, "1");
+      assert.equal(env.DO_NOT_TRACK, "true");
+      assert.equal(Object.hasOwn(env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"), false);
+    });
+  });
+
+  it("keeps a lone opt-out the user set deliberately after on", async () => {
+    await withTempHome("claude-telemetry-lone-", async (home) => {
+      const { settingsPath, raw } = await seedSettings(home, {
+        env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL, DISABLE_TELEMETRY: "1" },
+      });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+      assert.equal(await readFile(settingsPath, "utf8"), raw);
+    });
+  });
+
+  it("does not spend the once-only retirement on a partial set", async () => {
+    await withTempHome("claude-telemetry-partial-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: {
+          ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL,
+          DISABLE_TELEMETRY: "1",
+          CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+        },
+      });
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+      const statePath = providerStatePath(resolveDataDir({ home }));
+      assert.equal(existsSync(statePath), false, "no marker written for a partial set");
+      // Completing the Nexus-written set lets a later run retire it.
+      const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+      settings.env.DO_NOT_TRACK = "1";
+      await writeFile(settingsPath, JSON.stringify(settings), { mode: 0o600 });
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), true);
+    });
+  });
+
+  it("runs once, so an opt-out added afterwards stays", async () => {
+    await withTempHome("claude-telemetry-once-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL },
+      });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+      const raw = `${JSON.stringify({ env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL, ...OPT_OUTS } })}\n`;
+      await writeFile(settingsPath, raw, { mode: 0o600 });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+      assert.equal(await readFile(settingsPath, "utf8"), raw);
+    });
+  });
+
+  it("leaves settings alone when the harness is off", async () => {
+    await withTempHome("claude-telemetry-off-", async (home) => {
+      const { raw } = await seedSettings(home, {
+        env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL, ...OPT_OUTS },
+      }, { enabled: false });
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+      assert.equal(await readFile(userSettingsPath(home), "utf8"), raw);
+      // No marker either, so the next `on` still cleans up.
+      assert.equal(existsSync(providerStatePath(resolveDataDir({ home }))), false);
+    });
+  });
+
+  it("honors a legacy values-only backup", async () => {
+    await withTempHome("claude-telemetry-legacy-", async (home) => {
+      const { settingsPath } = await seedSettings(home, {
+        env: { ANTHROPIC_BASE_URL: FIREWORKS_BASE_URL, ...OPT_OUTS },
+      });
+      const backupPath = providerBackupPath(resolveDataDir({ home }));
+      await mkdir(path.dirname(backupPath), { recursive: true });
+      await writeFile(backupPath, JSON.stringify({
+        values: { DISABLE_TELEMETRY: "1" },
+        missing: ["DO_NOT_TRACK", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+      }));
+
+      assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), true);
+
+      const { env } = JSON.parse(await readFile(settingsPath, "utf8"));
+      assert.equal(env.DISABLE_TELEMETRY, "1");
+      assert.equal(Object.hasOwn(env, "DO_NOT_TRACK"), false);
+      assert.equal(Object.hasOwn(env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"), false);
     });
   });
 });
@@ -500,7 +724,9 @@ describe("migrateClaudeFirerouterOnUpgrade", () => {
       assert.equal(settings.model, "auto[1m]");
       // BYOK lines that only served the dropped route are stripped; the
       // Fireworks key and user lines stay.
-      assert.equal(settings.env.ANTHROPIC_CUSTOM_HEADERS, "X-Fireworks-Api-Key: fw_test_key_12345\nX-User-Trace: keep");
+      // The Anthropic key line goes (Claude Code's login covers Claude turns);
+      // the OpenAI key stays for Nexus Auto.
+      assert.equal(settings.env.ANTHROPIC_CUSTOM_HEADERS, "X-Fireworks-Api-Key: fw_test_key_12345\nx-openai-api-key: sk-proj-legacy\nX-User-Trace: keep");
       assert.equal(savedClaudeModelMapping((await readGlobalConfig(home)).harnesses.claude.profiles).opus, "auto");
       // The legacy main override is removed, not rewritten: it would shadow settings.model.
       assert.equal(settings.env.ANTHROPIC_MODEL, undefined);

@@ -15,6 +15,10 @@ import {
   readMintedKeyState,
   revokeMintedKey,
 } from "../../keys/mint-api-key.mjs";
+import {
+  savedAutoProviderKeyStatus,
+  unsetAutoProviderKeys,
+} from "../../keys/auto-provider-keys.mjs";
 import { accent, check, link, withSpinner } from "../../ui/term.mjs";
 import { runInteractiveSignIn, runSsoBrowserFlow, signInSucceeded } from "../../auth/login/flows.mjs";
 import {
@@ -69,7 +73,7 @@ async function fireconnectExportsEnvKey(home) {
 
 async function printEnvKeyRotationHints(home) {
   if (await fireconnectExportsEnvKey(home)) {
-    console.log("  Nexus's shell hook exports this from the keychain — login won't run while it's set.");
+    console.log("  Nexus CLI's shell hook exports this from the keychain — login won't run while it's set.");
     console.log(`  To rotate:  ${accent("unset FIREWORKS_API_KEY")}  then  ${accent("nexus login")}`);
     console.log("  Your next shell picks up the new key automatically.");
     return;
@@ -189,8 +193,15 @@ export async function runLogoutCommand(ctx) {
     ? `Note: FIREWORKS_API_KEY is still set in your environment; commands keep using it until you unset it.`
     : "";
 
+  const savedProviderKeys = savedAutoProviderKeyStatus(config);
+  const providersToClear = ["anthropic", "openai"].filter((provider) => savedProviderKeys[provider]);
   if (!hadSecret && !config.apiKey) {
-    console.log("Not signed in — no stored credentials to clear.");
+    if (providersToClear.length) {
+      await unsetAutoProviderKeys(home, providersToClear);
+      console.log("Logged out — removed the saved provider keys from this machine.");
+    } else {
+      console.log("Not signed in — no stored credentials to clear.");
+    }
     if (envNote) {
       console.log(envNote);
     }
@@ -225,6 +236,11 @@ export async function runLogoutCommand(ctx) {
   await deleteSecret(home);
   if (config.apiKey) {
     await writeGlobalConfig(home, { apiKey: "" });
+  }
+  // Saved Anthropic/OpenAI keys are credentials too: leaving them would let
+  // the next account on this machine send (and be billed through) them.
+  if (providersToClear.length) {
+    await unsetAutoProviderKeys(home, providersToClear);
   }
   console.log("Logged out — removed the stored key from this machine.");
   if (revokeLine) {

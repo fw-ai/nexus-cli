@@ -30,14 +30,14 @@ function startServer(handle) {
 }
 
 /** Frame a protobuf message (+ OK trailers) the way a gRPC-web server does. */
-function grpcWebFrames(message, { status = 0 } = {}) {
+function grpcWebFrames(message, { status = 0, detail = "" } = {}) {
   const frame = (flag, payload) => {
     const head = Buffer.alloc(5);
     head[0] = flag;
     head.writeUInt32BE(payload.length, 1);
     return Buffer.concat([head, payload]);
   };
-  const trailers = Buffer.from(`grpc-status: ${status}\r\n`);
+  const trailers = Buffer.from(`grpc-status: ${status}\r\n${detail ? `grpc-message: ${encodeURIComponent(detail)}\r\n` : ""}`);
   return message === null
     ? frame(0x80, trailers)
     : Buffer.concat([frame(0, message), frame(0x80, trailers)]);
@@ -429,6 +429,27 @@ describe("mint-api-key", () => {
       const result = await mintApiKeyForAccount(ID_TOKEN, "accounts/test", { baseUrl: url });
       assert.equal(result.ok, true, result.failure);
       assert.equal(result.userName, "accounts/test/users/dev");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("says the caller isn't a member on a bare ListUsers denial, and keeps a denial's reason", async () => {
+    let detail = "";
+    const { server, url } = await startServer((req, res) => {
+      res.writeHead(200, { "Content-Type": "application/grpc-web+proto" });
+      res.end(grpcWebFrames(null, { status: 7, detail }));
+    });
+    try {
+      const bare = await mintApiKeyForAccount(ID_TOKEN, "accounts/example-account", { email: EMAIL, baseUrl: url });
+      assert.equal(bare.ok, false);
+      assert.match(bare.failure, /not a member of "example-account"/);
+
+      detail = "SSO authentication is required";
+      const explained = await mintApiKeyForAccount(ID_TOKEN, "accounts/example-account", { email: EMAIL, baseUrl: url });
+      assert.equal(explained.ok, false);
+      assert.match(explained.failure, /SSO authentication is required/);
+      assert.doesNotMatch(explained.failure, /not a member/);
     } finally {
       server.close();
     }

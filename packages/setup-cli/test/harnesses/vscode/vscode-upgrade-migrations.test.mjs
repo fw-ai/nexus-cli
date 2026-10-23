@@ -80,7 +80,10 @@ describe("migrateVscodeResponsesApiType", () => {
       const original = `${JSON.stringify([legacyProvider(makeFireconnectSecretId())])}\n`;
       await writeFile(vscodePath, original);
 
-      assert.equal(await migrateVscodeResponsesApiType(home, { vscodePath, isRunning: () => true }), false);
+      await assert.rejects(
+        migrateVscodeResponsesApiType(home, { vscodePath, isRunning: () => true }),
+        /VS Code is running/,
+      );
       assert.equal(await readFile(vscodePath, "utf8"), original);
     });
   });
@@ -125,7 +128,10 @@ describe("migrateVscodeFirerouterOnUpgrade", () => {
       const vscodePath = path.join(home, "chatLanguageModels.json");
       await seed(home, vscodePath, [buildModelEntry("firerouter")]);
       const original = await readFile(vscodePath, "utf8");
-      assert.equal(await migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => true }), false);
+      await assert.rejects(
+        migrateVscodeFirerouterOnUpgrade(home, { vscodePath, isRunning: () => true }),
+        /VS Code is running/,
+      );
       assert.equal(await readFile(vscodePath, "utf8"), original);
 
       await seed(home, vscodePath, [buildModelEntry("firerouter")], { enabled: false });

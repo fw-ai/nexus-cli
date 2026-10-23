@@ -8,6 +8,8 @@ import { writeGlobalConfig } from "../../../lib/config/global-config.mjs";
 import { CODEX_CATALOG_TOML_REF, codexCatalogPath, codexConfigPath } from "../../../lib/harnesses/codex/core.mjs";
 import { clearListPriceCache, setListPriceCacheRates } from "../../../lib/pricing/list-price-cache.mjs";
 import {
+  CODEX_ENV_PROVIDER_KEYS_NOTE,
+  CODEX_SAVED_ANTHROPIC_KEY_NOTE,
   CODEX_FIREROUTER_MIGRATION_NOTE,
   CODEX_SIGN_IN_UPGRADE_NOTE,
   CODEX_UPGRADE_REON_FAILURE,
@@ -89,6 +91,46 @@ describe("reapplyCodexOnUpgrade", () => {
       const again = await inHome(home, () => reapplyCodexOnUpgrade(home));
       assert.deepEqual(again, []);
       assert.equal(await readFile(codexConfigPath(home), "utf8"), raw);
+    });
+  });
+
+  it("drops leftover env_http_headers provider keys from a sign-in config, then leaves it alone", async () => {
+    await withTempHome("codex-upgrade-reon-env-keys-", async (home) => {
+      await seedLegacyCodex(home);
+      await inHome(home, () => reapplyCodexOnUpgrade(home));
+      const configPath = codexConfigPath(home);
+      await writeFile(
+        configPath,
+        (await readFile(configPath, "utf8")).replace(
+          "[model_providers.fireworks-ai]\n",
+          '[model_providers.fireworks-ai]\nenv_http_headers = { "x-anthropic-api-key" = "ANTHROPIC_API_KEY" }\n',
+        ),
+      );
+      assert.match(await readFile(configPath, "utf8"), /env_http_headers/);
+
+      const notes = await inHome(home, () => reapplyCodexOnUpgrade(home));
+      assert.deepEqual(notes, [CODEX_ENV_PROVIDER_KEYS_NOTE]);
+      const raw = await readFile(configPath, "utf8");
+      assert.doesNotMatch(raw, /ANTHROPIC_API_KEY|x-anthropic-api-key/);
+      assert.equal(parseToml(raw).tables["model_providers.fireworks-ai"].http_headers["x-fireworks-api-key"], KEY);
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
+    });
+  });
+
+  it("adds the Anthropic key saved for Nexus Auto, then leaves it alone", async () => {
+    await withTempHome("codex-upgrade-reon-saved-key-", async (home) => {
+      await seedLegacyCodex(home);
+      await inHome(home, () => reapplyCodexOnUpgrade(home));
+      await writeGlobalConfig(home, { anthropicApiKey: "sk-ant-example-0000" });
+
+      const notes = await inHome(home, () => reapplyCodexOnUpgrade(home));
+      assert.deepEqual(notes, [CODEX_SAVED_ANTHROPIC_KEY_NOTE]);
+      const table = parseToml(await readFile(codexConfigPath(home), "utf8")).tables["model_providers.fireworks-ai"];
+      assert.equal(table.http_headers["x-anthropic-api-key"], "sk-ant-example-0000");
+      assert.equal(table.http_headers["x-openai-api-key"], undefined);
+
+      assert.deepEqual(await inHome(home, () => reapplyCodexOnUpgrade(home)), []);
     });
   });
 

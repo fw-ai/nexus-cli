@@ -47,6 +47,19 @@ describe("fireconnect harnesses", () => {
     });
   });
 
+  it("still works but says it's deprecated, on stderr only", async () => {
+    await withTempHome("harnesses-deprecated", async (home) => {
+      const write = mock.method(process.stderr, "write", () => true);
+      try {
+        const { harnesses } = JSON.parse(await captureHarnessesOutput(home, { json: true }));
+        assert.equal(harnesses.length, HARNESS_COMMANDS.length);
+        assert.ok(write.mock.calls.some((call) => String(call.arguments[0]).includes("`nexus status`")));
+      } finally {
+        write.mock.restore();
+      }
+    });
+  });
+
   it("marks a connected harness on and maps aliases to their canonical id", async () => {
     await withTempHome("harnesses-on", async (home) => {
       await setHarnessEnabled(home, "claude-desktop", true);

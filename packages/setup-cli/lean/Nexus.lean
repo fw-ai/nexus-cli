@@ -5,3 +5,11 @@ import Nexus.SlotMapping
 import Nexus.TomlPatch
 import Nexus.CredentialResolution
 import Nexus.DesktopPicker
+import Nexus.AutoScope
+import Nexus.KeyHint
+import Nexus.DataDir
+import Nexus.VersionOrder
+import Nexus.CatalogRefreshPlan
+import Nexus.ShimHeaderOwnership
+import Nexus.SecretLifecycle
+import Nexus.DataDirMigrate

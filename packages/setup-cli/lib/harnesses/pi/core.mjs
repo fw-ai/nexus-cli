@@ -161,7 +161,7 @@ export function piStoredByokHeaders(modelsConfig) {
 
 /**
  * Drop saved provider keys from the Fireworks provider's `headers` in Pi's
- * `models.json`, after `nexus configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * `models.json`, after `nexus auto --unset anthropic-api-key` / `--unset openai-api-key`.
  * @param {{ modelsPath: string, headerNames: string[] }} opts
  * @returns {Promise<boolean>} whether models.json changed
  */
@@ -626,19 +626,14 @@ export async function refreshPiCatalog({ settingsPath, authPath, modelsPath, dat
     : (current?.models ?? [])
       .map((model) => model.id)
       .filter((id) => !isRetiredModelId(String(id ?? "")));
-  // An upgrade also drops a FireRouter default to the `auto` mix, and the
-  // BYOK provider-key headers that only ever served FireRouter selections.
+  // An upgrade also drops a FireRouter default to the `auto` mix. Provider-key
+  // headers stay: Nexus Auto reads them now.
   const model = typeof settings.defaultModel === "string"
     ? dropRetiredModelId(settings.defaultModel)
     : settings.defaultModel;
-  const headers = Object.fromEntries(
-    Object.entries(current?.headers ?? {}).filter(
-      ([name]) => !["x-anthropic-api-key", "x-openai-api-key"].includes(name.toLowerCase()),
-    ),
-  );
   const entry = piFireworksProvider(
     [...ourIds, model],
-    headers,
+    current?.headers ?? {},
     piKnownFireworksModelIds({ settingsPath }),
   );
   const scopeChanged = JSON.stringify(withDefaults(settings, settings, PI_FIREWORKS_SCOPE)) !== JSON.stringify(settings);

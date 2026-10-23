@@ -222,7 +222,7 @@ export function buildCodexFirerouterCatalogEntry(modelId = FIREROUTER_ROUTER_ID)
   const stored = shortFireworksModelRef(modelId);
   const exact = isFirerouterModel(modelId);
   const slug = exact ? "firerouter" : stored;
-  const displayName = exact ? spec?.label ?? "FireRouter" : firerouterDisplayName(stored);
+  const displayName = exact ? spec?.label ?? autoDisplayName(AUTO_MODEL_ID) : firerouterDisplayName(stored);
   return {
     ...buildCodexCatalogEntry({
       name: FIREROUTER_ROUTER_ID,

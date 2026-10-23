@@ -6,6 +6,7 @@ import { formatClaudeSlotModelLabel, isClaudeNativeModel } from "../../fireworks
 export function printClaudePickerSummary({
   extraPickerModel = null,
   mapping = null,
+  catalogShown = true,
 } = {}, output = process.stdout) {
   output.write(`${paint(ANSI.bold, "Model picker", output)}\n`);
   const pins = mapping
@@ -18,7 +19,8 @@ export function printClaudePickerSummary({
   } else {
     output.write(`  ${paint(ANSI.muted, "Anthropic model slots", output)} ${accent("→ unchanged", output)}\n`);
   }
-  output.write(`  ${paint(ANSI.muted, "Fireworks catalog", output)} ${accent("→ appended in /model", output)}\n`);
+  const catalogState = catalogShown ? "→ appended in /model" : "→ needs a newer Claude Code";
+  output.write(`  ${paint(ANSI.muted, "Fireworks catalog", output)} ${accent(catalogState, output)}\n`);
   if (extraPickerModel) {
     output.write([
       "  ",

@@ -5,18 +5,20 @@ import {
   printDeepseekRestartHint,
 } from "../../cli/messages.mjs";
 import { defaultMainModel } from "../../fireworks/model-id.mjs";
+import { byokEnvFromHeaders } from "../../firerouter/core.mjs";
 import {
   DEEPSEEK_API_KEY_ENV,
   DEEPSEEK_FIREWORKS_BASE_URL,
   DEEPSEEK_FIREWORKS_PROVIDER_ID,
   deepseekEffectiveFireworksState,
+  deepseekStoredProviderHeaders,
   disableDeepseekFireworks,
   enableDeepseekFireworks,
   readDeepseekCredentialsIfExists,
   readDeepseekSettingsIfExists,
   resolveDeepseekApiKey,
 } from "./core.mjs";
-import { harnessFullKey } from "../../keys/harness-api-key.mjs";
+import { harnessHasFullKey } from "../../keys/harness-api-key.mjs";
 import { finishEnvHarnessOn } from "../../harness/env-hook.mjs";
 import { defineHarnessProfile } from "../../harness/engine.mjs";
 import {
@@ -58,15 +60,22 @@ export default defineHarnessProfile({
   resolveKey: deepseekResolveKey,
   paths: (ctx) => deepseekPathsFor(ctx),
   keyEnvRef: DEEPSEEK_API_KEY_ENV,
-  // No BYOK key is forwarded (byok: "none"), so Anthropic-requiring
-  // firerouter selections run without one instead of failing. The dsh
-  // provider profile itself does carry per-request headers, which is
-  // how the telemetry attribution and the `nexus auto` scope get in.
+  // The dsh provider profile carries per-request headers: telemetry, the
+  // `nexus auto` scope, and the provider keys Nexus Auto reads.
   firerouter: {
-    byok: "none",
+    byok: "value",
     autoCatalog: true,
   },
   telemetryHeaders: true,
+  readByokEnv: async (_ctx, paths) => {
+    try {
+      const { settings } = await readDeepseekSettingsIfExists(paths.settingsPath);
+      return byokEnvFromHeaders(deepseekStoredProviderHeaders(settings));
+    } catch {
+      // An unparseable settings.yaml has no keys to keep; `on` reports it.
+      return {};
+    }
+  },
   getExistingHarnessKey: async (_ctx, paths) => {
     const { settings } = await readDeepseekSettingsIfExists(paths.settingsPath);
     const effective = await deepseekEffectiveFireworksState(paths.settingsPath, settings);
@@ -119,7 +128,9 @@ export default defineHarnessProfile({
     const provider = effective.provider;
     const apiKeyMode = deepseekAuthModeFor(provider, credentials);
     const model = effective.model;
-    const resolvedKey = await harnessFullKey(ctx, async () => (
+    // Presence only: reading the stored key here would cost a keychain
+    // prompt on every status call.
+    const hasAuthToken = await harnessHasFullKey(ctx, async () => (
       provider === "fireworks"
         ? resolveDeepseekApiKey({ mode: apiKeyMode, credentials })
         : ""
@@ -129,7 +140,7 @@ export default defineHarnessProfile({
       provider,
       baseUrl: DEEPSEEK_FIREWORKS_BASE_URL,
       modelProvider: DEEPSEEK_FIREWORKS_PROVIDER_ID,
-      hasAuthToken: Boolean(resolvedKey),
+      hasAuthToken,
       apiKeyMode,
       defaults: { main: defaultMainModel() },
       current: { main: model },

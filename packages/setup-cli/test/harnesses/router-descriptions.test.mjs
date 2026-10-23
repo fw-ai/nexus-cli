@@ -33,8 +33,8 @@ describe("router descriptions", () => {
   });
 
   it("names GPT families the same way in both pickers", () => {
-    assert.equal(fireworksModelPickerName("firerouter/sol"), "FireRouter · Sol");
-    assert.equal(codexRow("firerouter/sol").display_name, "FireRouter · Sol");
-    assert.equal(fireworksModelPickerName("firerouter/astra"), "FireRouter · Astra");
+    assert.equal(fireworksModelPickerName("firerouter/sol"), "Auto");
+    assert.equal(codexRow("firerouter/sol").display_name, "Auto");
+    assert.equal(fireworksModelPickerName("firerouter/astra"), "Auto");
   });
 });

@@ -18,7 +18,7 @@ import { bold, dim, warn, withSpinner } from "../ui.mjs";
 
 export function formatCatalogUpdatedAt(updatedAt, timeZone = undefined) {
   if (!Number.isFinite(updatedAt) || updatedAt <= 0) {
-    return "bundled with Nexus";
+    return "bundled with Nexus CLI";
   }
   return new Intl.DateTimeFormat("en-US", {
     month: "short",
@@ -168,7 +168,7 @@ export function formatCatalogSections(sections) {
   const widths = tableWidths(catalog);
   const showPricing = catalog.some((entry) => entry.pricing);
   const lines = [
-    bold("Nexus coding models"),
+    bold("Nexus CLI coding models"),
     ...(showPricing ? [dim("Prices in USD per 1M tokens.")] : []),
   ];
 

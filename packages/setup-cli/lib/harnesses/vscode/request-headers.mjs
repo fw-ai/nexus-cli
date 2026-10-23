@@ -22,8 +22,9 @@ export function withFireconnectRequestHeaders(
   model,
   { telemetryHeaders = {}, byokHeaders = {} } = {},
 ) {
-  // Attach byokHeaders for any firerouter selection;
-  // strip the Anthropic BYOK key when the selection doesn't route to Anthropic.
+  // Attach byokHeaders (provider keys and the `nexus auto` scope) to `auto`
+  // rows and FireRouter rows; strip the Anthropic key from FireRouter rows
+  // that don't route to Anthropic. Pinned models get none.
   const firerouter = isFirerouterModelPattern(model.id);
   const needsAnthropicKey = firerouterRequiresAnthropicKey(model.id);
   const priorHeaders = Object.fromEntries(
@@ -37,8 +38,8 @@ export function withFireconnectRequestHeaders(
           ([name]) => needsAnthropicKey || name.toLowerCase() !== ANTHROPIC_BYOK_HEADER,
         ),
       )
-    : isAutoModelId(model.id) && byokHeaders[NEXUS_PROVIDERS_HEADER]
-      ? { [NEXUS_PROVIDERS_HEADER]: byokHeaders[NEXUS_PROVIDERS_HEADER] }
+    : isAutoModelId(model.id)
+      ? { ...byokHeaders }
       : {};
   const requestHeaders = {
     ...mergeFireconnectTelemetryHeaders(priorHeaders, telemetryHeaders),

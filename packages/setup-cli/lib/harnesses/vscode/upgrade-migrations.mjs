@@ -1,4 +1,5 @@
 import { isEnabledFireworksHarness, readGlobalConfig } from "../../config/global-config.mjs";
+import { MigrationSkippedError } from "../../system/migration-skip.mjs";
 import { isRetiredModelId, shortFireworksModelRef } from "../../fireworks/model-id.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import {
@@ -34,7 +35,7 @@ export async function migrateVscodeResponsesApiType(home, {
     return false;
   }
   if (isRunning()) {
-    return false;
+    throw new MigrationSkippedError("VS Code is running");
   }
   await writeChatLanguageModels(
     jsonPath,
@@ -76,7 +77,7 @@ export async function migrateVscodeFirerouterOnUpgrade(home, {
     return false;
   }
   if (isRunning()) {
-    return false;
+    throw new MigrationSkippedError("VS Code is running");
   }
   await writeChatLanguageModels(
     jsonPath,

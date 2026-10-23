@@ -149,7 +149,7 @@ describe("codex harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" },
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /is no longer supported/);
     assert.equal(existsSync(codexConfigPath(home)), false);
   });
 
@@ -453,7 +453,7 @@ describe("codex harness integration", () => {
     assert.match(unknown.stderr, /not available on Fireworks/);
   });
 
-  it("Codex forwards no provider key, saved or exported, on any model", async () => {
+  it("Codex forwards only the saved Anthropic key: never an OpenAI key, never an exported key", async () => {
     const env = {
       FIREWORKS_API_KEY: "",
       ANTHROPIC_API_KEY: "sk-ant-shell-0000",
@@ -474,10 +474,13 @@ describe("codex harness integration", () => {
       const result = await runFireconnect(args, { HOME: home, ...env });
       assert.equal(result.code, 0, `${args.join(" ")}: ${result.stderr}`);
       const raw = await readFile(codexConfigPath(home), "utf8");
-      assert.doesNotMatch(raw, /x-openai-api-key|x-anthropic-api-key|OPENAI_API_KEY|sk-/, args.join(" "));
+      // Codex's own sign-in covers GPT turns; the saved Anthropic key fills in
+      // for Claude turns. Nothing from the shell environment.
+      assert.doesNotMatch(raw, /x-openai-api-key|OPENAI_API_KEY|sk-example-0000|sk-shell|sk-ant-shell/, args.join(" "));
       const table = parseToml(raw).tables["model_providers.fireworks-ai"];
       assert.equal(table.requires_openai_auth, true, args.join(" "));
       assert.equal(table.http_headers["x-fireworks-api-key"], "fw_test_key_12345", args.join(" "));
+      assert.equal(table.http_headers["x-anthropic-api-key"], "sk-ant-example-0000", args.join(" "));
       assert.doesNotMatch(result.stdout, /OPENAI_API_KEY|removed the provider-key headers/, args.join(" "));
     }
     const shellConfig = process.platform === "darwin" ? ".bash_profile" : ".bashrc";
@@ -486,7 +489,7 @@ describe("codex harness integration", () => {
 
     const off = await runFireconnect(["codex", "off", "--openai-api-key", "sk-example-4444"], { HOME: home, ...env });
     assert.notEqual(off.code, 0);
-    assert.match(off.stderr, /Codex pays for GPT turns with its own sign-in/);
+    assert.match(off.stderr, /Codex's own sign-in covers GPT turns/);
   });
 
   it("on --model with an older GPT picker id lists it after models.dev moves on", async () => {
@@ -539,6 +542,33 @@ describe("codex harness integration", () => {
     const again = await runFireconnect(["codex", "on"], { HOME: home, ...env });
     assert.equal(again.code, 0, again.stderr);
     assert.doesNotMatch(again.stdout, /removed the provider-key headers/);
+  });
+
+  it("a re-on keeps an Anthropic key added by hand, drops an OpenAI one, and drops both while auto is Fireworks-only", async () => {
+    const env = { FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" };
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-codex-hand-added-key-"));
+    await seedKeychainConfig(home, "fw_test_key_12345");
+    const on = await runFireconnect(["codex", "on"], { HOME: home, ...env });
+    assert.equal(on.code, 0, on.stderr);
+    const handEdited = (await readFile(codexConfigPath(home), "utf8")).replace(
+      /^(http_headers = \{.*) \}$/m,
+      '$1, "x-anthropic-api-key" = "sk-ant-example-hand-0000", "x-openai-api-key" = "sk-example-hand-0000" }',
+    );
+    assert.match(handEdited, /sk-ant-example-hand-0000/);
+    await writeFile(codexConfigPath(home), handEdited);
+    const headers = async () => parseToml(await readFile(codexConfigPath(home), "utf8"))
+      .tables["model_providers.fireworks-ai"].http_headers;
+
+    const reOn = await runFireconnect(["codex", "on"], { HOME: home, ...env });
+    assert.equal(reOn.code, 0, reOn.stderr);
+    assert.equal((await headers())["x-anthropic-api-key"], "sk-ant-example-hand-0000");
+    assert.equal((await headers())["x-openai-api-key"], undefined);
+
+    await writeGlobalConfig(home, { auto: { providers: ["fireworks"] } });
+    const scoped = await runFireconnect(["codex", "on"], { HOME: home, ...env });
+    assert.equal(scoped.code, 0, scoped.stderr);
+    assert.equal((await headers())["x-anthropic-api-key"], undefined);
+    assert.equal((await headers())["x-fireworks-api-key"], "fw_test_key_12345");
   });
 
   it("configure --unset openai-api-key leaves Codex's config alone and never waits for Codex sessions", async () => {
@@ -707,7 +737,7 @@ describe("codex harness integration", () => {
     for (const model of ["firerouter", "firerouter/astra"]) {
       const rejected = await runFireconnect(["codex", "on", "--api-key", "fw_test_key_12345", "--model", model], env);
       assert.notEqual(rejected.code, 0, model);
-      assert.match(rejected.stderr, /is a FireRouter route, which is no longer supported/, model);
+      assert.match(rejected.stderr, /is no longer supported/, model);
     }
     assert.match(await readFile(codexConfigPath(home), "utf8"), /^model = "auto"$/m);
     assert.deepEqual(await catalogSlugs(), slugs);
@@ -832,7 +862,7 @@ describe("codex harness integration", () => {
     assert.doesNotMatch(config, /env_http_headers = \{ "x-anthropic-api-key"/);
   });
 
-  it("a stored Claude FireRouter route sends no provider key, saved or exported, and a plain re-run drops it to auto", async () => {
+  it("a stored Claude FireRouter route drops to auto on a plain re-run, sending only the saved Anthropic key", async () => {
     const env = {
       FIREWORKS_API_KEY: "",
       ANTHROPIC_API_KEY: "sk-ant-shell-only",
@@ -847,7 +877,7 @@ describe("codex harness integration", () => {
 
     const rejected = await runFireconnect(["codex", "on", "--model", "firerouter/opus"], { HOME: home, ...env });
     assert.notEqual(rejected.code, 0);
-    assert.match(rejected.stderr, /is a FireRouter route, which is no longer supported/);
+    assert.match(rejected.stderr, /is no longer supported/);
 
     // Seed the route an earlier release wrote, then let a plain re-run drop it.
     assert.equal((await runFireconnect(["codex", "on"], { HOME: home, ...env })).code, 0);
@@ -862,7 +892,8 @@ describe("codex harness integration", () => {
     assert.equal(plain.code, 0, plain.stderr);
     raw = await readFile(codexConfigPath(home), "utf8");
     assert.match(raw, /^model = "auto"$/m);
-    assert.doesNotMatch(raw, /x-anthropic-api-key|ANTHROPIC_API_KEY|sk-ant-/);
+    assert.match(raw, /"x-anthropic-api-key" = "sk-ant-stored"/);
+    assert.doesNotMatch(raw, /ANTHROPIC_API_KEY|sk-ant-shell-only/);
     assert.doesNotMatch(raw, /x-openai-api-key|sk-example-0000/);
     const shellConfig = process.platform === "darwin" ? ".bash_profile" : ".bashrc";
     const shell = await readFile(path.join(home, shellConfig), "utf8").catch(() => "");

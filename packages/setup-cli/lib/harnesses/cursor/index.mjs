@@ -7,9 +7,6 @@ import {
   printStructuredHarnessStatus,
 } from "../../harness/status-display.mjs";
 import {
-  isFirerouterModelPattern,
-} from "../../fireworks/model-id.mjs";
-import {
   loadRegisterableModels,
 } from "../../fireworks/models.mjs";
 import { isFireworksKey } from "../../keys/key-type.mjs";
@@ -34,23 +31,13 @@ import {
   ensureHomeForHarness,
 } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
-import { isHarnessEnabled, readProviderSettings } from "../../config/global-config.mjs";
+import { isHarnessEnabled } from "../../config/global-config.mjs";
 import { harnessStatusKeySource } from "../../keys/api-key.mjs";
 import {
   linuxSafeStorageIsObfuscatedFallback,
   linuxSafeStorageObfuscatedKeyNote,
   secretEncryptionUnavailableMessage,
 } from "../vscode/safestorage.mjs";
-
-const CURSOR_FIREROUTER_AZURE_UNSUPPORTED =
-  "FireRouter is not supported in Cursor Azure mode.";
-
-// Cursor can't forward a local Anthropic BYOK key (byok: "none"), so an
-// Anthropic-requiring firerouter selection simply runs without BYOK headers:
-// FireRouter keeps routing the Fireworks mix instead of failing the connect.
-function rejectCursorFirerouterAzure() {
-  throw new Error(CURSOR_FIREROUTER_AZURE_UNSUPPORTED);
-}
 
 /**
  * Harness-local Fireworks key for Cursor: the OpenAI key cell in state.vscdb.
@@ -63,33 +50,10 @@ async function cursorResolveKey(ctx) {
   return isFireworksKey(openAIKey) ? openAIKey.trim() : "";
 }
 
-async function isCursorAzureOnRequest(ctx) {
-  if (ctx.azure === true || ctx.provider === "azure") {
-    return true;
-  }
-  const home = ctx.home?.trim() ?? "";
-  if (!home) {
-    return false;
-  }
-  const { provider } = await readProviderSettings(home);
-  return provider === "azure";
-}
-
-async function cursorResolveOnContext(ctx) {
-  if (!isFirerouterModelPattern(ctx.main)) {
-    return ctx;
-  }
-  if (await isCursorAzureOnRequest(ctx)) {
-    rejectCursorFirerouterAzure();
-  }
-  return ctx;
-}
-
 export default defineHarnessProfile({
   id: HARNESS.CURSOR,
   label: "Cursor",
   resolveKey: cursorResolveKey,
-  resolveOnContext: cursorResolveOnContext,
   keyEnvRef: "${FIREWORKS_API_KEY}",
   getExistingHarnessKey: cursorResolveKey,
   paths: (ctx) => cursorPathsFor(ctx),
@@ -110,9 +74,6 @@ export default defineHarnessProfile({
       };
     },
     enable: async ({ ctx, paths, apiKey, baseUrl }) => {
-      if (isFirerouterModelPattern(ctx.main)) {
-        rejectCursorFirerouterAzure();
-      }
       await relocateLegacyCursorBackups({ home: ctx.home, dataDir: paths.dataDir });
       await ensureCursorStopped({ force: ctx.force });
       return enableCursorAzure({
@@ -125,15 +86,14 @@ export default defineHarnessProfile({
     },
     restart: () => printRestartHint("Quit & reopen Cursor IDE for the change to take effect."),
   },
-  enable: async ({ ctx, paths, effectiveKey, modelId, includeFirerouter = false }) => {
-    // Register the preferred catalog; firerouter registers only when explicitly requested. A
+  enable: async ({ ctx, paths, effectiveKey, modelId }) => {
+    // Register the preferred catalog. A
     // TTL-cached snapshot serves offline; a cold start with no network must
     // fail the `on` rather than register from an empty model list. When no
     // catalog entries are available at all, treat it as unavailable so a
     // previous online run's registered models are trusted instead of wiped.
     const { ids: extraModels, available: catalogAvailable } = await loadRegisterableModels({
       apiKey: effectiveKey,
-      includeFirerouter,
     });
     await relocateLegacyCursorBackups({ home: ctx.home, dataDir: paths.dataDir });
     await ensureCursorStopped({ force: ctx.force });
@@ -156,7 +116,7 @@ export default defineHarnessProfile({
       printNote(
         "Note: no Secret Service (libsecret) was detected for Cursor's Electron safeStorage on this Linux host, "
           + "so Cursor will obfuscate (not encrypt) the stored key. Install gnome-keyring + secret-service for real encryption. "
-          + "(Nexus's own API key storage shown in `nexus status` is separate.)",
+          + "(Nexus CLI's own API key storage shown in `nexus status` is separate.)",
       );
     } else if (result.obfuscatedKey) {
       printNote(linuxSafeStorageObfuscatedKeyNote("cursor"));

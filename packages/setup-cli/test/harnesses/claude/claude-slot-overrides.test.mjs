@@ -225,7 +225,7 @@ describe("Claude tier-slot overrides", () => {
       cliEnv(home),
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--opus firerouter is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /--opus firerouter is no longer supported/);
   });
 
   it("warns on the deprecated --routing-preference flag and writes no routing header", async () => {
@@ -260,7 +260,7 @@ describe("Claude tier-slot overrides", () => {
       cliEnv(home),
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--opus firerouter\/gpt-5p6 is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /--opus firerouter\/gpt-5p6 is no longer supported/);
   });
 
   it("rejects a non-GPT compound pinned to a tier slot", async () => {
@@ -277,24 +277,34 @@ describe("Claude tier-slot overrides", () => {
       cliEnv(home),
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /--opus firerouter\/opus is a FireRouter route, which is no longer supported/);
+    assert.match(result.stderr, /--opus firerouter\/opus is no longer supported/);
   });
 
-  it("keeps the OpenAI key off when plain on lands on the implicit auto default", async () => {
+  it("sends the OpenAI key saved with nexus auto when plain on lands on the auto default", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-default-router-openai-"));
     seedCatalogFor(home);
-    const result = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--openai-api-key", "sk-proj-default-router-12345"],
-      cliEnv(home),
-    );
+    const saved = await runFireconnect(["auto", "--openai-api-key", "sk-proj-default-router-12345"], cliEnv(home));
+    assert.equal(saved.code, 0, saved.stderr);
+    const result = await runFireconnect(["claude", "on", "--api-key", FIREWORKS_KEY], cliEnv(home));
     assert.equal(result.code, 0, result.stderr);
     const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
     assert.equal(settings.model, "auto[1m]");
-    // `auto` routes open models only, so no OpenAI key rides along.
+    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-default-router-12345/i);
+  });
+
+  it("leaves an exported OPENAI_API_KEY out of Claude Code's settings", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-env-openai-"));
+    seedCatalogFor(home);
+    const result = await runFireconnect(
+      ["claude", "on", "--api-key", FIREWORKS_KEY],
+      { ...cliEnv(home), OPENAI_API_KEY: "sk-proj-env-only-12345" },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
     assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
   });
 
-  it("keeps the OpenAI key off when re-on keeps a saved non-router pick", async () => {
+  it("keeps the saved OpenAI key when re-on keeps a pinned pick", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-saved-pick-openai-"));
     seedCatalogFor(home);
     const first = await runFireconnect(
@@ -302,14 +312,14 @@ describe("Claude tier-slot overrides", () => {
       cliEnv(home),
     );
     assert.equal(first.code, 0, first.stderr);
-    const again = await runFireconnect(
-      ["claude", "on", "--api-key", FIREWORKS_KEY, "--openai-api-key", "sk-proj-saved-pick-12345"],
-      cliEnv(home),
-    );
+    const saved = await runFireconnect(["auto", "--openai-api-key", "sk-proj-saved-pick-12345"], cliEnv(home));
+    assert.equal(saved.code, 0, saved.stderr);
+    const again = await runFireconnect(["claude", "on", "--api-key", FIREWORKS_KEY], cliEnv(home));
     assert.equal(again.code, 0, again.stderr);
     const settings = JSON.parse(await readFile(userSettingsPath(home), "utf8"));
     assert.equal(settings.model, "glm-latest[1m]");
-    assert.doesNotMatch(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key/i);
+    // `/model` still lists `auto`, so the key stays for when you switch to it.
+    assert.match(settings.env.ANTHROPIC_CUSTOM_HEADERS, /x-openai-api-key: sk-proj-saved-pick-12345/i);
   });
 
   it("leaves every tier native when no slot flags are passed", async () => {

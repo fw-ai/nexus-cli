@@ -32,9 +32,11 @@ import {
   deselectCopilotCliModel,
   disableCopilotCli,
   enableCopilotCli,
+  readCopilotCliProviderHeaders,
   readCopilotCliState,
   selectCopilotCliModel,
 } from "./config.mjs";
+import { byokEnvFromHeaders } from "../../firerouter/core.mjs";
 
 /**
  * GitHub Copilot **CLI** harness (`@github/copilot`, the `copilot` command).
@@ -60,17 +62,19 @@ export default defineHarnessProfile({
   keyEnvRef: "${FIREWORKS_API_KEY}",
   getExistingHarnessKey: copilotCliResolveKey,
   paths: (ctx) => copilotCliPathsForShared(ctx),
-  // providers.json carries no per-request header map, so a local Anthropic
-  // BYOK key can't be forwarded — same constraint as the desktop app.
+  // providers.json carries a per-request header map on the provider, so
+  // provider keys for Nexus Auto ride there next to telemetry.
   firerouter: {
-    byok: "none",
+    byok: "value",
     autoCatalog: true,
   },
   telemetryHeaders: true,
-  enable: async ({ ctx, paths, effectiveKey, modelId, telemetryHeaders = {}, includeFirerouter = false }) => {
+  readByokEnv: async (_ctx, paths) => byokEnvFromHeaders(
+    await readCopilotCliProviderHeaders(paths.providersPath),
+  ),
+  enable: async ({ ctx, paths, effectiveKey, modelId, byokHeaders = {}, telemetryHeaders = {} }) => {
     const { ids: extraModels, available: catalogAvailable } = await loadRegisterableModels({
       apiKey: effectiveKey,
-      includeFirerouter,
     });
     const existing = await readCopilotCliState(paths.providersPath, paths.settingsPath);
     const existingSelection = copilotCliModelIdFromSelection(existing.selectedModel);
@@ -107,7 +111,7 @@ export default defineHarnessProfile({
       dataDir: paths.dataDir,
       apiKey: effectiveKey,
       models: describeCopilotModels(toRegister),
-      extraHeaders: telemetryHeaders,
+      extraHeaders: { ...telemetryHeaders, ...byokHeaders },
     });
     // A BYOK provider has no default model, so without a selection the CLI
     // refuses to start ("No supported model available").

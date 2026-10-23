@@ -1,9 +1,12 @@
 import {
+  migrateClaudeBakedAnthropicKeyOnUpgrade,
   migrateClaudeExploreInheritCapOnUpgrade,
   migrateClaudeFirerouterOnUpgrade,
   migrateClaudeModelPickerOnUpgrade,
   migrateClaudeNativeWebSearchOnUpgrade,
   migrateClaudeRetiredAutoModeServerPinOnUpgrade,
+  migrateClaudeRetiredAutoUpdatePinOnUpgrade,
+  migrateClaudeTelemetryOptOutsOnUpgrade,
   migrateClaudeToolSearchOnUpgrade,
 } from "../harnesses/claude/upgrade-migrations.mjs";
 import {
@@ -20,13 +23,21 @@ import { migrateCopilotCliFirerouterOnUpgrade } from "../harnesses/copilot-cli/u
 import { migrateCopilotAppFirerouterOnUpgrade } from "../harnesses/copilot-app/upgrade-migrations.mjs";
 import { migrateCursorFirerouterOnUpgrade } from "../harnesses/cursor/upgrade-migrations.mjs";
 import { migrateDeepseekFirerouterOnUpgrade } from "../harnesses/deepseek/upgrade-migrations.mjs";
-import { migrateClaudeDesktopFirerouterOnUpgrade } from "../harnesses/claude-desktop/upgrade-migrations.mjs";
+import {
+  migrateClaudeDesktopFirerouterOnUpgrade,
+  restartClaudeDesktopShimOnUpgrade,
+} from "../harnesses/claude-desktop/upgrade-migrations.mjs";
 import { migrateVscodeFirerouterOnUpgrade } from "../harnesses/vscode/upgrade-migrations.mjs";
 import { migrateVscodeResponsesApiType } from "../harnesses/vscode/upgrade-migrations.mjs";
 import { HARNESS } from "../harness/id.mjs";
+import { isMigrationSkipped } from "./migration-skip.mjs";
 import { ensureAutoCatalogEntry } from "../harness/auto-catalog.mjs";
 import { RETIRED_ROUTING_PREFERENCE_HEADER } from "../firerouter/core.mjs";
 import { removeSavedProviderKeysFromHarnesses } from "../keys/sync.mjs";
+import {
+  migrateEnvProviderKeyRefsOnUpgrade,
+  migrateLegacyRouterAnthropicProviderOnUpgrade,
+} from "./env-key-migrations.mjs";
 
 /**
  * Key-independent harness config migrations for install/upgrade finalize.
@@ -38,6 +49,7 @@ import { removeSavedProviderKeysFromHarnesses } from "../keys/sync.mjs";
  *   run: (home: string) => Promise<boolean>,
  *   success: string,
  *   failure: string,
+ *   skipped?: string,
  * }>}
  */
 /**
@@ -94,6 +106,7 @@ const HARNESS_FORWARD_MIGRATIONS = [
     run: migrateVscodeResponsesApiType,
     success: "Updated VS Code's Fireworks provider to the chat-completions API — restart VS Code to pick it up.",
     failure: "Couldn't migrate VS Code's Fireworks provider — restart VS Code, then re-run nexus update.",
+    skipped: "Didn't update VS Code's Fireworks provider while VS Code is open — the update continues; quit VS Code, then run `nexus vscode` to apply it.",
   },
   {
     run: migrateClaudeToolSearchOnUpgrade,
@@ -104,6 +117,16 @@ const HARNESS_FORWARD_MIGRATIONS = [
     run: migrateClaudeRetiredAutoModeServerPinOnUpgrade,
     success: "Removed the Claude Code auto mode classifier pin (CLAUDE_CODE_AUTO_MODE_SERVER=0). Restart Claude Code to apply it.",
     failure: "Couldn't remove the Claude Code auto mode classifier pin. Re-run nexus claude on.",
+  },
+  {
+    run: migrateClaudeRetiredAutoUpdatePinOnUpgrade,
+    success: "Removed the Claude Code auto-update pin (CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE=0). Claude Code's own update settings apply again.",
+    failure: "Couldn't remove the Claude Code auto-update pin. Re-run nexus claude on.",
+  },
+  {
+    run: migrateClaudeTelemetryOptOutsOnUpgrade,
+    success: "Removed the Claude Code telemetry opt-outs (DISABLE_TELEMETRY, DO_NOT_TRACK, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC), which older Nexus CLI versions set and which hid the Artifact tool. Nexus CLI no longer turns off Claude Code's telemetry. If you set any of these yourself, add them back in ~/.claude/settings.json — Nexus CLI won't remove them again. Restart Claude Code to apply it.",
+    failure: "Couldn't remove the Claude Code telemetry opt-outs. Re-run nexus update.",
   },
   {
     run: migrateClaudeExploreInheritCapOnUpgrade,
@@ -127,7 +150,7 @@ const HARNESS_FORWARD_MIGRATIONS = [
   },
   {
     run: migrateOpencodeV2ProvidersOnUpgrade,
-    success: "Added Nexus's provider to OpenCode v2's providers map so its models show up. Restart OpenCode to pick it up.",
+    success: "Added Nexus CLI's provider to OpenCode v2's providers map so its models show up. Restart OpenCode to pick it up.",
     failure: "Couldn't update OpenCode's v2 providers map. Re-run nexus opencode on.",
   },
   {
@@ -137,13 +160,13 @@ const HARNESS_FORWARD_MIGRATIONS = [
   },
   {
     run: migrateOpencodeFirerouterOnUpgrade,
-    success: "Moved OpenCode off FireRouter to the auto model. Restart OpenCode to pick it up.",
-    failure: "Couldn't move OpenCode off FireRouter. Re-run nexus opencode on.",
+    success: "FireRouter is now Nexus Auto: moved OpenCode to `auto`. Restart OpenCode to pick it up.",
+    failure: "Couldn't move OpenCode from FireRouter to Nexus Auto. Re-run nexus opencode on.",
   },
   {
     run: refreshPiCatalogForHome,
-    success: "Updated Pi's Fireworks models: Nexus now adds only the models Pi doesn't already know, so Pi's own settings apply to the rest. Restart Pi to pick it up.",
-    failure: "Couldn't update Pi's Nexus setup. Re-run nexus pi on.",
+    success: "Updated Pi's Fireworks models: Nexus CLI now adds only the models Pi doesn't already know, so Pi's own settings apply to the rest. Restart Pi to pick it up.",
+    failure: "Couldn't update Pi's Nexus CLI setup. Re-run nexus pi on.",
   },
   {
     run: migrateClaudeModelPickerOnUpgrade,
@@ -152,38 +175,61 @@ const HARNESS_FORWARD_MIGRATIONS = [
   },
   {
     run: migrateClaudeFirerouterOnUpgrade,
-    success: "Moved Claude Code off FireRouter to the auto model — restart Claude Code to pick it up.",
-    failure: "Couldn't move Claude Code off FireRouter — re-run nexus claude on.",
+    success: "FireRouter is now Nexus Auto: moved Claude Code to `auto`. Restart Claude Code to pick it up.",
+    failure: "Couldn't move Claude Code from FireRouter to Nexus Auto. Re-run nexus claude on.",
   },
   {
     run: migrateCopilotCliFirerouterOnUpgrade,
-    success: "Moved the Copilot CLI off FireRouter to the auto model. Start a new copilot session to pick it up.",
-    failure: "Couldn't move the Copilot CLI off FireRouter. Re-run nexus copilot-cli on.",
+    success: "FireRouter is now Nexus Auto: moved the Copilot CLI to `auto`. Start a new copilot session to pick it up.",
+    failure: "Couldn't move the Copilot CLI from FireRouter to Nexus Auto. Re-run nexus copilot-cli on.",
   },
   {
     run: migrateVscodeFirerouterOnUpgrade,
-    success: "Removed FireRouter models from VS Code's model list — restart VS Code to pick it up.",
-    failure: "Couldn't remove FireRouter models from VS Code — quit VS Code, then re-run nexus update.",
+    success: "FireRouter is now Nexus Auto: removed the FireRouter rows from VS Code's model list. Use `auto` instead. Restart VS Code to pick it up.",
+    failure: "Couldn't remove the FireRouter rows from VS Code. Quit VS Code, then re-run nexus update.",
+    skipped: "Didn't remove the FireRouter rows from VS Code while it's open — the update continues; quit VS Code, then run `nexus vscode` to remove them.",
   },
   {
     run: migrateCopilotAppFirerouterOnUpgrade,
-    success: "Removed FireRouter models from the Copilot app's model list — restart the Copilot app to pick it up.",
-    failure: "Couldn't remove FireRouter models from the Copilot app — quit it, then re-run nexus update.",
+    success: "FireRouter is now Nexus Auto: removed the FireRouter rows from the Copilot app's model list. Use `auto` instead. Restart the Copilot app to pick it up.",
+    failure: "Couldn't remove the FireRouter rows from the Copilot app. Quit it, then re-run nexus update.",
+    skipped: "Didn't remove the FireRouter rows from the Copilot app while it's open — the update continues; quit it, then run `nexus copilot-app` to remove them.",
   },
   {
     run: migrateCursorFirerouterOnUpgrade,
-    success: "Moved Cursor off FireRouter to the auto model — quit and reopen Cursor to pick it up.",
-    failure: "Couldn't move Cursor off FireRouter — quit Cursor, then re-run nexus update.",
+    success: "FireRouter is now Nexus Auto: moved Cursor to `nexus/auto`. Quit and reopen Cursor to pick it up.",
+    failure: "Couldn't move Cursor from FireRouter to Nexus Auto. Quit Cursor, then re-run nexus update.",
+    skipped: "Didn't move Cursor from FireRouter to Nexus Auto while Cursor is open — the update continues; quit Cursor, then run `nexus cursor` to apply it.",
   },
   {
     run: migrateDeepseekFirerouterOnUpgrade,
-    success: "Moved DeepSeek Harness off FireRouter to the auto model. Restart dsh to pick it up.",
-    failure: "Couldn't move DeepSeek Harness off FireRouter. Re-run nexus deepseek on.",
+    success: "FireRouter is now Nexus Auto: moved DeepSeek Harness to `auto`. Restart dsh to pick it up.",
+    failure: "Couldn't move DeepSeek Harness from FireRouter to Nexus Auto. Re-run nexus deepseek on.",
+  },
+  {
+    run: migrateClaudeBakedAnthropicKeyOnUpgrade,
+    success: "Removed the Anthropic key an earlier FireConnect copied into Claude Code's settings from your environment. Claude Code keeps using your Claude login, or ANTHROPIC_API_KEY if you export it. Restart Claude Code to pick it up.",
+    failure: "Couldn't remove the Anthropic key an earlier FireConnect copied into Claude Code's settings. Re-run nexus claude on.",
+  },
+  {
+    run: migrateEnvProviderKeyRefsOnUpgrade,
+    success: "Nexus CLI no longer reads ANTHROPIC_API_KEY or OPENAI_API_KEY from your environment, so it cleared those references from ~/.nexus/config.json. To let Nexus Auto use your own key, run `nexus auto --anthropic-api-key` (or `--openai-api-key`) and paste at the prompt.",
+    failure: "Couldn't clear the environment key references from ~/.nexus/config.json. Run `nexus auto --unset anthropic-api-key` (or `openai-api-key`).",
+  },
+  {
+    run: migrateLegacyRouterAnthropicProviderOnUpgrade,
+    success: "Removed the retired FireRouter setup an earlier FireConnect wrote into OpenCode's or Pi's Anthropic provider, including its ANTHROPIC_API_KEY reference. Restart them to pick it up.",
+    failure: "Couldn't remove the retired FireRouter setup from OpenCode's or Pi's Anthropic provider. Run `nexus opencode off` or `nexus pi off`, then turn it on again.",
   },
   {
     run: migrateClaudeDesktopFirerouterOnUpgrade,
-    success: "Removed FireRouter models from Claude Desktop's picker. Restart Claude Desktop to pick it up.",
-    failure: "Couldn't remove FireRouter models from Claude Desktop. Re-run nexus claude-desktop on.",
+    success: "FireRouter is now Nexus Auto: removed the FireRouter rows from Claude Desktop's picker. Use `auto` instead. Restart Claude Desktop to pick it up.",
+    failure: "Couldn't remove the FireRouter rows from Claude Desktop. Re-run nexus claude-desktop on.",
+  },
+  {
+    run: restartClaudeDesktopShimOnUpgrade,
+    success: "Restarted the Claude Desktop shim so this update (including Nexus Auto scope and saved keys) takes effect.",
+    failure: "Couldn't restart the Claude Desktop shim. Run `nexus claude-desktop` to apply this update.",
   },
 ];
 
@@ -209,17 +255,43 @@ export async function migrateRetiredRoutingPreferenceNotes(home, options = {}) {
   ];
   if (updated.length > 0) {
     notes.unshift(
-      `Removed the deprecated routing preference from ${joinLabels(updated)}: FireRouter routes are no longer supported. `
+      `Removed the deprecated routing preference from ${joinLabels(updated)}: Nexus Auto takes effort from your harness instead. `
         + `Restart ${updated.length > 1 ? "them" : "it"} to pick it up.`,
     );
   }
   return notes;
 }
 
-async function migrationNote({ run, success, failure }, home) {
+const NEXUS_AUTO_MOVE_PREFIX = "FireRouter is now Nexus Auto: ";
+
+/** Heading for the per-harness moves off FireRouter, printed once per upgrade. */
+export const NEXUS_AUTO_MOVES_HEADING = "Nexus Auto replaces FireRouter:";
+
+/** @param {string} note */
+export function isNexusAutoMoveNote(note) {
+  return typeof note === "string" && note.startsWith(NEXUS_AUTO_MOVE_PREFIX);
+}
+
+/**
+ * One block for every harness an upgrade moved off FireRouter, so the
+ * rename isn't repeated per harness.
+ * @param {string[]} moves notes for which {@link isNexusAutoMoveNote} is true
+ */
+export function formatNexusAutoMoves(moves) {
+  const lines = moves.map((note) => {
+    const rest = note.slice(NEXUS_AUTO_MOVE_PREFIX.length);
+    return `  - ${rest.charAt(0).toUpperCase()}${rest.slice(1)}`;
+  });
+  return [NEXUS_AUTO_MOVES_HEADING, ...lines].join("\n");
+}
+
+async function migrationNote({ run, success, failure, skipped }, home) {
   try {
     return await run(home) ? success : "";
-  } catch {
+  } catch (error) {
+    if (skipped && isMigrationSkipped(error)) {
+      return skipped;
+    }
     return failure;
   }
 }

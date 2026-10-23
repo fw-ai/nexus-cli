@@ -187,17 +187,18 @@ describe("harness help matches supported command features", () => {
     });
   });
 
-  test("documents optional usage and retired VS Code FireRouter options", async () => {
+  test("documents optional usage, and provider keys under nexus auto rather than VS Code", async () => {
     const root = await runCli(["help"]);
     assert.match(root.stdout, /usage/);
     assert.match(root.stdout, /--refresh/);
 
     const vscode = await runCli(["help", "vscode"]);
     assert.doesNotMatch(vscode.stdout, /--routing-preference/);
-    // The BYOK flags only served FireRouter and are rejected on `on` now,
-    // so help no longer advertises them.
     assert.doesNotMatch(vscode.stdout, /--anthropic-api-key/);
     assert.doesNotMatch(vscode.stdout, /--openai-api-key/);
+
+    const auto = await runCli(["help", "auto"]);
+    assert.match(auto.stdout, /--anthropic-api-key <key>\s+Save an Anthropic key/);
   });
 
   test("documents FireRouter caveats per harness", async () => {
@@ -238,7 +239,7 @@ describe("harness help matches supported command features", () => {
     const cursor = await runCli(["cursor", "help"]);
     assert.equal(cursor.code, 0, cursor.stderr);
     assert.match(cursor.stdout, /Quit Cursor before on\/off/);
-    assert.match(cursor.stdout, /Only Fireworks models work while Nexus is on/);
+    assert.match(cursor.stdout, /Only Fireworks models work while Nexus CLI is on/);
     assert.match(cursor.stdout, /built-ins are hidden/);
 
     const deepseek = await runCli(["deepseek", "help"]);
@@ -335,9 +336,9 @@ describe("fireconnect claude on", () => {
       });
       assert.equal(settings.env.ANTHROPIC_CUSTOM_MODEL_OPTION, undefined);
       assert.equal(settings.env.CLAUDE_CODE_ATTRIBUTION_HEADER, undefined);
-      assert.equal(settings.env.DISABLE_TELEMETRY, "1");
-      assert.equal(settings.env.DO_NOT_TRACK, "1");
-      assert.equal(settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+      for (const key of ["DISABLE_TELEMETRY", "DO_NOT_TRACK", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]) {
+        assert.equal(Object.hasOwn(settings.env, key), false, key);
+      }
       assert.equal(settings.env.ENABLE_TOOL_SEARCH, "true");
       assert.equal(Object.hasOwn(settings.env, "CLAUDE_CODE_AUTO_MODE_SERVER"), false);
       assert.equal(Object.hasOwn(settings.env, "CLAUDE_CODE_DISABLE_1M_CONTEXT"), false);

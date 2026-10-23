@@ -40,7 +40,7 @@ function withAliasCatalog(fn) {
 describe("model-display", () => {
   it("resolveManagedDisplayName handles synthetic and catalog-backed ids", () => withAliasCatalog(() => {
     assert.equal(resolveManagedDisplayName("auto"), "Auto");
-    assert.equal(resolveManagedDisplayName("firerouter"), "FireRouter");
+    assert.equal(resolveManagedDisplayName("firerouter"), "Auto");
     assert.match(resolveManagedDisplayName("glm-latest"), /GLM/i);
   }));
 

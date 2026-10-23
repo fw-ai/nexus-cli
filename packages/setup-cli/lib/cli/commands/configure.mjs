@@ -6,98 +6,23 @@ import {
   assertAzureApiKey,
   normalizeAzureBaseUrl,
 } from "../../fireworks/azure-core.mjs";
+import { readGlobalConfig, writeGlobalConfig } from "../../config/global-config.mjs";
 import {
-  ANTHROPIC_API_KEY_ENV_REF,
-  isEnabledFireworksHarness,
-  OPENAI_API_KEY_ENV_REF,
-  readGlobalConfig,
-  writeGlobalConfig,
-} from "../../config/global-config.mjs";
-import {
-  ANTHROPIC_BYOK_HEADER,
-  isAnthropicShapedKey,
-  isOpenAIShapedKey,
-  OPENAI_BYOK_HEADER,
-} from "../../firerouter/core.mjs";
-import { HARNESS } from "../../harness/id.mjs";
-import { userSettingsPath } from "../../harnesses/claude/core.mjs";
-import { readJsonIfExists } from "../../io/json.mjs";
-import { removeSavedProviderKeysFromHarnesses } from "../../keys/sync.mjs";
-import { accent, check } from "../../ui/term.mjs";
+  AUTO_PROVIDER_KEYS,
+  printAutoProviderKeyReach,
+  promptForProviderKey,
+  saveAutoProviderKeys,
+  unsetAutoProviderKeys,
+} from "../../keys/auto-provider-keys.mjs";
+import { accent } from "../../ui/term.mjs";
+import { warn } from "../../ui/index.mjs";
 import { printNote, printSuccess } from "../messages.mjs";
 
-const PROVIDER_KEYS = Object.freeze({
-  anthropic: {
-    label: "Anthropic",
-    flag: "--anthropic-api-key",
-    configField: "anthropicApiKey",
-    envRef: ANTHROPIC_API_KEY_ENV_REF,
-    envVar: "ANTHROPIC_API_KEY",
-    header: ANTHROPIC_BYOK_HEADER,
-  },
-  openai: {
-    label: "OpenAI",
-    flag: "--openai-api-key",
-    configField: "openaiApiKey",
-    envRef: OPENAI_API_KEY_ENV_REF,
-    envVar: "OPENAI_API_KEY",
-    header: OPENAI_BYOK_HEADER,
-  },
-});
-
-function listLabels(labels) {
-  return labels.length > 1 ? `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}` : labels[0];
-}
-
-async function claudeSignsInWithAnthropicKey(home, harnesses) {
-  if (!isEnabledFireworksHarness(harnesses, HARNESS.CLAUDE)) {
-    return false;
-  }
-  const settings = await readJsonIfExists(userSettingsPath(home)).catch(() => ({}));
-  return isAnthropicShapedKey(settings?.env?.ANTHROPIC_API_KEY ?? "");
-}
-
 /**
- * Clear saved provider keys from the global config and from every harness
- * that holds a copy.
- *
- * @param {string} home
- * @param {Array<keyof typeof PROVIDER_KEYS>} providers
- */
-async function unsetProviderKeys(home, providers) {
-  const config = await readGlobalConfig(home);
-  for (const provider of providers) {
-    const { label, configField, envRef, envVar } = PROVIDER_KEYS[provider];
-    const stored = config[configField]?.trim() ?? "";
-    if (stored && stored !== envRef) {
-      await writeGlobalConfig(home, { [configField]: "" });
-      console.log(`${check()} Removed the saved ${label} key.`);
-    } else {
-      console.log(`No saved ${label} key to remove.`);
-    }
-    if (process.env[envVar]?.trim()) {
-      console.log(`Note: ${envVar} is still set in your environment; harnesses keep sending it until you unset it.`);
-    }
-  }
-
-  const headerNames = providers.map((provider) => PROVIDER_KEYS[provider].header);
-  const { updated, failed } = await removeSavedProviderKeysFromHarnesses(home, headerNames);
-  if (updated.length) {
-    const keys = providers.length === 1 ? `the saved ${PROVIDER_KEYS[providers[0]].label} key` : "saved keys";
-    const names = listLabels(updated);
-    console.log(`Removed ${keys} from ${names}. Restart ${updated.length === 1 ? names : "them"} to pick that up.`);
-  }
-  for (const { id, label } of failed) {
-    console.log(`Couldn't update ${label}'s settings. Run ${accent(`nexus ${id} off`)}, then turn it on again.`);
-  }
-  if (providers.includes("anthropic") && await claudeSignsInWithAnthropicKey(home, config.harnesses)) {
-    console.log("Claude Code still signs in with the Anthropic key in its own settings; Nexus leaves that alone.");
-  }
-}
-/**
- * `nexus configure` sets the non-Fireworks-key globals: the provider
- * (Fireworks vs a Microsoft Azure AI Foundry endpoint) and the provider BYOK
- * keys for FireRouter mode (Anthropic, OpenAI), which `--unset` clears.
+ * `nexus configure` sets the provider (Fireworks vs a Microsoft Azure AI
+ * Foundry endpoint). Its `--anthropic-api-key` / `--openai-api-key` /
+ * `--unset` still work but are deprecated: provider keys for Nexus Auto
+ * belong to `nexus auto`.
  *
  * It does NOT set the Fireworks API key (use `nexus login`) and does NOT
  * register harnesses (enable one with `nexus <harness>`). In this
@@ -126,28 +51,42 @@ export async function runConfigureCommand(ctx) {
     );
   }
 
-  const anthropicKeyProvided = ctx.anthropicKeyFromFlag && Boolean(ctx.anthropicKey?.trim());
-  const openaiKeyProvided = ctx.openaiKeyFromFlag && Boolean(ctx.openaiKey?.trim());
-
   const unsetProviders = [ctx.unsetAnthropicKey && "anthropic", ctx.unsetOpenaiKey && "openai"].filter(Boolean);
   if (unsetProviders.length) {
     const setAlongside = unsetProviders.find((name) =>
       name === "anthropic" ? ctx.anthropicKeyFromFlag : ctx.openaiKeyFromFlag);
     if (setAlongside) {
-      const { flag } = PROVIDER_KEYS[setAlongside];
+      const { flag } = AUTO_PROVIDER_KEYS[setAlongside];
       throw new Error(`${flag} and --unset ${flag.slice(2)} cannot be used together.`);
     }
   }
+
+  if (ctx.anthropicKeyPrompt) {
+    ctx.anthropicKey = await promptForProviderKey("anthropic");
+  }
+  if (ctx.openaiKeyPrompt) {
+    ctx.openaiKey = await promptForProviderKey("openai");
+  }
+
+  const anthropicKeyProvided = ctx.anthropicKeyFromFlag && Boolean(ctx.anthropicKey?.trim());
+  const openaiKeyProvided = ctx.openaiKeyFromFlag && Boolean(ctx.openaiKey?.trim());
 
   if (!provider && !anthropicKeyProvided && !openaiKeyProvided && !unsetProviders.length) {
     printNote("Nothing to configure.");
     console.log(`  Sign in / set your key:  ${accent("nexus login")}`);
     console.log(`  Choose a provider:       ${accent("nexus configure --provider azure --base-url <url> --api-key <azure-key>")}`);
-    console.log(`  Set the Anthropic key:   ${accent("nexus configure --anthropic-api-key sk-ant-…")}`);
-    console.log(`  Set the OpenAI key:      ${accent("nexus configure --openai-api-key sk-…")}`);
-    console.log(`  Clear a saved key:       ${accent("nexus configure --unset openai-api-key")}`);
+    console.log(`  Keys for Nexus Auto:     ${accent("nexus auto --anthropic-api-key")}`);
     console.log(`  Enable a harness:        ${accent("nexus <harness>")}`);
     return;
+  }
+
+  if (anthropicKeyProvided || openaiKeyProvided || unsetProviders.length) {
+    const used = [
+      anthropicKeyProvided && "--anthropic-api-key",
+      openaiKeyProvided && "--openai-api-key",
+      unsetProviders.length && "--unset",
+    ].filter(Boolean).join(", ");
+    warn(`\`nexus configure ${used}\` is deprecated. Use \`nexus auto\` with the same flags.`);
   }
 
   const existingConfig = await readGlobalConfig(home);
@@ -156,22 +95,6 @@ export async function runConfigureCommand(ctx) {
   // harness map are left untouched (login / `<harness> on` own those).
   /** @type {Parameters<typeof writeGlobalConfig>[1]} */
   const update = {};
-
-  if (anthropicKeyProvided) {
-    const anthropicApiKey = ctx.anthropicKey.trim();
-    if (!isAnthropicShapedKey(anthropicApiKey)) {
-      throw new Error("--anthropic-api-key must be an Anthropic API key (sk-ant-...).");
-    }
-    update.anthropicApiKey = anthropicApiKey;
-  }
-
-  if (openaiKeyProvided) {
-    const openaiApiKey = ctx.openaiKey.trim();
-    if (!isOpenAIShapedKey(openaiApiKey)) {
-      throw new Error("--openai-api-key must be an OpenAI API key (sk-..., not sk-ant-...).");
-    }
-    update.openaiApiKey = openaiApiKey;
-  }
 
   if (provider === "azure") {
     const baseUrl = normalizeAzureBaseUrl(ctx.baseUrlFromFlag ? ctx.baseUrl : existingConfig.azure.baseUrl);
@@ -189,8 +112,16 @@ export async function runConfigureCommand(ctx) {
     update.provider = "fireworks";
   }
 
+  const savedKeys = await saveAutoProviderKeys(home, {
+    anthropic: anthropicKeyProvided ? ctx.anthropicKey : "",
+    openai: openaiKeyProvided ? ctx.openaiKey : "",
+  });
   if (unsetProviders.length) {
-    await unsetProviderKeys(home, unsetProviders);
+    await unsetAutoProviderKeys(home, unsetProviders);
+  }
+  for (const savedProvider of savedKeys) {
+    printSuccess(`Saved the ${AUTO_PROVIDER_KEYS[savedProvider].label} key to ~/.nexus/config.json`);
+    printAutoProviderKeyReach(savedProvider);
   }
   if (!Object.keys(update).length) {
     return;
@@ -199,12 +130,6 @@ export async function runConfigureCommand(ctx) {
   await writeGlobalConfig(home, update);
 
   printSuccess("Saved to ~/.nexus/config.json");
-  if (update.anthropicApiKey) {
-    printNote("Stored Anthropic API key in global config.");
-  }
-  if (update.openaiApiKey) {
-    printNote("Stored OpenAI API key in global config.");
-  }
   if (update.provider === "azure") {
     printSuccess("Configured Fireworks on Microsoft Foundry provider.");
   } else if (update.provider === "fireworks") {

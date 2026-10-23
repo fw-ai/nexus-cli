@@ -1,10 +1,11 @@
 import { userSettingsPath } from "../harnesses/claude/core.mjs";
 import { refreshFirerouterClaudeKey, removeClaudeSavedProviderKeys } from "../harnesses/claude/firerouter.mjs";
-import { codexConfigPath, refreshCodexGatewayKey } from "../harnesses/codex/core.mjs";
+import { codexConfigPath, refreshCodexGatewayKey, removeCodexSavedProviderKeys } from "../harnesses/codex/core.mjs";
 import {
   deepseekCredentialsPath,
   deepseekSettingsPath,
   refreshDeepseekGatewayKey,
+  removeDeepseekSavedProviderKeys,
 } from "../harnesses/deepseek/core.mjs";
 import {
   opencodeConfigPath,
@@ -30,6 +31,7 @@ import {
 import {
   copilotProvidersPath,
   refreshCopilotCliGatewayKey,
+  removeCopilotCliSavedProviderKeys,
 } from "../harnesses/copilot-cli/config.mjs";
 import {
   FIREWORKS_API_KEY_KEYCHAIN_REF,
@@ -162,6 +164,7 @@ export async function syncBakedKeysAfterStore(home, fireworksKey) {
 export async function removeSavedProviderKeysFromHarnesses(home, headerNames, {
   skipRunningIdes = false,
   vscodeRunning = isVscodeRunning,
+  includeDisabled = false,
 } = {}) {
   const { harnesses } = await readGlobalConfig(home);
   const targets = [
@@ -169,6 +172,11 @@ export async function removeSavedProviderKeysFromHarnesses(home, headerNames, {
       id: HARNESS.CLAUDE,
       label: "Claude Code",
       remove: () => removeClaudeSavedProviderKeys({ settingsPath: userSettingsPath(home), headerNames }),
+    },
+    {
+      id: HARNESS.CODEX,
+      label: "Codex",
+      remove: () => removeCodexSavedProviderKeys({ configPath: codexConfigPath(home), headerNames }),
     },
     {
       id: HARNESS.OPENCODE,
@@ -187,12 +195,26 @@ export async function removeSavedProviderKeysFromHarnesses(home, headerNames, {
       pending: () => removeVscodeSavedProviderKeys({ filePath: chatLanguageModelsPath({ home }), headerNames, dryRun: true }),
       running: vscodeRunning,
     },
+    {
+      id: HARNESS.COPILOT_CLI,
+      label: "Copilot CLI",
+      remove: () => removeCopilotCliSavedProviderKeys({ providersPath: copilotProvidersPath({ home }), headerNames }),
+    },
+    {
+      id: HARNESS.DEEPSEEK,
+      label: "DeepSeek Harness",
+      remove: () => removeDeepseekSavedProviderKeys({ settingsPath: deepseekSettingsPath(home), headerNames }),
+    },
   ];
   const updated = [];
   const failed = [];
   const skipped = [];
   for (const { id, label, remove, pending, running } of targets) {
-    if (!shouldSyncFireworksHarness(harnesses, id)) {
+    // Unset scrubs any harness Nexus knows about, enabled or not: a baked
+    // key copy in a disabled harness's file is still a live credential on
+    // disk. Never-installed harnesses (no entry) stay untouched.
+    const known = includeDisabled && harnesses && Object.hasOwn(harnesses, id);
+    if (!shouldSyncFireworksHarness(harnesses, id) && !known) {
       continue;
     }
     try {

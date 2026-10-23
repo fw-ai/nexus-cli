@@ -18,7 +18,7 @@ describe("postinstall finalize bootstrap", () => {
       },
     );
     assert.equal(
-      durableInstallContext("/work/fireconnect-internal/packages/setup-cli"),
+      durableInstallContext("/work/nexus-cli/packages/setup-cli"),
       null,
     );
     assert.equal(
@@ -44,7 +44,7 @@ describe("postinstall finalize bootstrap", () => {
   it("does nothing outside the durable install", async () => {
     let called = false;
     assert.equal(await runPostinstallFinalize({
-      setupDir: "/work/fireconnect-internal/packages/setup-cli",
+      setupDir: "/work/nexus-cli/packages/setup-cli",
       finalize: async () => {
         called = true;
       },

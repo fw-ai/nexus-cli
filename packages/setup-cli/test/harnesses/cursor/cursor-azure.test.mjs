@@ -82,7 +82,7 @@ describe("cursor azure harness", () => {
         { home, env: AZURE_ENV },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /FireRouter is not supported in Cursor Azure mode/);
+      assert.match(result.stderr, /--model firerouter is no longer supported\. Use --model auto instead/);
       assert.doesNotMatch(result.stderr, /needs workspace BYOK/);
     });
   });

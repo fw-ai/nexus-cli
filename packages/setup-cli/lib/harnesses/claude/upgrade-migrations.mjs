@@ -16,7 +16,6 @@ import {
 import {
   ANTHROPIC_BYOK_HEADER,
   CLAUDE_FIREROUTER_MODEL_ENV_KEYS,
-  OPENAI_BYOK_HEADER,
   stripCustomHeaderLines,
 } from "../../firerouter/core.mjs";
 import { claudeCodeModelId } from "./code-context.mjs";
@@ -26,10 +25,14 @@ import { disableWebsearchMcp } from "../../system/websearch-mcp.mjs";
 import {
   CLAUDE_CODE_BEHAVIOR_ENV,
   providerBackupPath,
+  providerStatePath,
   providerStatusFromEnv,
   resolveDataDir,
+  hasPartialRetiredTelemetryOptOuts,
+  retireTelemetryOptOutsOnce,
   stripLegacyAttributionHeaderLeftover,
   stripRetiredAutoModeServerPin,
+  stripRetiredAutoUpdatePin,
   userSettingsPath,
 } from "./core.mjs";
 import {
@@ -95,24 +98,139 @@ export async function migrateClaudeToolSearchOnUpgrade(home) {
  * @returns {Promise<boolean>} true when the file was updated
  */
 export async function migrateClaudeRetiredAutoModeServerPinOnUpgrade(home) {
-  if (!home) {
+  const connected = await readConnectedClaudeSettings(home);
+  if (!connected) {
     return false;
   }
-  const { harnesses } = await readGlobalConfig(home);
-  if (!isEnabledFireworksHarness(harnesses, HARNESS.CLAUDE)) {
-    return false;
-  }
-  const settingsPath = userSettingsPath(home);
-  const settings = await readJsonIfExists(settingsPath);
-  if (providerStatusFromEnv(settings.env ?? {}) !== "fireworks") {
-    return false;
-  }
-  const backup = await readJsonIfExists(providerBackupPath(resolveDataDir({ home })));
+  const { settingsPath, settings, dataDir } = connected;
+  const backup = await readJsonIfExists(providerBackupPath(dataDir));
   const { settings: next, changed } = stripRetiredAutoModeServerPin(settings, backup);
   if (!changed) {
     return false;
   }
   await writeJson(settingsPath, next, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Remove the `CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE=0` pin an earlier `on`
+ * wrote, so Claude Code's own update settings apply.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeRetiredAutoUpdatePinOnUpgrade(home) {
+  const connected = await readConnectedClaudeSettings(home);
+  if (!connected) {
+    return false;
+  }
+  const { settingsPath, settings, dataDir } = connected;
+  const backup = await readJsonIfExists(providerBackupPath(dataDir));
+  const { settings: next, changed } = stripRetiredAutoUpdatePin(settings, backup);
+  if (!changed) {
+    return false;
+  }
+  await writeJson(settingsPath, next, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Remove the telemetry opt-outs older versions wrote, once per install (see
+ * `retireTelemetryOptOutsOnce`).
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeTelemetryOptOutsOnUpgrade(home) {
+  const connected = await readConnectedClaudeSettings(home);
+  if (!connected) {
+    return false;
+  }
+  const { settingsPath, settings, dataDir } = connected;
+  const statePath = providerStatePath(dataDir);
+  const state = await readJsonIfExists(statePath);
+  if (state.retiredTelemetryOptOuts) {
+    return false;
+  }
+  const backup = await readJsonIfExists(providerBackupPath(dataDir));
+  const { settings: next, changed } = retireTelemetryOptOutsOnce(settings, backup, state);
+  if (changed) {
+    await writeJson(settingsPath, next, { mode: 0o600 });
+  }
+  if (!changed && hasPartialRetiredTelemetryOptOuts(settings)) {
+    // A partial set may be the user's own or a Nexus set they trimmed:
+    // don't spend the once-only retirement on it, so a later run can
+    // still act if the set is completed.
+    return false;
+  }
+  await writeJson(statePath, { ...state, retiredTelemetryOptOuts: true });
+  return changed;
+}
+
+/**
+ * The user settings of a Claude Code install that is connected and still
+ * Fireworks-routed, or null.
+ * @param {string} home
+ */
+async function readConnectedClaudeSettings(home) {
+  if (!home) {
+    return null;
+  }
+  const { harnesses } = await readGlobalConfig(home);
+  if (!isEnabledFireworksHarness(harnesses, HARNESS.CLAUDE)) {
+    return null;
+  }
+  const settingsPath = userSettingsPath(home);
+  const settings = await readJsonIfExists(settingsPath);
+  if (providerStatusFromEnv(settings.env ?? {}) !== "fireworks") {
+    return null;
+  }
+  return { settingsPath, settings, dataDir: resolveDataDir({ home }) };
+}
+
+/**
+ * Claude Code's settings as they were before Nexus connected it, from the
+ * provider backup: the raw snapshot, or the legacy per-key values. Null when
+ * the backup can't tell.
+ * @param {Record<string, any>} backup
+ * @returns {Record<string, any> | null}
+ */
+function preNexusClaudeSettings(backup) {
+  if (backup.snapshot !== undefined) {
+    if (!backup.snapshot?.existed) return {};
+    try {
+      return JSON.parse(backup.snapshot.raw);
+    } catch {
+      return null;
+    }
+  }
+  return backup.values !== undefined ? { env: { ...(backup.values ?? {}) } } : null;
+}
+
+/**
+ * Drop an Anthropic key an earlier FireConnect copied into Claude Code's
+ * settings from the environment (FireRouter-era `on`). Only a key the
+ * pre-Nexus settings didn't already hold is removed, so the user's own stays,
+ * and Claude Code still reads an exported ANTHROPIC_API_KEY by itself. A
+ * plain re-`on` removes the same key.
+ * @param {string} home
+ * @returns {Promise<boolean>} true when the file was updated
+ */
+export async function migrateClaudeBakedAnthropicKeyOnUpgrade(home) {
+  const connected = await readConnectedClaudeSettings(home);
+  if (!connected) return false;
+  const { settingsPath, settings, dataDir } = connected;
+  const original = preNexusClaudeSettings(await readJsonIfExists(providerBackupPath(dataDir)));
+  if (original === null) return false;
+  const env = { ...(settings.env ?? {}) };
+  let changed = false;
+  for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"]) {
+    const value = env[key];
+    if (typeof value === "string" && value.trim().startsWith("sk-ant-") && original.env?.[key] !== value) {
+      delete env[key];
+      changed = true;
+    }
+  }
+  if (!changed) return false;
+  await writeJson(settingsPath, { ...settings, env }, { mode: 0o600 });
   return true;
 }
 
@@ -199,10 +317,7 @@ export async function migrateClaudeModelPickerOnUpgrade(home) {
   if (!token) {
     return false;
   }
-  const { ids } = await loadRegisterableModels({
-    apiKey: token,
-    includeFirerouter: false,
-  });
+  const { ids } = await loadRegisterableModels({ apiKey: token });
   if (!ids.length) {
     return false;
   }
@@ -211,7 +326,7 @@ export async function migrateClaudeModelPickerOnUpgrade(home) {
   // selection, which `migrateClaudeFirerouterOnUpgrade` moves to `auto`.
   const next = withFireconnectModelPicker(settings, ids, {
     refresh: true,
-    protectedIds: typeof settings.model === "string" && !isFirerouterModelPattern(settings.model)
+    protectedIds: typeof settings.model === "string" && !isRetiredModelId(settings.model)
       ? [settings.model]
       : [],
   });
@@ -296,13 +411,11 @@ export async function migrateClaudeFirerouterOnUpgrade(home) {
     }
     settingsChanged = true;
   }
-  // BYOK header lines only ever served the FireRouter route being dropped;
-  // strip them (keeping the Fireworks key and user lines) with the migration.
+  // The Anthropic key line only served the FireRouter route being dropped
+  // (Claude Code's own login covers Claude turns); strip it, keeping the
+  // Fireworks key, user lines, and the OpenAI key Nexus Auto reads.
   if (settingsChanged && typeof env.ANTHROPIC_CUSTOM_HEADERS === "string") {
-    const stripped = stripCustomHeaderLines(env.ANTHROPIC_CUSTOM_HEADERS, [
-      ANTHROPIC_BYOK_HEADER,
-      OPENAI_BYOK_HEADER,
-    ]);
+    const stripped = stripCustomHeaderLines(env.ANTHROPIC_CUSTOM_HEADERS, [ANTHROPIC_BYOK_HEADER]);
     if (stripped !== env.ANTHROPIC_CUSTOM_HEADERS) {
       if (stripped) {
         env.ANTHROPIC_CUSTOM_HEADERS = stripped;

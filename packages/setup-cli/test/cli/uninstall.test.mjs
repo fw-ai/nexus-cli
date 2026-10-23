@@ -537,7 +537,7 @@ describe("uninstall (interactive path)", () => {
       process.stdout.write = realWrite;
       process.exitCode = origExitCode;
     }
-    assert.match(stdout, /Nexus is not installed\./);
+    assert.match(stdout, /Nexus CLI is not installed\./);
   });
 
   it("non-interactive --force path still forces every off", async () => {

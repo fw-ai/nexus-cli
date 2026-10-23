@@ -72,6 +72,20 @@ describe("stripFireworksOwnedEnv", () => {
     assert.equal(changed, true);
     assert.equal(env.ANTHROPIC_CUSTOM_HEADERS, "X-User-Trace: keep");
   });
+
+  it("also removes BYOK provider keys and the provider scope", () => {
+    const { env, changed } = stripFireworksOwnedEnv({
+      ANTHROPIC_BASE_URL: FIREWORKS_INFERENCE_URL,
+      ANTHROPIC_CUSTOM_HEADERS: [
+        "x-anthropic-api-key: sk-ant-example-0000",
+        "x-openai-api-key: sk-example-0000",
+        "x-nexus-providers: fireworks",
+        "X-User-Trace: keep",
+      ].join("\n"),
+    });
+    assert.equal(changed, true);
+    assert.equal(env.ANTHROPIC_CUSTOM_HEADERS, "X-User-Trace: keep");
+  });
 });
 
 describe("clearFireworksTopLevelWithoutBackup", () => {
@@ -96,6 +110,34 @@ describe("claudeFireconnectIntent", () => {
     });
     assert.equal(intent?.mode, "direct");
     assert.equal(intent?.mapping.main, "claude-sonnet-5");
+  });
+});
+
+describe("disableFireworksProvider legacy backup header restore", () => {
+  it("keeps the user's own BYOK header lines from a values-only backup", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-disable-legacy-headers-"));
+    const dataDir = path.join(home, ".nexus/claude");
+    await mkdir(path.dirname(userSettingsPath(home)), { recursive: true });
+    await mkdir(dataDir, { recursive: true });
+    const settingsPath = userSettingsPath(home);
+    await writeJson(settingsPath, {
+      env: {
+        ANTHROPIC_BASE_URL: FIREWORKS_INFERENCE_URL,
+        ANTHROPIC_CUSTOM_HEADERS: "X-Fireworks-Api-Key: fw_test\nx-anthropic-api-key: sk-ant-nexus-baked",
+      },
+    });
+    await writeJson(providerBackupPath(dataDir), {
+      values: {
+        ANTHROPIC_CUSTOM_HEADERS: "x-anthropic-api-key: sk-ant-user-own\nx-openai-api-key: sk-user-openai\nX-Custom: keep",
+      },
+      missing: ["ANTHROPIC_BASE_URL"],
+    });
+    await disableFireworksProvider({ settingsPath, dataDir, wasEnabled: true });
+    const restored = JSON.parse(await readFile(settingsPath, "utf8"));
+    assert.equal(
+      restored.env.ANTHROPIC_CUSTOM_HEADERS,
+      "x-anthropic-api-key: sk-ant-user-own\nx-openai-api-key: sk-user-openai\nX-Custom: keep",
+    );
   });
 });
 

@@ -112,7 +112,6 @@ export default defineHarnessProfile({
     modelId,
     byokHeaders,
     telemetryHeaders,
-    includeFirerouter,
   }) => {
     // Register the preferred catalog; firerouter registers only when explicitly requested.
     // A TTL-cached snapshot serves offline fine; only a cold start with no
@@ -120,7 +119,6 @@ export default defineHarnessProfile({
     // model list that was never fetched.
     const { ids: catalogModelIds } = await loadRegisterableModels({
       apiKey: effectiveKey,
-      includeFirerouter,
     });
     return enablePiFireworks({
       ...paths,

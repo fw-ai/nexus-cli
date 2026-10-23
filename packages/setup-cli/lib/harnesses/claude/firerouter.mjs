@@ -31,7 +31,7 @@ export async function refreshFirerouterClaudeKey({ settingsPath, fireworksKey })
 
 /**
  * Drop saved provider keys from Claude's custom headers, after `nexus
- * configure --unset anthropic-api-key` / `--unset openai-api-key`.
+ * auto --unset anthropic-api-key` / `--unset openai-api-key`.
  * `ANTHROPIC_API_KEY` is left alone: it is
  * Claude Code's own sign-in, and may predate Nexus.
  * @param {{ settingsPath: string, headerNames: string[] }} opts

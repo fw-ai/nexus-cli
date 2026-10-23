@@ -4,10 +4,14 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { BRAND, isColorEnabled, loadBannerArt, printBanner } from "../../lib/ui/index.mjs";
+import { isColorEnabled, loadBannerArt, printBanner } from "../../lib/ui/index.mjs";
 import { stripBannerMarkup } from "../../lib/ui/banner-render.mjs";
 import { callbackPage } from "../../lib/auth/browser-auth.mjs";
+import { terminalTheme } from "../../lib/ui/color.mjs";
+import { logoGradientAt } from "../../lib/ui/theme.mjs";
+import { CLI_COLORS, LOGO_GRADIENT } from "../../lib/ui/tokens.mjs";
 import {
+  ANSI,
   _setColorEnabled,
   accent,
   closestMatch,
@@ -17,6 +21,7 @@ import {
   fail,
   muted,
   ok,
+  symbols,
   warn,
   withSuggestion,
   yesNo,
@@ -42,14 +47,8 @@ function runBannerScript(args = [], env = {}) {
 }
 
 describe("ui tokens", () => {
-  it("exports official brand purple", () => {
-    assert.equal(BRAND.purple, "#6720FF");
-    assert.equal(BRAND.glow, "#A87FFF");
-    assert.equal(BRAND.deep, "#501CBE");
-  });
-
-  it("uses brand purple in OAuth callback SVG", () => {
-    assert.match(callbackPage(true), new RegExp(`fill:${BRAND.purple}`));
+  it("uses the primary color in the OAuth callback SVG", () => {
+    assert.match(callbackPage(true), new RegExp(`fill:${CLI_COLORS.dark.primary}`));
   });
 });
 
@@ -137,6 +136,35 @@ describe("colorsEnabled", () => {
   });
 });
 
+describe("color guide", () => {
+  it("defaults to dark and honors NEXUS_THEME and a light COLORFGBG background", () => {
+    assert.equal(terminalTheme({}), "dark");
+    assert.equal(terminalTheme({ NEXUS_THEME: "light" }), "light");
+    assert.equal(terminalTheme({ COLORFGBG: "0;15" }), "light");
+    assert.equal(terminalTheme({ COLORFGBG: "15;0" }), "dark");
+    assert.equal(terminalTheme({ COLORFGBG: "0;15", NEXUS_THEME: "dark" }), "dark");
+  });
+
+  it("pins the guide's primary and accent colors", () => {
+    assert.deepEqual(CLI_COLORS.dark, { primary: "#FC7293", accent: "#F0ACD6" });
+    assert.deepEqual(CLI_COLORS.light, { primary: "#BF1153", accent: "#A71E7E" });
+  });
+
+  it("runs the logo gradient through every stop", () => {
+    assert.equal(logoGradientAt(0), LOGO_GRADIENT[0]);
+    assert.equal(logoGradientAt(1 / 3), LOGO_GRADIENT[1]);
+    assert.equal(logoGradientAt(2 / 3), LOGO_GRADIENT[2]);
+    assert.equal(logoGradientAt(1), LOGO_GRADIENT[3]);
+  });
+
+  it("paints the banner only on the install screen", async () => {
+    const install = await runBannerScript(["--context", "install"], { FORCE_COLOR: "1" });
+    assert.match(install.stdout, /\x1b\[38;2;217;117;71m/, "gradient starts at the first stop");
+    const other = await runFireconnect(["banner"], { FORCE_COLOR: "1" });
+    assert.doesNotMatch(other.stdout, /\x1b\[/);
+  });
+});
+
 describe("styling", () => {
   afterEach(() => {
     _setColorEnabled(false);
@@ -156,13 +184,18 @@ describe("styling", () => {
   it("emits escape codes when enabled", () => {
     _setColorEnabled(true);
     assert.ok(dim("x").includes("\x1b[2m"));
-    assert.ok(yesNo(true).includes("\x1b[36m"));
+    assert.equal(yesNo(true), "yes", "yes stays in the default color");
     assert.ok(yesNo(false).includes("\x1b[31m"));
   });
 
-  it("accent uses cyan when enabled", () => {
+  it("accent uses the color guide's accent when enabled", () => {
     _setColorEnabled(true);
-    assert.ok(accent("cmd").includes("\x1b[36m"));
+    assert.equal(accent("cmd"), `${ANSI.accent}cmd\x1b[39m`);
+  });
+
+  it("ok marks the check in primary and leaves the message in the default color", () => {
+    _setColorEnabled(true);
+    assert.equal(ok("done"), `${ANSI.primary}${symbols.ok}\x1b[39m done`);
   });
 
   it("accent stays plain on a non-TTY stream", () => {
@@ -184,7 +217,7 @@ describe("styling", () => {
     assert.ok(lines[1].replace(/\x1b\[[0-9;]*m/g, "") === "  on    Enable routing");
   });
 
-  it("colorizeHelp uses bold for command tokens, never cyan", () => {
+  it("colorizeHelp uses bold for command tokens, not a color", () => {
     _setColorEnabled(true);
     const colored = colorizeHelp("Commands:\n  on    Enable routing\n  --api-key <key>  Key");
     assert.ok(colored.includes("\x1b[1mon\x1b[22m"));
@@ -277,7 +310,7 @@ describe("fireconnect-banner internal script", () => {
   it("prints install success context without art when --success-only", async () => {
     const { code, stdout } = await runBannerScript(["--context", "install", "--success-only"], { NO_COLOR: "1" });
     assert.equal(code, 0);
-    assert.match(stdout, /Nexus is installed\./);
+    assert.match(stdout, /Nexus CLI is installed\./);
     assert.doesNotMatch(stdout, /Ignite your Harness/);
   });
 
@@ -285,6 +318,6 @@ describe("fireconnect-banner internal script", () => {
     const { code, stdout } = await runBannerScript(["--context", "install"], { NO_COLOR: "1" });
     assert.equal(code, 0);
     assert.match(stdout, /Ignite your Harness/);
-    assert.match(stdout, /Nexus is installed\./);
+    assert.match(stdout, /Nexus CLI is installed\./);
   });
 });

@@ -146,7 +146,7 @@ describe("compact harness command output", () => {
         },
       );
       assert.notEqual(result.code, 0);
-      assert.match(result.stderr, /--model firerouter is a FireRouter route, which is no longer supported/);
+      assert.match(result.stderr, /--model firerouter is no longer supported/);
       assert.doesNotMatch(result.stdout, /OpenCode → Fireworks/);
     });
   });
@@ -160,7 +160,7 @@ describe("compact harness command output", () => {
       assert.equal(result.code, 0, result.stderr);
       assert.match(
         result.stderr,
-        /--routing-preference is deprecated and has no effect: FireRouter routes are no longer supported\./,
+        /--routing-preference is deprecated and has no effect\. Set effort in your harness instead\./,
       );
       const lines = nonemptyLines(result.stdout);
       assert.equal(lines.length, 2, result.stdout);
@@ -209,7 +209,7 @@ describe("compact harness command output", () => {
           },
         );
         assert.notEqual(result.code, 0, model);
-        assert.match(result.stderr, /is a FireRouter route, which is no longer supported/, model);
+        assert.match(result.stderr, /is no longer supported/, model);
         assert.doesNotMatch(result.stdout, /Codex → Fireworks/, model);
       }
     });

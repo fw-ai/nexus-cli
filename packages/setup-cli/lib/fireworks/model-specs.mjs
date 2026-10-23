@@ -165,7 +165,7 @@ export const FIREWORKS_MODEL_SPECS = {
     capabilities: { contextWindow: 262_144, maxOutputTokens: 32_768, vision: false, toolCalling: true },
   },
   firerouter: {
-    label: "FireRouter",
+    label: "Auto",
     capabilities: {
       contextWindow: 1_048_575,
       maxOutputTokens: 131_072,

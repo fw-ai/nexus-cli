@@ -113,7 +113,7 @@ describe("Claude subscription, BYOK, and FireRouter matrix", () => {
           // A FireRouter selection is rejected in every auth combination,
           // before any settings are written.
           assert.notEqual(enabled.code, 0, enabled.stderr);
-          assert.match(enabled.stderr, /is a FireRouter route, which is no longer supported/);
+          assert.match(enabled.stderr, /is no longer supported/);
           if (scenario.subscription) {
             assert.equal(await readFile(settingsPath, "utf8"), SUBSCRIPTION_SETTINGS);
             assert.equal(await readFile(credentialsPath, "utf8"), SUBSCRIPTION_CREDENTIALS);

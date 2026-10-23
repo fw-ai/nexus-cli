@@ -1,6 +1,7 @@
 import { runHarnessCommand } from "../../cli/commands/harness.mjs";
 import { parseCli } from "../../cli/parse-args.mjs";
 import { isEnabledFireworksHarness, readGlobalConfig } from "../../config/global-config.mjs";
+import { autoProviderKeysInScope } from "../../config/auto-providers.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import { readJsonIfExists } from "../../io/json.mjs";
 import { isRetiredModelId } from "../../fireworks/model-id.mjs";
@@ -21,12 +22,34 @@ export const CODEX_SIGN_IN_UPGRADE_NOTE =
   + "you sign Codex in with pays for GPT turns. Run `codex login` if Codex asks you to sign in, "
   + "then restart Codex.";
 
+export const CODEX_ENV_PROVIDER_KEYS_NOTE =
+  "Removed the ANTHROPIC_API_KEY / OPENAI_API_KEY references an earlier FireConnect wrote into "
+  + "Codex's config.toml: Nexus CLI no longer sends keys from your environment. To let Nexus Auto "
+  + "use your Anthropic key in Codex, run `nexus auto --anthropic-api-key <key>`. Restart Codex to "
+  + "pick it up.";
+
+export const CODEX_SAVED_ANTHROPIC_KEY_NOTE =
+  "Added the Anthropic key you saved for Nexus Auto to Codex, so auto can use Anthropic models "
+  + "there. Codex's own sign-in still pays for GPT turns. Restart Codex to pick it up.";
+
 export const CODEX_FIREROUTER_MIGRATION_NOTE =
-  "Moved Codex off FireRouter: it now uses the `auto` model instead, and FireRouter rows are "
-  + "gone from its model list. Restart Codex to pick it up.";
+  "FireRouter is now Nexus Auto: moved Codex to `auto` and removed the FireRouter rows from its "
+  + "model list. Restart Codex to pick it up.";
 
 export const CODEX_UPGRADE_REON_FAILURE =
   "Couldn't update Codex's Fireworks settings. Run nexus codex on.";
+
+/**
+ * Whether the gateway provider still reads a provider key from the
+ * environment (`env_http_headers` naming x-anthropic-api-key or
+ * x-openai-api-key), as FireConnect before Codex's sign-in mode wrote.
+ * @param {Record<string, any> | undefined} table
+ */
+function hasEnvProviderKeyHeaders(table) {
+  const headers = table?.env_http_headers;
+  return Boolean(headers && typeof headers === "object"
+    && Object.keys(headers).some((name) => ["x-anthropic-api-key", "x-openai-api-key"].includes(name.toLowerCase())));
+}
 
 /** @param {string[]} ids */
 function modelsAddedNote(ids) {
@@ -50,6 +73,14 @@ async function codexReonReason(home) {
   }
   if (!codexChatgptLoginFireworksKey(doc.tables[CODEX_PROVIDER_TABLE])) {
     return CODEX_SIGN_IN_UPGRADE_NOTE;
+  }
+  if (hasEnvProviderKeyHeaders(doc.tables[CODEX_PROVIDER_TABLE])) {
+    return CODEX_ENV_PROVIDER_KEYS_NOTE;
+  }
+  const { anthropicKey } = autoProviderKeysInScope(await readGlobalConfig(home));
+  const headers = doc.tables[CODEX_PROVIDER_TABLE]?.http_headers ?? {};
+  if (anthropicKey && headers["x-anthropic-api-key"] !== anthropicKey) {
+    return CODEX_SAVED_ANTHROPIC_KEY_NOTE;
   }
   if (isRetiredModelId(codexCurrentModelId(doc) ?? "")) {
     return CODEX_FIREROUTER_MIGRATION_NOTE;

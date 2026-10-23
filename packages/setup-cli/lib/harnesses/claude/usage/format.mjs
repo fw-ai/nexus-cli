@@ -1,6 +1,6 @@
 /**
  * Shared cost / cache formatting for the live meter and session/agent pickers.
- * Matches the meter’s cost columns and cache-hit share (PR #230).
+ * Matches the meter’s cost columns and cache-hit share.
  */
 
 import { UNPRICED_TEXT } from "./cost.mjs";

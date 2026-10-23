@@ -139,16 +139,18 @@ const COLOR = process.env.NO_COLOR ? null : {
   reset: "\x1b[0m",
 };
 
-// Series hues for bar segments and swatches only; text uses COLOR tokens above.
+// Design System V2 data colors for bar segments and swatches only; text uses COLOR tokens above.
 const SERIES_COLORS = Object.freeze([
-  "\x1b[38;2;57;135;229m", // #3987e5 blue
-  "\x1b[38;2;217;89;38m", // #d95926 orange
-  "\x1b[38;2;25;158;112m", // #199e70 aqua
-  "\x1b[38;2;201;133;0m", // #c98500 yellow
-  "\x1b[38;2;213;81;129m", // #d55181 magenta
-  "\x1b[38;2;0;131;0m", // #008300 green
-  "\x1b[38;2;144;133;233m", // #9085e9 violet
-  "\x1b[38;2;230;103;103m", // #e66767 red
+  "\x1b[38;2;49;212;211m", // #31d4d3 teal
+  "\x1b[38;2;255;124;87m", // #ff7c57 coral
+  "\x1b[38;2;93;180;142m", // #5db48e green
+  "\x1b[38;2;250;193;147m", // #fac193 peach
+  "\x1b[38;2;195;81;155m", // #c3519b rose
+  "\x1b[38;2;5;137;108m", // #05896c deep green
+  "\x1b[38;2;249;173;177m", // #f9adb1 blush
+  "\x1b[38;2;195;228;251m", // #c3e4fb sky
+  "\x1b[38;2;217;117;71m", // #d97547 amber
+  "\x1b[38;2;222;74;125m", // #de4a7d flare
 ]);
 
 /** @param {keyof typeof COLOR} name @param {string} text */

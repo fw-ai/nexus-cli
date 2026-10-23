@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 
 import { isEnabledFireworksHarness, readGlobalConfig } from "../../config/global-config.mjs";
+import { MigrationSkippedError } from "../../system/migration-skip.mjs";
 import { cursorPathsFor } from "../../harness/context.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import {
@@ -32,7 +33,7 @@ export async function migrateCursorFirerouterOnUpgrade(home, { isRunning = isCur
     return false;
   }
   const dbPath = cursorPathsFor({ home }).dbPath;
-  if (!existsSync(dbPath) || isRunning()) {
+  if (!existsSync(dbPath)) {
     return false;
   }
   const { blob, openAIKey } = await readCursorState(dbPath);
@@ -42,6 +43,9 @@ export async function migrateCursorFirerouterOnUpgrade(home, { isRunning = isCur
   const { blob: next, changed } = dropCursorFirerouterSelection(blob);
   if (!changed) {
     return false;
+  }
+  if (isRunning()) {
+    throw new MigrationSkippedError("Cursor is running");
   }
   await applyCursorWrites(dbPath, [
     { op: "set", key: APPLICATION_USER_KEY, value: JSON.stringify(next) },

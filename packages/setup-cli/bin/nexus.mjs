@@ -43,16 +43,43 @@ async function run() {
   const {
     dataDirMigrationNote,
     markDataDirNoteShown,
+    markRenameAnnounced,
     migrateLegacyDataDir,
+    renameAnnouncementDue,
+    renameHeadline,
     renameMigrationIncomplete,
   } = await import("../lib/system/data-dir.mjs");
-  const dataDirStatus = migrateLegacyDataDir(parsed.ctx?.home || process.env.HOME || "");
+  const { hasOwnedLegacyLauncher } = await import("../lib/system/launchers.mjs");
+  const home = parsed.ctx?.home || process.env.HOME || "";
+  const uninstalling = parsed.kind === "global" && parsed.command === "uninstall";
+  const announceRename = !uninstalling
+    && renameAnnouncementDue(home, { legacyLauncher: hasOwnedLegacyLauncher(home) });
+  const dataDirStatus = migrateLegacyDataDir(home);
   const dataDirNote = dataDirMigrationNote(dataDirStatus);
-  if (dataDirStatus === "foreign") {
-    // Any command would write this CLI's files into the other program's directory.
+  // `update` and `finalize-install` run the rename themselves and stop with
+  // an update-specific message, so let them reach that handling instead of
+  // dead-ending the very commands the note below tells the user to re-run.
+  const handlesRenameItself = parsed.kind === "global"
+    && ["update", "finalize-install"].includes(parsed.command);
+  if (dataDirStatus === "foreign" && !handlesRenameItself) {
+    // Any other command would write this CLI's files into the other program's directory.
     process.stderr.write(`${dataDirNote}\n`);
     process.exitCode = 1;
     return;
+  }
+  // A foreign ~/.nexus gets no headline either: marking it announced would
+  // write this CLI's marker into the other program's directory.
+  if (announceRename && dataDirStatus !== "foreign") {
+    const { colorsEnabled } = await import("../lib/ui/color.mjs");
+    const { accent, primary } = await import("../lib/ui/style.mjs");
+    const headline = colorsEnabled(process.stderr)
+      ? renameHeadline({
+        primary: (text) => primary(text, process.stderr),
+        command: (text) => accent(text, process.stderr),
+      })
+      : renameHeadline();
+    process.stderr.write(`\n${headline}\n\n`);
+    markRenameAnnounced(home);
   }
   if (dataDirNote) {
     process.stderr.write(`${dataDirNote}\n`);
@@ -63,19 +90,15 @@ async function run() {
   // interrupted before finalize, and a step can fail, so any command retries
   // the rename until every step has succeeded once. update and
   // finalize-install run it themselves.
-  const home = parsed.ctx?.home || process.env.HOME || "";
   const finishesRenameItself = parsed.kind === "global"
     && ["update", "upgrade", "finalize-install", "uninstall"].includes(parsed.command);
-  const { hasOwnedLegacyLauncher } = await import("../lib/system/launchers.mjs");
   const legacyLauncher = !finishesRenameItself && hasOwnedLegacyLauncher(home);
   if (!finishesRenameItself && (legacyLauncher || renameMigrationIncomplete(home))) {
     try {
       const { runRenameMigration } = await import("../lib/system/rename-migration.mjs");
       const notes = await runRenameMigration(home);
       if (notes.length > 0) {
-        const replaced = legacyLauncher && !hasOwnedLegacyLauncher(home);
-        const heading = replaced ? "FireConnect is now Nexus; use `nexus` from now on.\n" : "";
-        process.stderr.write(`${heading}${notes.join("\n")}\n\n`);
+        process.stderr.write(`${notes.join("\n")}\n\n`);
       }
     } catch {
       // Nothing is marked complete, so the next command retries.

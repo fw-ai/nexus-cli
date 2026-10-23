@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { createTheme } from "./theme.mjs";
-import { centerBannerArt, renderBannerLine } from "./banner-render.mjs";
+import { centerBannerArt, renderBannerLine, stripBannerMarkup } from "./banner-render.mjs";
 import { blank, success } from "./write.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,14 +15,19 @@ export function loadBannerArt() {
 }
 
 /**
+ * The logo gradient is for the install screen only; elsewhere the art prints
+ * in the terminal's default color.
  * @param {string} art
+ * @param {boolean} gradient
  */
-function styledBannerLines(art) {
+function styledBannerLines(art, gradient) {
+  const lines = centerBannerArt(art).split("\n");
+  if (!gradient) {
+    return lines.map(stripBannerMarkup).join("\n");
+  }
   const theme = createTheme(process.stdout);
-  return centerBannerArt(art)
-    .split("\n")
-    .map((line) => renderBannerLine(line, theme))
-    .join("\n");
+  const axisWidth = Math.max(0, ...lines.map((line) => stripBannerMarkup(line).length));
+  return lines.map((line) => renderBannerLine(line, theme, axisWidth)).join("\n");
 }
 
 /**
@@ -31,16 +36,15 @@ function styledBannerLines(art) {
 export function printBanner(options = {}) {
   if (!options.successOnly) {
     const art = loadBannerArt();
-    process.stdout.write(`${styledBannerLines(art)}\n`);
+    process.stdout.write(`${styledBannerLines(art, options.context === "install")}\n`);
 
     if (options.version) {
-      const theme = createTheme(process.stdout);
-      process.stdout.write(`${theme.muted(`v${options.version}`)}\n`);
+      process.stdout.write(`v${options.version}\n`);
     }
   }
 
   if (options.context === "install") {
     blank();
-    success("Nexus is installed.");
+    success("Nexus CLI is installed.");
   }
 }

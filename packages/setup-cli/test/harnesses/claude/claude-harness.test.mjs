@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import {
   userSettingsPath,
   providerBackupPath,
+  providerStatePath,
   resolveDataDir,
   syncFireworksModelDisplay,
   stripCustomModelOptionEnv,
@@ -16,6 +17,7 @@ import {
   fireworksModelDisplayFields,
 } from "../../../lib/harnesses/claude/picker-labels.mjs";
 import { resolveClaudeAuthState } from "../../../lib/harnesses/claude/index.mjs";
+import { migrateClaudeTelemetryOptOutsOnUpgrade } from "../../../lib/harnesses/claude/upgrade-migrations.mjs";
 import { readGlobalConfig, writeGlobalConfig } from "../../../lib/config/global-config.mjs";
 import {
   WEBSEARCH_MCP_SERVER_NAME,
@@ -143,6 +145,70 @@ describe("claude harness integration", () => {
     assert.equal(enabled.env.ANTHROPIC_API_KEY, undefined);
   });
 
+  it("never disables Claude Code's updater, and re-on removes the pin an older version wrote", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-auto-update-"));
+    seedCatalogFor(home);
+    const settingsPath = userSettingsPath(home);
+    const env = { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" };
+    const on = async () => {
+      const result = await runFireconnect(["claude", "on", "--api-key", "fw_test_key_12345"], env);
+      assert.equal(result.code, 0, result.stderr);
+      return JSON.parse(await readFile(settingsPath, "utf8"));
+    };
+    const updateKeys = [
+      "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE",
+      "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+      "DISABLE_AUTOUPDATER",
+      "DISABLE_UPDATES",
+    ];
+
+    const fresh = await on();
+    for (const key of updateKeys) {
+      assert.equal(Object.hasOwn(fresh.env, key), false, `${key} must not be written`);
+    }
+
+    fresh.env.CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE = "0";
+    await writeFile(settingsPath, JSON.stringify(fresh));
+    const cleaned = await on();
+    assert.equal(Object.hasOwn(cleaned.env, "CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE"), false);
+  });
+
+  it("re-on removes telemetry opt-outs an older version wrote, once", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-telemetry-"));
+    seedCatalogFor(home);
+    const settingsPath = userSettingsPath(home);
+    await mkdir(path.dirname(settingsPath), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify({ env: { DO_NOT_TRACK: "1" } }));
+    const env = { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" };
+    const on = async () => {
+      const result = await runFireconnect(["claude", "on", "--api-key", "fw_test_key_12345"], env);
+      assert.equal(result.code, 0, result.stderr);
+      return JSON.parse(await readFile(settingsPath, "utf8"));
+    };
+
+    // Recreate what an older `on` left: all three opt-outs and no marker.
+    const connected = await on();
+    connected.env.DISABLE_TELEMETRY = "1";
+    connected.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
+    await writeFile(settingsPath, JSON.stringify(connected));
+    const statePath = providerStatePath(resolveDataDir({ home }));
+    const { retiredTelemetryOptOuts: marker, ...oldState } = JSON.parse(await readFile(statePath, "utf8"));
+    assert.equal(marker, true, "every on records the cleanup, so a later update keeps user opt-outs");
+    await writeFile(statePath, JSON.stringify(oldState));
+
+    const cleaned = await on();
+    assert.equal(Object.hasOwn(cleaned.env, "DISABLE_TELEMETRY"), false);
+    assert.equal(Object.hasOwn(cleaned.env, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"), false);
+    assert.equal(cleaned.env.DO_NOT_TRACK, "1", "the user's own pre-Nexus value stays");
+
+    // An opt-out added after the cleanup survives both re-on and the upgrade migration.
+    cleaned.env.DISABLE_TELEMETRY = "1";
+    await writeFile(settingsPath, JSON.stringify(cleaned));
+    assert.equal((await on()).env.DISABLE_TELEMETRY, "1");
+    assert.equal(await migrateClaudeTelemetryOptOutsOnUpgrade(home), false);
+    assert.equal(JSON.parse(await readFile(settingsPath, "utf8")).env.DISABLE_TELEMETRY, "1");
+  });
+
   it("on/off round-trip restores settings", async () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-claude-"));
     seedCatalogFor(home);
@@ -196,8 +262,9 @@ describe("claude harness integration", () => {
     assert.ok(pickerModels.includes("auto[1m]"), pickerModels.join(", "));
     assert.ok(!pickerModels.includes("firerouter[1m]"), pickerModels.join(", "));
     assert.ok(pickerModels.includes("glm-latest[1m]"), pickerModels.join(", "));
-    assert.equal(enabled.env.DISABLE_TELEMETRY, "1");
-    assert.equal(enabled.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC, "1");
+    for (const key of ["DISABLE_TELEMETRY", "DO_NOT_TRACK", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"]) {
+      assert.equal(Object.hasOwn(enabled.env, key), false, key);
+    }
     assert.equal(enabled.env.ENABLE_TOOL_SEARCH, "true");
     assert.equal(Object.hasOwn(enabled.env, "CLAUDE_CODE_AUTO_MODE_SERVER"), false);
     assert.equal(enabled.env.CLAUDE_CODE_DISABLE_EXPLORE_INHERIT_CAP, "1");
@@ -288,7 +355,7 @@ describe("claude harness integration", () => {
       },
     );
     assert.notEqual(onResult.code, 0);
-    assert.match(onResult.stderr, /--model firerouter\/astra is a FireRouter route, which is no longer supported/);
+    assert.match(onResult.stderr, /--model firerouter\/astra is no longer supported/);
     assert.equal(existsSync(settingsPath), false);
   });
 
@@ -361,7 +428,7 @@ describe("claude harness integration", () => {
       { HOME: home, FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "" },
     );
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /Claude Code pays for Claude turns with its own sign-in/);
+    assert.match(result.stderr, /Claude Code's own login covers Claude turns/);
     assert.match(result.stderr, /claude login/);
     assert.equal(existsSync(userSettingsPath(home)), false);
     assert.equal((await readGlobalConfig(home)).anthropicApiKey, "");
@@ -777,7 +844,7 @@ describe("fireworksModelPickerName", () => {
       assert.equal(fireworksModelPickerName("glm-fast-latest"), "GLM 5.2 Fast (Latest)");
       assert.equal(fireworksModelPickerName("kimi-fast-latest"), "Kimi K3 Fast (Latest)");
       assert.equal(fireworksModelPickerName("deepseek-v4-flash"), "DeepSeek V4 Flash");
-      assert.equal(fireworksModelPickerName("firerouter"), "FireRouter");
+      assert.equal(fireworksModelPickerName("firerouter"), "Auto");
     });
   });
 

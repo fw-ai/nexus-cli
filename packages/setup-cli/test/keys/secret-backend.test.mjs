@@ -25,7 +25,7 @@ import { plaintextMode } from "../../lib/harnesses/vscode/safestorage.mjs";
 import { shellHookBlock } from "../../lib/io/shell-env-hook.mjs";
 import { verifyKeyExportWorks } from "../../lib/keys/selfcheck.mjs";
 import { resolveHarnessOnApiKey } from "../../lib/keys/harness-api-key.mjs";
-import { seedOnCommandCatalog, withoutEnvFireworksKey, withLinuxSshEnv } from "../helpers.mjs";
+import { harnessTestArgs, seedOnCommandCatalog, withoutEnvFireworksKey, withLinuxSshEnv } from "../helpers.mjs";
 
 const CLI = path.resolve("bin/nexus.mjs");
 const KEY = "fw_backend_test_key_000000000000";
@@ -51,7 +51,7 @@ function runCli(args, env) {
   childEnv.NEXUS_NO_UPDATE_CHECK = "1";
   delete childEnv.FIREWORKS_API_KEY;
   Object.assign(childEnv, env);
-  const res = spawnSync(process.execPath, [CLI, ...args], {
+  const res = spawnSync(process.execPath, [CLI, ...harnessTestArgs(args)], {
     env: childEnv,
     encoding: "utf8",
     timeout: 20000,

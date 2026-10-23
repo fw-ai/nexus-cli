@@ -1,42 +1,23 @@
 import {
   AUTO_INSTANT_MODEL_ID,
   canonicalAutoModelId,
-  firerouterRouteMembers,
-  isAutoModelId,
-  isClosedFirerouterMember,
-  isFirerouterModel,
   isFirerouterModelPattern,
 } from "../fireworks/model-id.mjs";
-import { stdin as input } from "node:process";
 import { NEXUS_PROVIDERS_HEADER } from "../config/auto-providers.mjs";
 
 export { NEXUS_PROVIDERS_HEADER };
 import {
-  persistGlobalAnthropicApiKey,
   readGlobalConfig,
   resolveStoredAnthropicApiKey,
-  resolveStoredOpenaiApiKey,
 } from "../config/global-config.mjs";
-import { readSecret } from "../ui/read-secret.mjs";
 import {
   FIRECONNECT_TELEMETRY_HEADER_NAMES,
   stripFireconnectTelemetryHeaderLines,
 } from "../telemetry/request-headers.mjs";
 
 export const FIREROUTER_FIREWORKS_HEADER = "X-Fireworks-Api-Key";
-// Bare `firerouter` picks its closed model from the harness and the user's
-// provider access, so its tagline names no provider.
-export const FIREROUTER_TAGLINE =
-  "Routes each user turn between open models and the closed models you have access to.";
-// A route naming one closed model adds the Fireworks open-model mix; one open
-// model is served on every turn; a list uses only the listed models.
-export const FIREROUTER_CLOSED_ROUTE_TAGLINE =
-  "Routes each user turn between this closed model and Fireworks open models.";
-export const FIREROUTER_SINGLE_OPEN_ROUTE_TAGLINE = "Serves this model on every turn.";
-export const FIREROUTER_ROUTE_TAGLINE =
-  "Routes each user turn across only the models listed in this route.";
-
-export const AUTO_TAGLINE = "Routes each user turn across Fireworks open models.";
+export const AUTO_TAGLINE =
+  "Smart routing: automatically picks the best model for the task.";
 export const AUTO_INSTANT_TAGLINE =
   "Routes each user turn across the fastest Fireworks open models.";
 
@@ -45,23 +26,15 @@ export function autoTagline(modelId) {
   return canonicalAutoModelId(modelId) === AUTO_INSTANT_MODEL_ID ? AUTO_INSTANT_TAGLINE : AUTO_TAGLINE;
 }
 
-/** @param {string} modelId */
-export function firerouterTagline(modelId = "") {
-  if (!modelId || isFirerouterModel(modelId)) {
-    return FIREROUTER_TAGLINE;
-  }
-  const members = firerouterRouteMembers(modelId);
-  // `firerouter/auto` and `firerouter/auto-instant` behave like the mix they name.
-  if (members.length === 1 && isAutoModelId(members[0])) {
-    return autoTagline(members[0]);
-  }
-  if (members.length === 1) {
-    return isClosedFirerouterMember(members[0])
-      ? FIREROUTER_CLOSED_ROUTE_TAGLINE
-      : FIREROUTER_SINGLE_OPEN_ROUTE_TAGLINE;
-  }
-  return FIREROUTER_ROUTE_TAGLINE;
+/**
+ * Description for a FireRouter id still stored in a harness config. The
+ * gateway serves every FireRouter id as `auto`, so it reads the same.
+ * @param {string} [_modelId]
+ */
+export function firerouterTagline(_modelId = "") {
+  return AUTO_TAGLINE;
 }
+
 // Header the deprecated `--routing-preference` used to write. Earlier releases put it in harness
 // configs, so it stays on every managed-header list and `on`/`off` strip it.
 export const RETIRED_ROUTING_PREFERENCE_HEADER = "x-routing-preference";
@@ -504,149 +477,4 @@ export async function resolveAnthropicKey({
  */
 export function openaiKeyFromCustomHeaders(value) {
   return customHeaderValue(value, [OPENAI_BYOK_HEADER]);
-}
-
-/**
- * Resolve the OpenAI BYOK key FireRouter forwards as `x-openai-api-key`.
- * Precedence mirrors the Anthropic resolver: explicit flag, stored global
- * config, OPENAI_API_KEY env, then a harness-stored header. Never prompts and
- * never throws: a missing key simply means no OpenAI header is attached, and
- * FireRouter keeps routing the Fireworks mix.
- * @param {{
- *   apiKey?: string,
- *   settingsEnv?: Record<string, string>,
- *   home?: string,
- * }} input
- * @returns {Promise<string>}
- */
-export async function resolveOpenaiKey({
-  apiKey = "",
-  settingsEnv = {},
-  home = "",
-} = {}) {
-  const fromFlag = apiKey?.trim() ?? "";
-  if (fromFlag && isOpenAIShapedKey(fromFlag)) {
-    return fromFlag;
-  }
-  if (home) {
-    const config = await readGlobalConfig(home);
-    const fromGlobal = resolveStoredOpenaiApiKey(config.openaiApiKey);
-    if (fromGlobal && isOpenAIShapedKey(fromGlobal)) {
-      return fromGlobal;
-    }
-  }
-  const fromEnv = process.env.OPENAI_API_KEY?.trim() ?? "";
-  if (fromEnv && isOpenAIShapedKey(fromEnv)) {
-    return fromEnv;
-  }
-  const fromSettings = settingsEnv[OPENAI_BYOK_HEADER]?.trim()
-    ?? openaiKeyFromCustomHeaders(settingsEnv.ANTHROPIC_CUSTOM_HEADERS);
-  if (fromSettings && isOpenAIShapedKey(fromSettings)) {
-    return fromSettings;
-  }
-  return "";
-}
-
-/**
- * Resolve the Anthropic BYOK key FireRouter forwards. If one is already
- * available (flag/global/env/settings), it's used as-is. Otherwise prompts
- * once (interactive only; declining is fine — FireRouter still routes
- * Fireworks models).
- *
- * @param {{
- *   anthropicFlag?: string,
- *   settingsEnv?: Record<string, string>,
- *   home?: string,
- *   explicit?: boolean,
- *   allowPromptSkip?: boolean,
- * }} input
- * @returns {Promise<{ anthropicKey: string }>}
- */
-export async function resolveFirerouterByokKeys({
-  anthropicFlag = "",
-  settingsEnv = {},
-  home = "",
-  explicit = false,
-  allowPromptSkip = true,
-} = {}) {
-  let anthropicKey = await resolveAnthropicKey({ apiKey: anthropicFlag, settingsEnv, home });
-  if (!anthropicKey) {
-    anthropicKey = await promptOptionalAnthropicKey({
-      home,
-      explicit,
-      allowSkip: allowPromptSkip,
-    });
-  }
-  return { anthropicKey };
-}
-
-/**
- * Optional interactive prompt for an Anthropic BYOK key in FireRouter mode.
- * Returns "" (never throws) on a non-TTY, an empty/declined entry, or a
- * malformed key — FireRouter still routes Fireworks models without it. A valid
- * key is persisted to global config so future runs pick it up.
- * @param {{ home?: string, explicit?: boolean, allowSkip?: boolean }} args
- * @returns {Promise<string>}
- */
-export function anthropicKeyPromptCopy({ explicit = false, allowSkip = true } = {}) {
-  if (!allowSkip) {
-    return {
-      intro: "FireRouter requires an Anthropic API key when Claude isn't signed in.",
-      prompt: "Anthropic API key (required, sk-ant-...): ",
-      invalid: "That doesn't look like an Anthropic API key (should start with sk-ant-).",
-    };
-  }
-  return {
-    intro: explicit
-      ? "FireRouter routes hard turns to Anthropic models. Paste your Anthropic API key to enable that."
-      : "Optional: add your Anthropic API key so FireRouter can route hard turns to Anthropic models.",
-    prompt: explicit
-      ? "Anthropic API key (sk-ant-..., Enter to skip): "
-      : "Anthropic API key (sk-ant-..., or press Enter to skip): ",
-    invalid: "That doesn't look like an Anthropic API key (should start with sk-ant-). Skipping.",
-  };
-}
-
-export function evaluateAnthropicKeyPrompt(value, { allowSkip = true } = {}) {
-  const key = String(value ?? "").trim();
-  if (isAnthropicShapedKey(key)) {
-    return { key, retry: false };
-  }
-  return {
-    key: "",
-    retry: !allowSkip,
-  };
-}
-
-export async function promptOptionalAnthropicKey({
-  home = "",
-  explicit = false,
-  allowSkip = true,
-} = {}) {
-  if (!input.isTTY) {
-    return "";
-  }
-  const copy = anthropicKeyPromptCopy({ explicit, allowSkip });
-  console.log(copy.intro);
-  while (true) {
-    const prompted = await readSecret(
-      copy.prompt,
-      { allowEmpty: true },
-    );
-    const result = evaluateAnthropicKeyPrompt(prompted, { allowSkip });
-    if (result.key) {
-      if (home) {
-        await persistGlobalAnthropicApiKey(home, result.key);
-      }
-      return result.key;
-    }
-    if (!prompted && !allowSkip) {
-      console.log("Anthropic API key is required. Press Ctrl-C to cancel.");
-    } else if (prompted) {
-      console.log(copy.invalid);
-    }
-    if (!result.retry) {
-      return "";
-    }
-  }
 }

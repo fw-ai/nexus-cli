@@ -470,6 +470,7 @@ export async function enableCodexFireworks({
   catalogAvailable = false,
   refreshCatalog = false,
   telemetryHeaders = {},
+  anthropicKey = "",
 }) {
   const resolvedEffective = effectiveApiKey
     || (apiKey === CODEX_API_KEY_ENV_REF ? (process.env.FIREWORKS_API_KEY ?? "") : apiKey);
@@ -591,14 +592,21 @@ export async function enableCodexFireworks({
   }
 
   const providerTable = doc.tables[CODEX_PROVIDER_TABLE] ?? {};
+  // Codex's own sign-in pays for GPT turns, so an OpenAI key never rides
+  // along. An Anthropic key (saved with `nexus auto`, or already in this
+  // table) does, for Claude turns.
+  const droppedKeyHeaders = anthropicKey ? [OPENAI_BYOK_HEADER] : CODEX_PROVIDER_KEY_HEADERS;
   const removedProviderKeys = Boolean(
-    omitHeaders(providerTable.http_headers, CODEX_PROVIDER_KEY_HEADERS)
-      || omitHeaders(providerTable.env_http_headers, CODEX_PROVIDER_KEY_HEADERS),
+    omitHeaders(providerTable.http_headers, droppedKeyHeaders)
+      || omitHeaders(providerTable.env_http_headers, droppedKeyHeaders),
   );
-  const httpHeaders = mergeFireconnectTelemetryHeaders(
-    withoutHeaders(providerTable.http_headers, CODEX_REBUILT_HEADERS),
-    telemetryHeaders,
-  );
+  const httpHeaders = {
+    ...mergeFireconnectTelemetryHeaders(
+      withoutHeaders(providerTable.http_headers, CODEX_REBUILT_HEADERS),
+      telemetryHeaders,
+    ),
+    ...(anthropicKey ? { [ANTHROPIC_BYOK_HEADER]: anthropicKey } : {}),
+  };
   const envHttpHeaders = withoutHeaders(providerTable.env_http_headers, CODEX_REBUILT_HEADERS);
   const nextRaw = patchFireconnectRoutingRaw(snapshot.raw, {
     providerId: CODEX_FIREWORKS_PROVIDER_ID,
@@ -669,6 +677,37 @@ export async function refreshCodexGatewayKey({ configPath, fireworksKey }) {
     return false;
   }
   const nextRaw = patchCodexProviderAuthRaw(snapshot.raw, { apiKey: key, literalAuth: true });
+  await writeFileAtomic(configPath, nextRaw, { mode: 0o600 });
+  return true;
+}
+
+/**
+ * Remove the named provider-key headers from the gateway provider's
+ * `http_headers` in config.toml, keeping the Fireworks key and every other
+ * header. False when none was present or Codex isn't on the gateway.
+ * @param {{ configPath: string, headerNames: string[] }} opts
+ * @returns {Promise<boolean>}
+ */
+export async function removeCodexSavedProviderKeys({ configPath, headerNames }) {
+  const snapshot = await readRawIfExists(configPath);
+  if (!snapshot.existed || !snapshot.raw.trim()) {
+    return false;
+  }
+  const doc = readTomlDoc(snapshot.raw);
+  const provider = doc.tables[CODEX_PROVIDER_TABLE];
+  if (fireconnectManagedVariant(doc) !== "fireworks" || !codexChatgptLoginFireworksKey(provider)) {
+    return false;
+  }
+  const headers = omitHeaders(provider.http_headers, headerNames);
+  if (!headers) {
+    return false;
+  }
+  const nextRaw = patchCodexProviderAuthRaw(snapshot.raw, {
+    apiKey: codexStoredAuthRef(doc),
+    literalAuth: true,
+    chatgptLogin: true,
+    httpHeaders: headers,
+  });
   await writeFileAtomic(configPath, nextRaw, { mode: 0o600 });
   return true;
 }

@@ -170,7 +170,7 @@ test("renderFormLines: uses consistent 3-step numbering", () => {
   assert.match(game, /2\/3 · Pick a challenge/);
   const confirm = renderFormLines(advanceToConfirm(state()), { cols: 100 }).join("\n");
   assert.match(confirm, /3\/3 · Confirm/);
-  assert.match(confirm, /Nexus Claude setup/);
+  assert.match(confirm, /Nexus CLI Claude setup/);
 });
 
 test("estimateRaceCost: returns a bounded range", () => {

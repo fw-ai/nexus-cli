@@ -444,6 +444,39 @@ describe("fireconnect login / logout", () => {
     });
   });
 
+  it("logout clears provider keys even without a stored Fireworks key", async () => {
+    await withTempHome("logout-provider-only-", async (home) => {
+      await writeGlobalConfig(home, {
+        anthropicApiKey: "sk-ant-example-logout-0000",
+        openaiApiKey: "sk-example-logout-0000",
+      });
+      const result = await runCli(["logout"], { home });
+      assert.equal(result.code, 0, `stderr: ${result.stderr}`);
+      assert.match(result.stdout, /Logged out/);
+      const config = await readGlobalConfig(home);
+      assert.equal(config.anthropicApiKey, "");
+      assert.equal(config.openaiApiKey, "");
+    });
+  });
+
+  it("logout also clears saved Anthropic and OpenAI provider keys", async () => {
+    await withTempHome("logout-provider-keys-", async (home) => {
+      await seedKeychainConfig(home, VALID_KEY);
+      await writeGlobalConfig(home, {
+        anthropicApiKey: "sk-ant-example-logout-0000",
+        openaiApiKey: "sk-example-logout-0000",
+      });
+
+      const result = await runCli(["logout"], { home });
+      assert.equal(result.code, 0, `stderr: ${result.stderr}`);
+      assert.match(result.stdout, /Logged out/);
+
+      const config = await readGlobalConfig(home);
+      assert.equal(config.anthropicApiKey, "");
+      assert.equal(config.openaiApiKey, "");
+    });
+  });
+
   it("configure --unset openai-api-key clears only the saved OpenAI key and leaves harness files it has no key in alone", async () => {
     await withTempHome("logout-openai-", async (home) => {
       await seedKeychainConfig(home, VALID_KEY);

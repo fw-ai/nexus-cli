@@ -185,7 +185,7 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
     for (const application of linuxApplicationNameCandidates(variant)) {
       if (linuxPythonOsCryptV2PasswordLookup(application)) {
         return (
-          `Note: Secret Service is available but Nexus could not encrypt ${app}'s API key without \`secret-tool\` `
+          `Note: Secret Service is available but Nexus CLI could not encrypt ${app}'s API key without \`secret-tool\` `
           + "(install libsecret-tools). "
           + `The API key was stored obfuscated for now. Re-run \`${harnessCmd}\` after installing \`secret-tool\` for real encryption.`
         );
@@ -193,7 +193,7 @@ export function linuxSafeStorageObfuscatedKeyNote(variant) {
     }
     return (
       `Note: ${app}'s Safe Storage key is not in the keyring yet (launch ${app} once so it creates one), `
-      + "and Nexus also needs `secret-tool` from libsecret-tools to encrypt on Linux. "
+      + "and Nexus CLI also needs `secret-tool` from libsecret-tools to encrypt on Linux. "
       + `The API key was stored obfuscated for now. Re-run \`${harnessCmd}\` after launching ${app} and installing libsecret-tools for real encryption.`
     );
   }

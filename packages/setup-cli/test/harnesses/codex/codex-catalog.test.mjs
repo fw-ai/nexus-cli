@@ -29,7 +29,6 @@ import {
 import {
   autoCatalogEntry,
   buildServerlessCatalogSnapshot,
-  firerouterCatalogEntry,
   inputModalitiesFromModel,
   prettyModelName,
 } from "../../../lib/fireworks/models.mjs";
@@ -344,21 +343,6 @@ describe("codex-catalog buildCodexCatalogEntryForRouter", () => {
 });
 
 describe("codex-catalog buildCodexCatalog", () => {
-  it("builds standalone firerouter metadata when explicitly included", () => {
-    const snapshot = buildServerlessCatalogSnapshot([]);
-    snapshot.entries = [firerouterCatalogEntry()];
-    const catalog = buildCodexCatalogFromSnapshot(snapshot, []);
-    assert.equal(catalog.models[0].slug, "firerouter");
-    assert.equal(
-      catalog.models[0].description,
-      "Routes each user turn between open models and the closed models you have access to.",
-    );
-    assert.equal(catalog.models[0].context_window, 1_048_575);
-    assert.equal(catalog.models[0].auto_compact_token_limit, 838860);
-    assert.equal(catalog.models[0].supports_parallel_tool_calls, true);
-    assert.deepEqual(catalog.models[0].input_modalities, ["text", "image"]);
-    assert.equal(catalog.models[0].supports_image_detail_original, true);
-  });
 
   it("dynamically adds firerouter* entries with shared FireRouter metadata", () => {
     const base = buildCodexCatalogFromSnapshot(buildServerlessCatalogSnapshot([]), []);
@@ -371,7 +355,7 @@ describe("codex-catalog buildCodexCatalog", () => {
     assert.equal(entry.supports_parallel_tool_calls, true);
     assert.equal(
       entry.description,
-      "Serves this model on every turn.",
+      "Smart routing: automatically picks the best model for the task.",
     );
     assert.equal(codexCatalogContainsModel({ models }, "firerouter/x"), true);
     assert.equal(

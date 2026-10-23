@@ -25,7 +25,7 @@ async function onOk(home, args) {
 async function onRejected(home, args) {
   const result = await runFireconnect(args, { HOME: home, ...NO_ENV });
   assert.notEqual(result.code, 0, args.join(" "));
-  assert.match(result.stderr, /is a FireRouter route, which is no longer supported/, args.join(" "));
+  assert.match(result.stderr, /is no longer supported/, args.join(" "));
   return result;
 }
 

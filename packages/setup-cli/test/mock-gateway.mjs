@@ -20,6 +20,32 @@ const server = createServer((req, res) => {
     res.end(JSON.stringify({ featureFlags: [] }));
     return;
   }
+  // Provider Key bindings — only for keys marked "providerkeys", so specs
+  // can choose the Connected and Not-enabled account states per test key.
+  if (/^\/v1\/accounts\/[^/]+\/providerKeyBindings$/.test(req.url ?? "")) {
+    const auth = req.headers.authorization ?? "";
+    if (auth.includes("providerkeys-not-enabled")) {
+      res.writeHead(400, { "content-type": "application/json" });
+      res.end(JSON.stringify({ code: 9, message: "provider keys are not enabled for account acct-test" }));
+      return;
+    }
+    if (auth.includes("providerkeys")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        providerKeyBindings: [{
+          name: "accounts/acct-test/providerKeyBindings/anthropic",
+          providerType: "PROVIDER_TYPE_ANTHROPIC",
+          providerKey: "accounts/acct-test/providerKeys/test-key",
+          keyHint: "sk-ant-••••2kAA",
+          state: "STATE_CONNECTED",
+        }],
+      }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+    return;
+  }
   // Serverless catalog (flat format) — only for keys marked "cataloged", so
   // specs can choose between the online path (catalog registers) and the
   // default offline path (404 below → catalogUnavailable) per test key.

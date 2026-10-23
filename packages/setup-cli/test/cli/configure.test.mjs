@@ -15,7 +15,8 @@ describe("configure (provider / FireRouter setup)", () => {
       { HOME: home, ANTHROPIC_API_KEY: "" },
     );
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Stored Anthropic API key in global config/);
+    assert.match(result.stdout, /Saved the Anthropic key/);
+    assert.match(result.stderr + result.stdout, /`nexus configure --anthropic-api-key` is deprecated\. Use `nexus auto`/);
 
     const config = JSON.parse(await readFile(globalConfigPath(home), "utf8"));
     assert.equal(config.anthropicApiKey, "sk-ant-configure-12345");
@@ -28,7 +29,7 @@ describe("configure (provider / FireRouter setup)", () => {
       { HOME: home, OPENAI_API_KEY: "" },
     );
     assert.equal(result.code, 0, result.stderr);
-    assert.match(result.stdout, /Stored OpenAI API key in global config/);
+    assert.match(result.stdout, /Saved the OpenAI key/);
 
     const config = JSON.parse(await readFile(globalConfigPath(home), "utf8"));
     assert.equal(config.openaiApiKey, "sk-proj-configure-12345");
@@ -96,6 +97,17 @@ describe("configure (provider / FireRouter setup)", () => {
     assert.equal(config.anthropicApiKey, "sk-ant-configure-12345");
   });
 
+  it("says an exported key isn't sent by Nexus CLI after --unset", async () => {
+    const home = await mkdtemp(path.join(os.tmpdir(), "fc-configure-unset-env-"));
+    const result = await runFireconnect(
+      ["configure", "--unset", "openai-api-key"],
+      { HOME: home, OPENAI_API_KEY: "sk-proj-env-only-12345", ANTHROPIC_API_KEY: "" },
+    );
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /OPENAI_API_KEY is still set in your environment\. Nexus CLI doesn't send it/);
+    assert.doesNotMatch(result.stdout, /keep sending/);
+  });
+
   it("rejects an unknown --unset key", () => {
     assert.throws(
       () => parseCli(["configure", "--unset", "fireworks-api-key"]),
@@ -107,6 +119,6 @@ describe("configure (provider / FireRouter setup)", () => {
     const home = await mkdtemp(path.join(os.tmpdir(), "fc-harness-unset-flag-"));
     const result = await runFireconnect(["opencode", "on", "--unset", "openai-api-key"], { HOME: home });
     assert.notEqual(result.code, 0);
-    assert.match(result.stderr, /nexus configure --unset openai-api-key/);
+    assert.match(result.stderr, /nexus auto --unset openai-api-key/);
   });
 });

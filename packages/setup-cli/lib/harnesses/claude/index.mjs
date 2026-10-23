@@ -20,7 +20,6 @@ import {
   providerBackupPath,
   providerStatePath,
   providerStatusFromEnv,
-  resolveClaudeDefaultModel,
   stripFireconnectManagedClaudeSettings,
   stripManagedApiKeyHelper,
 } from "./core.mjs";
@@ -60,7 +59,8 @@ import {
 } from "./usage/display.mjs";
 import { runClaudeUsageLive, shouldRunClaudeUsageLive } from "./usage/live.mjs";
 import { promptClaudeUsageSession } from "./usage/session-picker.mjs";
-import { runClaudeLiveTmux } from "./live-tmux.mjs";
+import { accent } from "../../ui/style.mjs";
+import { warn } from "../../ui/write.mjs";
 import {
   attachPricing,
   CLAUDE_CODE_PRICING_DISCLAIMER,
@@ -85,9 +85,9 @@ import { formatAutoProviders } from "../../config/auto-providers.mjs";
 import { HARNESS } from "../../harness/id.mjs";
 import {
   fireworksKeyFromCustomHeaders,
-  isOpenAIShapedKey,
-  resolveOpenaiKey,
+  OPENAI_BYOK_HEADER,
 } from "../../firerouter/core.mjs";
+import { resolveAutoProviderKeyHeaders } from "../../firerouter/flag.mjs";
 import {
   harnessStatusKeySource,
   persistApiKeyFromFlag,
@@ -113,7 +113,6 @@ import {
 import {
   assertClaudeModelOverrides,
   claudeActiveMappingIsCurrent,
-  claudeMappingNeedsOpenaiKey,
   defaultClaudeModelMapping,
   mappingUsesBareFirerouter,
   withSavedClaudeModelMapping,
@@ -122,6 +121,11 @@ import {
   isFireconnectModelPicker,
   validateClaudeModelPicker,
 } from "./settings-model-picker.mjs";
+import {
+  claudeCodeModelPickerNote,
+  claudeCodeShowsModelPicker,
+  installedClaudeCodeVersion,
+} from "./claude-code-version.mjs";
 
 const CLAUDE_FIREROUTER = Object.freeze({
   byok: "none",
@@ -132,7 +136,7 @@ const CLAUDE_FIREROUTER = Object.freeze({
 });
 
 export const CLAUDE_ANTHROPIC_KEY_REMOVED_NOTE =
-  "Nexus no longer writes an Anthropic key into Claude Code's settings, so it removed the "
+  "Nexus CLI no longer writes an Anthropic key into Claude Code's settings, so it removed the "
   + "one an earlier `nexus claude` saved. Claude Code's own sign-in pays for Claude turns: "
   + "run `claude login`, or export ANTHROPIC_API_KEY to pay with a key.";
 
@@ -377,9 +381,6 @@ export default defineHarnessProfile({
       snapshot.backup,
     );
     const fireworksKey = await claudeApiKeyForOn(ctx, snapshot);
-    if (ctx.openaiKeyFromFlag && !isOpenAIShapedKey(ctx.openaiKey)) {
-      throw new Error("--openai-api-key must be an OpenAI API key (sk-..., not sk-ant-...).");
-    }
     const activeToken = resolveClaudeAuthState(snapshot.settings, snapshot.state).token;
     validateClaudeModelPicker(snapshot.settings);
     // Normalize first so friendly aliases like `native` are seen as the native
@@ -420,13 +421,7 @@ export default defineHarnessProfile({
       activeMappingIsCurrent,
     });
     const mapping = plan.mapping;
-    // FireRouter no longer registers (a FireRouter `--model` is rejected at
-    // admission); a plain `on` must not re-add the row an earlier `on` left
-    // in the picker.
-    const { ids } = await loadRegisterableModels({
-      apiKey: fireworksKey,
-      includeFirerouter: false,
-    });
+    const { ids } = await loadRegisterableModels({ apiKey: fireworksKey });
     const registerablePickerIds = ids
       .map((id) => shortFireworksModelRef(id))
       .filter(Boolean);
@@ -442,26 +437,15 @@ export default defineHarnessProfile({
     // or BYOK the user configured in Claude Code). FireRouter does not require
     // Nexus to inject x-anthropic-api-key — Claude Code attaches auth.
     const anthropicKeyForSettings = nativeAuth.anthropicApiKey;
-    // A configured OpenAI key rides along as x-openai-api-key on FireRouter
-    // picks that can route to OpenAI (see `claudeMappingNeedsOpenaiKey`), the
-    // same attach rule as `resolveFirerouterByokHeaders`. Checked against the
-    // /model default `on` will actually write. Missing stays absent, never
-    // an error.
-    const defaultModel = resolveClaudeDefaultModel({
-      currentModel: snapshot.settings.model,
-      selectedPickerModel: extraPickerModel ?? "",
-      mapping,
-      registerablePickerIds,
-    });
-    const openaiKeyForSettings = claudeMappingNeedsOpenaiKey(mapping, defaultModel)
-      ? await resolveOpenaiKey({
-        apiKey: ctx.openaiKeyFromFlag ? ctx.openaiKey : "",
-        settingsEnv: {
-          ANTHROPIC_CUSTOM_HEADERS: snapshot.settings.env?.ANTHROPIC_CUSTOM_HEADERS ?? "",
-        },
-        home: ctx.home,
-      })
-      : "";
+    // Claude Code's own login covers Claude turns. An OpenAI key saved with
+    // `nexus auto` rides along as x-openai-api-key for GPT turns (`/model`
+    // always lists `auto`); a key already in settings is kept. Never read
+    // from the environment.
+    const openaiKeyForSettings = (await resolveAutoProviderKeyHeaders({
+      home: ctx.home,
+      settingsEnv: { ANTHROPIC_CUSTOM_HEADERS: snapshot.settings.env?.ANTHROPIC_CUSTOM_HEADERS ?? "" },
+      anthropic: false,
+    }))[OPENAI_BYOK_HEADER] ?? "";
 
     // Migrate a harness-local key (baked into settings by an older `on`) into the
     // shared store so `key export` and other harnesses can reuse it — but only
@@ -522,6 +506,11 @@ export default defineHarnessProfile({
     if (removedAnthropicKey) {
       footnotes.push(() => printNote(CLAUDE_ANTHROPIC_KEY_REMOVED_NOTE));
     }
+    const claudeCodeVersion = installedClaudeCodeVersion();
+    const pickerVersionNote = claudeCodeModelPickerNote(claudeCodeVersion);
+    if (pickerVersionNote) {
+      footnotes.push(() => printNote(pickerVersionNote));
+    }
     await reconcileServerToolDenials(settingsPath, preserveDeniedServerTools);
     await approveStrayAnthropicApiKey(ctx.home);
     await disableWebsearchMcp(ctx.home);
@@ -538,6 +527,7 @@ export default defineHarnessProfile({
         printClaudePickerSummary({
           extraPickerModel,
           mapping,
+          catalogShown: claudeCodeShowsModelPicker(claudeCodeVersion),
         });
       },
     });
@@ -684,16 +674,12 @@ export default defineHarnessProfile({
         session,
         verbose: ctx.verbose,
         plain: ctx.plain,
-        ...(process.env.FC_LIVE_SPLIT === "1"
-          ? {}
-          : {
-            // The session list is always reachable, including from an explicit
-            // --session. It was withheld there on the theory that you can only go
-            // "back" somewhere you have been, but the list is a destination in its
-            // own right: --session names a starting point, not a cage, and the only
-            // way out used to be quitting and rerunning.
-            promptSession: (opts) => promptClaudeUsageSession({ ...opts, withinDays }),
-          }),
+        // The session list is always reachable, including from an explicit
+        // --session. It was withheld there on the theory that you can only go
+        // "back" somewhere you have been, but the list is a destination in its
+        // own right: --session names a starting point, not a cage, and the only
+        // way out used to be quitting and rerunning.
+        promptSession: (opts) => promptClaudeUsageSession({ ...opts, withinDays }),
       });
       return;
     }
@@ -735,9 +721,10 @@ export default defineHarnessProfile({
     console.log(formatClaudeUsageReport(report, { verbose: ctx.verbose, plain: ctx.plain }));
   },
 
-  async live(ctx) {
-    ensureHomeForHarness(ctx, HARNESS.CLAUDE);
-    await runClaudeLiveTmux({ home: ctx.home, session: ctx.session });
+  /** Retired tmux split, kept so old muscle memory gets a pointer instead of "unknown command". */
+  live() {
+    warn("`nexus claude live` was removed: Claude Code's status line shows the routed model and spend on every turn.");
+    process.stderr.write(`  Run ${accent("claude")} as usual, or ${accent("nexus claude usage")} for the full cost breakdown.\n`);
   },
 
 });

@@ -417,13 +417,7 @@ export function normalizeModelId(model) {
  * @param {string} [flag]
  */
 export function assertNotFirerouterModelId(model, flag = "--model") {
-  if (isFirerouterModelPattern(model)) {
-    throw new Error(
-      `${flag} ${String(model).trim()} is a FireRouter route, which is no longer supported. `
-      + `Use ${flag} auto instead.`,
-    );
-  }
-  if (isAutoInstantModelId(model)) {
+  if (isFirerouterModelPattern(model) || isAutoInstantModelId(model)) {
     throw new Error(
       `${flag} ${String(model).trim()} is no longer supported. `
       + `Use ${flag} auto instead.`,

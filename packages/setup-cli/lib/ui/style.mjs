@@ -24,20 +24,27 @@ export const dim = wrap(ANSI.dimFaint, "[22m");
 export const muted = wrap(ANSI.muted, "[39m");
 export const red = wrap(ANSI.red, "[39m");
 export const yellow = wrap(ANSI.yellow, "[39m");
-export const cyan = wrap(ANSI.cyan, "[39m");
 
-/**
- * Cyan emphasis for commands and interactive tokens.
- */
-export function accent(text, stream = undefined) {
+function styled(open, text, stream) {
   const useColor = stream === undefined
     ? enabled
     : colorsEnabled(stream);
-  return useColor ? `${ANSI.cyan}${text}[39m` : String(text);
+  return useColor ? `${open}${text}[39m` : String(text);
 }
 
-/** Spend bars and brand highlights. */
-export const orange = wrap(ANSI.orange, "[39m");
+/**
+ * Accent: only what the user can type or open (commands, URLs, choices).
+ */
+export function accent(text, stream = undefined) {
+  return styled(ANSI.accent, text, stream);
+}
+
+/**
+ * Primary: `✓` and the one key message per output.
+ */
+export function primary(text, stream = undefined) {
+  return styled(ANSI.primary, text, stream);
+}
 
 function unicodeOk(env = process.env) {
   if (process.platform === "win32") {
@@ -54,7 +61,7 @@ const glyphs = unicodeOk()
 export const symbols = Object.freeze(glyphs);
 
 export function ok(message) {
-  return `${cyan(symbols.ok)} ${message}`;
+  return `${primary(symbols.ok)} ${message}`;
 }
 
 export function fail(message) {
@@ -66,12 +73,12 @@ export function warn(message) {
 }
 
 export function yesNo(value) {
-  return value ? cyan("yes") : red("no");
+  return value ? "yes" : red("no");
 }
 
-/** Cyan "✓" success glyph (login/status). */
+/** Primary "✓" success glyph (login/status). */
 export function check(stream = process.stdout) {
-  return (enabled || colorsEnabled(stream)) ? cyan(symbols.ok) : symbols.ok;
+  return (enabled || colorsEnabled(stream)) ? `${ANSI.primary}${symbols.ok}[39m` : symbols.ok;
 }
 
 /**

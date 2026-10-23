@@ -166,19 +166,19 @@ describe("model defaults", () => {
     for (const id of ["firerouter", "firerouter/x", "firerouter/x[1m]", "FIREROUTER/ASTRA", "firerouter-2"]) {
       assert.throws(
         () => validateModelId(id, "--model"),
-        /is a FireRouter route, which is no longer supported/,
+        /is no longer supported/,
         id,
       );
     }
-    assert.throws(() => validateModelId("firerouter/x[1m]", "--opus"), /--opus .* is a FireRouter route/);
+    assert.throws(() => validateModelId("firerouter/x[1m]", "--opus"), /--opus .* is no longer supported/);
   });
 
   test("model ID validation rejects firerouter lookalikes", () => {
-    assert.throws(() => validateModelId("foo/firerouter-clone", "--model"), /is a FireRouter route/);
-    assert.throws(() => validateModelId("firerouterx/y", "--model"), /is a FireRouter route/);
-    assert.throws(() => validateModelId("firerouter/", "--model"), /is a FireRouter route/);
-    assert.throws(() => validateModelId("firerouter/..", "--model"), /is a FireRouter route/);
-    assert.throws(() => validateModelId("firerouter//kimi", "--model"), /is a FireRouter route/);
+    assert.throws(() => validateModelId("foo/firerouter-clone", "--model"), /is no longer supported/);
+    assert.throws(() => validateModelId("firerouterx/y", "--model"), /is no longer supported/);
+    assert.throws(() => validateModelId("firerouter/", "--model"), /is no longer supported/);
+    assert.throws(() => validateModelId("firerouter/..", "--model"), /is no longer supported/);
+    assert.throws(() => validateModelId("firerouter//kimi", "--model"), /is no longer supported/);
     assert.throws(() => validateModelId("fireworks/kimi-k3", "--model"), /--model must be/);
     assert.throws(() => validateModelId("router/kimi-k3", "--model"), /--model must be/);
   });
@@ -186,11 +186,11 @@ describe("model defaults", () => {
   test("canonicalRequestedModelId collapses known spellings and rejects junk paths", () => {
     assert.throws(
       () => canonicalRequestedModelId("fireworks-ai/firerouter"),
-      /is a FireRouter route, which is no longer supported/,
+      /is no longer supported/,
     );
     assert.throws(
       () => canonicalRequestedModelId("FIREROUTER/ASTRA"),
-      /is a FireRouter route, which is no longer supported/,
+      /is no longer supported/,
     );
     assert.equal(canonicalRequestedModelId("accounts/Fireworks/models/kimi-k3"), "kimi-k3");
     assert.equal(canonicalRequestedModelId(""), "");
@@ -200,7 +200,7 @@ describe("model defaults", () => {
     );
     assert.throws(
       () => canonicalRequestedModelId("foo/firerouter"),
-      /is a FireRouter route, which is no longer supported/,
+      /is no longer supported/,
     );
     assert.throws(
       () => canonicalRequestedModelId("native"),

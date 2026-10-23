@@ -17,7 +17,7 @@
 import process from "node:process";
 import { performance } from "node:perf_hooks";
 import {
-  BOLD, DIM, GREEN, RED, CYAN, YELLOW, RESET, HIDE_CURSOR, SHOW_CURSOR,
+  ACCENT, BOLD, DIM, PRIMARY, RED, YELLOW, RESET, HIDE_CURSOR, SHOW_CURSOR,
   HOME_CURSOR, moveTo, CLEAR_LINE, truncateVisible, padRight, progressBar,
   stripAnsi, visibleWidth,
 } from "./ansi.mjs";
@@ -298,7 +298,7 @@ export class SplitPaneRenderer {
     let tag;
     let subtitle;
     if (bothDone) {
-      tag = `${BOLD}${GREEN}✓ RACE COMPLETE${RESET}`;
+      tag = `${BOLD}${PRIMARY}✓ RACE COMPLETE${RESET}`;
       subtitle = "both models finished";
     } else if (inc.done || fw.done) {
       const finished = (inc.done ? inc : fw).header.provider;
@@ -310,7 +310,7 @@ export class SplitPaneRenderer {
       tag = `${BOLD}${YELLOW}${spin} RACING${RESET}`;
       subtitle = "both models running at the same time";
     }
-    const line = ` ${tag}  ${DIM}${subtitle}${RESET}   ${CYAN}⏱${RESET} ${clock} ${DIM}total${RESET}`;
+    const line = ` ${tag}  ${DIM}${subtitle}${RESET}   ⏱ ${clock} ${DIM}total${RESET}`;
     const rule = `${DIM}${"─".repeat(Math.max(0, width))}${RESET}`;
     return [truncateVisible(line, width), rule];
   }
@@ -399,7 +399,7 @@ export class SplitPaneRenderer {
     // header (2 lines). Pair BOLD with an explicit color so it never renders as
     // bare bright-default (white-on-white on light themes); the color also
     // distinguishes the two sides at a glance.
-    const headColor = side === "fireworks" ? GREEN : CYAN;
+    const headColor = side === "fireworks" ? PRIMARY : ACCENT;
     // Model is the headline (this is a model-vs-model comparison);
     // the provider is a dim secondary line, not the framing.
     lines.push(` ${BOLD}${headColor}${truncateVisible(s.header.model, width - 1)}${RESET}`);
@@ -452,7 +452,7 @@ export class SplitPaneRenderer {
     // makes the honest "actually generating" time legible.
     const activeMs = s.firstDeltaMs == null ? 0 : Math.max(0, elapsedMs - s.firstDeltaMs);
     lines.push(
-      ` ${CYAN}⏱${RESET} ${formatSeconds(elapsedSec)} ${DIM}total${RESET}`
+      ` ⏱ ${formatSeconds(elapsedSec)} ${DIM}total${RESET}`
       + `  ${YELLOW}⚡${RESET} ${formatSeconds(activeMs / 1000)} ${DIM}gen${RESET}`,
     );
     const tokStr = s.done && s.outputTokens == null ? "—" : formatTokens(tokens);
@@ -464,7 +464,7 @@ export class SplitPaneRenderer {
     // "measured" reads as a finished number for a run that is still going.
     const costLabel = s.costFinalized ? s.header.costLabel : "so far";
     lines.push(
-      ` ${GREEN}↑${RESET} ${tokStr} tok  ${GREEN}${costStr}${RESET} ${DIM}${costLabel}${RESET}`,
+      ` ↑ ${tokStr} tok  ${costStr} ${DIM}${costLabel}${RESET}`,
     );
     return lines;
   }
@@ -476,7 +476,7 @@ export class SplitPaneRenderer {
     // (side frozen but finalizeBoth still running), fall through to the
     // progress/indeterminate bar so a successful side doesn't flash "failed ✗".
     if (s.ok === true) {
-      return ` ${progressBar(1, 1, inner)}  ${GREEN}done ✓${RESET}`;
+      return ` ${progressBar(1, 1, inner)}  ${PRIMARY}done ✓${RESET}`;
     }
     if (s.ok === false) {
       return ` ${progressBar(0, 1, inner)}  ${RED}failed ✗${RESET}`;

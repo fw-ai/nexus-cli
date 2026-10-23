@@ -10,6 +10,7 @@ import {
   FIRECONNECT_PROVIDER_NAME,
   addFireworksProvider,
   buildModelEntry,
+  computeVscodeModels,
   buildAzureModelEntry,
   fireconnectRegisteredModels,
   fireconnectSecretId,
@@ -98,6 +99,14 @@ describe("vscode-core pure transforms", () => {
     assert.equal(other.vision, false);
     assert.equal("maxInputTokens" in other, false);
     assert.equal("maxOutputTokens" in other, false);
+  });
+
+  it("computeVscodeModels drops retired rows even when the catalog is unavailable", () => {
+    const existing = {
+      models: [buildModelEntry("firerouter"), buildModelEntry("auto"), buildModelEntry("firerouter/opus")],
+    };
+    const models = computeVscodeModels(existing, undefined, "auto", [], false);
+    assert.deepEqual(models.map((m) => m.id), ["auto"]);
   });
 
   it("buildModelEntry enables vision for firerouter", () => {
@@ -344,7 +353,7 @@ describe("vscode harness integration", () => {
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "" } },
       );
       assert.notEqual(on.code, 0);
-      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(on.stderr, /is no longer supported/);
     });
   });
 
@@ -364,7 +373,7 @@ describe("vscode harness integration", () => {
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
       );
       assert.notEqual(on.code, 0);
-      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(on.stderr, /is no longer supported/);
     });
   });
 
@@ -384,7 +393,7 @@ describe("vscode harness integration", () => {
         { home, env: { ...secretEnv(), FIREWORKS_API_KEY: "", ANTHROPIC_API_KEY: "", OPENAI_API_KEY: "" } },
       );
       assert.notEqual(on.code, 0);
-      assert.match(on.stderr, /is a FireRouter route, which is no longer supported/);
+      assert.match(on.stderr, /is no longer supported/);
     });
   });
 

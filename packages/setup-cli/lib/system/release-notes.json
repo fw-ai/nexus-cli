@@ -1,9 +1,26 @@
 {
   "releases": [
     {
-      "version": "0.10.0",
+      "version": "0.10.1",
       "highlights": [
-        "FireConnect is now Nexus. The command is `nexus` (it replaces `fireconnect`), and your data moves from `~/.fireconnect` to `~/.nexus` (the old path stays as a link). Your harnesses, key, and settings carry over unchanged. Try `nexus status`.",
+        "Nexus Auto can now use your own Anthropic and OpenAI keys. Save them once with `nexus auto --anthropic-api-key` and `nexus auto --openai-api-key` (each prompts for the key, so it never lands in your shell history), check them with `nexus auto`, and clear one with `nexus auto --unset openai-api-key`.",
+        "`nexus auto` shows all your keys in one place: saved on this machine, plus Provider Keys connected on your Fireworks account. Provider Keys work in every harness, a saved local key still wins for its provider, and `nexus auto` says so when Provider Keys are not enabled on your account.",
+        "`nexus status` now lists installed harnesses, and `nexus update` now updates Nexus CLI (`nexus upgrade` still works)."
+      ],
+      "improvements": [
+        "Turning on a harness that is not installed now fails with an explanation instead of writing settings for it.",
+        "Removed: `nexus claude live`. The status line shows the model and spend on every turn; `nexus claude usage` gives the full breakdown.",
+        "Fixed: Claude Code telemetry stays on so the Artifact tool shows up, too-old Claude Code warns instead of showing an empty picker, and the status line names the serving model. Running `nexus claude` again refreshes the picker.",
+        "Fixed: fewer keychain prompts (your keychain is read only when a command needs your key), and sign-in no longer tells account members they are not members.",
+        "Safer updates: if `~/.nexus` was not created by Nexus, `nexus update` stops before changing anything."
+      ],
+      "footer": "After upgrading, restart your harnesses to load the migrated settings."
+    },
+    {
+      "version": "0.10.0",
+      "emphasis": "FireConnect is now Nexus CLI.",
+      "highlights": [
+        "FireConnect is now Nexus CLI. The command is `nexus` (it replaces `fireconnect`), and your data moves from `~/.fireconnect` to `~/.nexus` (the old path stays as a link). Your harnesses, key, and settings carry over unchanged. Try `nexus status`.",
         "Environment variables are now `NEXUS_*` (`FIRECONNECT_*` still works). Rename them in your scripts and shell profiles when you get a chance.",
         "FireRouter is retired. `nexus upgrade` moves every harness that was on a FireRouter route to `auto`, and picking a FireRouter model now fails with a pointer to `auto`: FireRouter routes are no longer supported. Use `--model auto` instead.",
         "Narrow `auto` to Fireworks-hosted models only: `nexus auto --providers fireworks`. The setting is global, not per harness. `nexus auto --reset` restores the default. Claude Desktop and DeepSeek Harness support the setting too."

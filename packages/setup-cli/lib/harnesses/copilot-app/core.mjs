@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   isAutoModelId,
   isAutoInstantModelId,
+  isRetiredModelId,
   shortFireworksModelRef,
 } from "../../fireworks/model-id.mjs";
 import { planCatalogRefresh } from "../../harness/catalog-refresh.mjs";
@@ -150,8 +151,11 @@ export async function enableCopilotFireworks({
   const existing = await findFireconnectProvider(dbPath);
   const providerId = existing ? existing.id : newCopilotProviderId();
 
+  // Retired FireRouter rows never survive a re-`on`, even offline (as Cursor does).
   const current = existing
-    ? (await listCopilotProviderModels(dbPath, providerId)).map((model) => model.model_id)
+    ? (await listCopilotProviderModels(dbPath, providerId))
+      .map((model) => model.model_id)
+      .filter((id) => !isRetiredModelId(id))
     : [];
   const catalogModels = copilotModelIds(extraModels);
   let toRegister;

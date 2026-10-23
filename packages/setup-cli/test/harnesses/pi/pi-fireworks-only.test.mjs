@@ -198,7 +198,7 @@ describe("pi harness only touches the fireworks provider", () => {
     assert.deepEqual((await readJson(piModelsPath(home))).providers.fireworks.models.map((m) => m.id), ["auto"]);
   });
 
-  it("upgrade drops a FireRouter default and its BYOK headers", async () => {
+  it("upgrade drops a FireRouter default and keeps its provider-key headers for Nexus Auto", async () => {
     const home = await seedUserPi();
     const env = { HOME: home, FIREWORKS_API_KEY: "" };
     await runFireconnect(["pi", "on", "--api-key", KEY], env);
@@ -225,7 +225,11 @@ describe("pi harness only touches the fireworks provider", () => {
     }
     assert.equal((await readJson(piSettingsPath(home))).defaultModel, "auto");
     const after = (await readJson(piModelsPath(home))).providers.fireworks;
-    assert.deepEqual(after.headers, { "X-Title": "Pi" });
+    assert.deepEqual(after.headers, {
+      "X-Title": "Pi",
+      "x-anthropic-api-key": "sk-ant-legacy-byok",
+      "x-openai-api-key": "sk-proj-legacy-byok",
+    });
     assert.ok(!after.models.some((m) => m.id.includes("firerouter")));
   });
 

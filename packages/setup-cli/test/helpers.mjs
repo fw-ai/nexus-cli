@@ -11,6 +11,7 @@ import { USER_SETTINGS_RELATIVE_PATH } from "../lib/harnesses/claude/core.mjs";
 import { OPENCODE_CONFIG_RELATIVE_PATH } from "../lib/harnesses/opencode/core.mjs";
 import { CODEX_CONFIG_RELATIVE_PATH } from "../lib/harnesses/codex/core.mjs";
 import { buildServerlessCatalogSnapshot } from "../lib/fireworks/models.mjs";
+import { HARNESSES, HARNESS_ALIASES } from "../lib/harness/id.mjs";
 import {
   cacheServerlessCatalogSnapshot,
   readCatalogCache,
@@ -330,12 +331,26 @@ export function isolatedChildHome(env = {}) {
   return env.HOME ?? mkdtempSync(path.join(os.tmpdir(), "fc-run-home-"));
 }
 
+const HARNESS_TOKENS = new Set([...HARNESSES, ...Object.keys(HARNESS_ALIASES)]);
+
+/**
+ * `on` refuses a harness with no install footprint, and test homes start
+ * empty. Append `--skip-install-check` to harness commands so specs exercise
+ * the config rewrite; the gate's own specs pass `installGate: true`.
+ */
+export function harnessTestArgs(args, { installGate = false } = {}) {
+  const withCodex = codexOnOffArgs(args);
+  return !installGate && withCodex.some((arg) => HARNESS_TOKENS.has(arg)) && !withCodex.includes("--skip-install-check")
+    ? [...withCodex, "--skip-install-check"]
+    : withCodex;
+}
+
 export function runFireconnect(args, env = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) {
       seedOnCommandCatalog(env.HOME, args);
     }
-    const child = spawn(process.execPath, [CLI, ...codexOnOffArgs(args)], {
+    const child = spawn(process.execPath, [CLI, ...harnessTestArgs(args)], {
       env: {
         ...process.env,
         ...TEST_SECRET_STORE_ENV,
@@ -380,12 +395,12 @@ export async function seedKeychainConfig(home, apiKey) {
   }
 }
 
-export async function runCli(args, { home, env = {} } = {}) {
+export async function runCli(args, { home, env = {}, installGate = false } = {}) {
   return new Promise((resolve, reject) => {
     if (args.includes("on")) {
       seedOnCommandCatalog(home, args);
     }
-    const child = spawn(process.execPath, [CLI, ...codexOnOffArgs(args)], {
+    const child = spawn(process.execPath, [CLI, ...harnessTestArgs(args, { installGate })], {
       env: {
         ...process.env,
         ...TEST_SECRET_STORE_ENV,
